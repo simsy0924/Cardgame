@@ -670,7 +670,173 @@
     to { transform: translateX(0); opacity: 1; }
   }
 
-  @media (max-width: 600px) {
+  /* ── DECK BUILDER ── */
+  #deckBuilder {
+    display: none;
+    flex-direction: column;
+    min-height: 100vh;
+    background: radial-gradient(ellipse at 50% 0%, #1e1040 0%, #0a0a0f 70%);
+    padding: 1rem;
+    gap: 1rem;
+  }
+
+  .deck-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: .5rem;
+  }
+
+  .deck-header h2 {
+    font-family: 'Black Han Sans', sans-serif;
+    color: var(--accent);
+    font-size: 1.2rem;
+    letter-spacing: .1em;
+  }
+
+  .deck-stats {
+    font-size: .8rem;
+    color: var(--text-dim);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .3rem .8rem;
+  }
+
+  .deck-stats span { color: var(--accent); font-family: 'Black Han Sans', sans-serif; }
+
+  .deck-tabs {
+    display: flex;
+    gap: .4rem;
+    flex-wrap: wrap;
+  }
+
+  .deck-tab {
+    padding: .3rem .8rem;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text-dim);
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: .75rem;
+    cursor: pointer;
+    transition: all .15s;
+  }
+
+  .deck-tab.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: #c8a96e18;
+  }
+
+  .deck-pool {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+    overflow-y: auto;
+    max-height: 40vh;
+    padding: .3rem 0;
+  }
+
+  .pool-card {
+    position: relative;
+    cursor: pointer;
+  }
+
+  .pool-card .card-count-badge {
+    position: absolute;
+    top: -4px; right: -4px;
+    background: var(--accent);
+    color: #1a1000;
+    border-radius: 50%;
+    width: 18px; height: 18px;
+    font-size: .65rem;
+    font-family: 'Black Han Sans', sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 2;
+  }
+
+  .pool-card .card-in-deck {
+    position: absolute;
+    bottom: -4px; left: -4px;
+    background: var(--safe);
+    color: #fff;
+    border-radius: 50%;
+    width: 18px; height: 18px;
+    font-size: .6rem;
+    font-family: 'Black Han Sans', sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 2;
+  }
+
+  .my-deck-area {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: .8rem;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+  }
+
+  .my-deck-area h3 {
+    font-size: .8rem;
+    color: var(--text-dim);
+    letter-spacing: .08em;
+    font-family: 'Black Han Sans', sans-serif;
+  }
+
+  .my-deck-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .3rem;
+    max-height: 25vh;
+    overflow-y: auto;
+  }
+
+  .deck-card-chip {
+    padding: .2rem .5rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: .7rem;
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: .3rem;
+  }
+
+  .deck-card-chip:hover { border-color: var(--danger); color: var(--danger); }
+  .deck-card-chip .chip-count { color: var(--accent); font-family: 'Black Han Sans', sans-serif; }
+
+  .key-deck-area {
+    background: var(--surface);
+    border: 1px solid #7c5cbf;
+    border-radius: 8px;
+    padding: .8rem;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+  }
+
+  .key-deck-area h3 {
+    font-size: .8rem;
+    color: #9c7cdf;
+    letter-spacing: .08em;
+    font-family: 'Black Han Sans', sans-serif;
+  }
+
+  .deck-actions {
+    display: flex;
+    gap: .5rem;
+    flex-wrap: wrap;
+  }
+
+  .deck-actions .btn { flex: 1; min-width: 120px; width: auto; }
+
+
     .zone-slot { width: 60px; height: 84px; }
     .card { width: 58px; height: 80px; }
     .card-back { width: 58px; height: 80px; }
@@ -711,6 +877,49 @@
     <input id="joinCode" type="text" placeholder="방 코드 4자리" maxlength="4" style="text-transform:uppercase;letter-spacing:.2em;font-size:1.2rem;text-align:center">
     <button class="btn btn-secondary" onclick="joinRoom()">참가</button>
     <div id="joinStatus" class="status-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ════════════ DECK BUILDER ════════════ -->
+<div id="deckBuilder">
+  <div class="deck-header">
+    <h2>덱 구성</h2>
+    <div class="deck-stats">메인 <span id="dbMainCount">0</span>/40~60 · 키카드 <span id="dbKeyCount">0</span>/0~5</div>
+  </div>
+
+  <!-- 테마 필터 탭 -->
+  <div class="deck-tabs" id="dbTabs">
+    <div class="deck-tab active" onclick="filterDeckPool('전체')">전체</div>
+    <div class="deck-tab" onclick="filterDeckPool('펭귄')">펭귄</div>
+    <div class="deck-tab" onclick="filterDeckPool('올드원')">올드원</div>
+    <div class="deck-tab" onclick="filterDeckPool('라이온')">라이온</div>
+    <div class="deck-tab" onclick="filterDeckPool('타이거')">타이거</div>
+    <div class="deck-tab" onclick="filterDeckPool('라이거')">라이거</div>
+    <div class="deck-tab" onclick="filterDeckPool('지배자')">지배자</div>
+    <div class="deck-tab" onclick="filterDeckPool('마피아')">마피아</div>
+    <div class="deck-tab" onclick="filterDeckPool('불가사의')">불가사의</div>
+    <div class="deck-tab" onclick="filterDeckPool('범용')">범용</div>
+  </div>
+
+  <!-- 카드 풀 -->
+  <div class="deck-pool" id="dbPool"></div>
+
+  <!-- 내 메인 덱 -->
+  <div class="my-deck-area">
+    <h3>📦 메인 덱</h3>
+    <div class="my-deck-list" id="dbMainList"></div>
+  </div>
+
+  <!-- 내 키카드 덱 -->
+  <div class="key-deck-area">
+    <h3>🔑 키카드 덱 (종류별 1장, 최대 5종)</h3>
+    <div class="my-deck-list" id="dbKeyList"></div>
+  </div>
+
+  <div class="deck-actions">
+    <button class="btn btn-secondary" onclick="loadPreset('펭귄')">펭귄 기본 덱</button>
+    <button class="btn btn-secondary" onclick="clearDeck()">초기화</button>
+    <button class="btn btn-primary" id="dbConfirmBtn" onclick="confirmDeck()" disabled>덱 확정 →</button>
   </div>
 </div>
 
@@ -1799,8 +2008,9 @@ function joinRoom() {
 
 function startGame() {
   if (!db && !DEMO_MODE) { alert('Firebase가 연결되지 않았습니다.'); return; }
-  if (DEMO_MODE) { enterGame(); return; }
+  if (DEMO_MODE) { goToDeckBuilder(); return; }
   roomRef.update({ status: 'playing', activePlayer: 'host' });
+  goToDeckBuilder();
 }
 
 function listenRoom() {
@@ -1817,7 +2027,7 @@ function listenRoom() {
     }
 
     if (data.status === 'playing' && document.getElementById('lobby').style.display !== 'none') {
-      enterGame();
+      goToDeckBuilder();
     }
 
     // Handle actions from opponent
@@ -2006,6 +2216,379 @@ function initDecks() {
   G.opFieldCard = null;
   G.opKeyDeck = keyDeck.map(id => ({ id, name: CARDS[id]?.name || id }));
   G.opDeckCount = 40;
+}
+
+// ─────────────────────────────────────────────
+// DECK BUILDER
+// ─────────────────────────────────────────────
+let builderMainDeck = {}; // {cardId: count}
+let builderKeyDeck = {};  // {cardId: 1}
+let currentPoolFilter = '전체';
+
+// 범용 카드 (테마 없는 것들)
+const GENERIC_CARDS = ['구사일생','일격필살','눈에는 눈','출입통제','단 한번의 기회','유혹의 황금사과','수호의 빛','신성한 수호자','서치 봉인의 항아리','단단한 카드 자물쇠'];
+
+function openDeckBuilder() {
+  document.getElementById('lobby').style.display = 'none';
+  document.getElementById('deckBuilder').style.display = 'flex';
+  filterDeckPool('전체');
+  renderBuilderDeck();
+}
+
+function filterDeckPool(theme) {
+  currentPoolFilter = theme;
+  document.querySelectorAll('.deck-tab').forEach(t => {
+    t.classList.toggle('active', t.textContent === theme);
+  });
+  const pool = document.getElementById('dbPool');
+  pool.innerHTML = '';
+  Object.values(CARDS).forEach(card => {
+    if (card.isKeyCard) return; // 키카드는 별도 처리
+    const matchTheme = theme === '전체' ? true :
+      theme === '범용' ? GENERIC_CARDS.includes(card.id) :
+      (card.theme === theme);
+    if (!matchTheme) return;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'pool-card';
+    wrapper.title = card.name;
+    const el = renderCard({ id: card.id, name: card.name });
+    el.style.cursor = 'pointer';
+    // 현재 덱에 몇 장인지 배지
+    const inDeck = builderMainDeck[card.id] || 0;
+    if (inDeck > 0) {
+      const badge = document.createElement('div');
+      badge.className = 'card-in-deck';
+      badge.textContent = inDeck;
+      wrapper.appendChild(badge);
+    }
+    el.addEventListener('click', () => addToDeck(card.id, false));
+    el.addEventListener('dblclick', () => openCardDetail(card.id));
+    wrapper.appendChild(el);
+    pool.appendChild(wrapper);
+  });
+  // 키카드 풀 (전체 또는 테마 탭에서 보임)
+  if (theme !== '범용') {
+    Object.values(CARDS).filter(c => c.isKeyCard && (theme === '전체' || c.theme === theme)).forEach(card => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'pool-card';
+      const el = renderCard({ id: card.id, name: card.name });
+      el.style.cursor = 'pointer';
+      el.style.border = '1.5px solid #7c5cbf';
+      const inKey = builderKeyDeck[card.id] ? 1 : 0;
+      if (inKey) {
+        const badge = document.createElement('div');
+        badge.className = 'card-in-deck';
+        badge.style.background = '#7c5cbf';
+        badge.textContent = '✓';
+        wrapper.appendChild(badge);
+      }
+      el.addEventListener('click', () => addToDeck(card.id, true));
+      wrapper.appendChild(el);
+      pool.appendChild(wrapper);
+    });
+  }
+}
+
+function addToDeck(cardId, isKey) {
+  const card = CARDS[cardId];
+  if (!card) return;
+  if (isKey) {
+    if (builderKeyDeck[cardId]) {
+      delete builderKeyDeck[cardId];
+    } else {
+      if (Object.keys(builderKeyDeck).length >= 5) { notify('키카드 덱은 최대 5종입니다.'); return; }
+      builderKeyDeck[cardId] = 1;
+    }
+  } else {
+    const cur = builderMainDeck[cardId] || 0;
+    const total = Object.values(builderMainDeck).reduce((a,b) => a+b, 0);
+    if (cur >= 4) { notify('같은 카드는 최대 4장입니다.'); return; }
+    if (total >= 60) { notify('메인 덱은 최대 60장입니다.'); return; }
+    builderMainDeck[cardId] = cur + 1;
+  }
+  renderBuilderDeck();
+  filterDeckPool(currentPoolFilter);
+}
+
+function removeFromBuilderDeck(cardId, isKey) {
+  if (isKey) {
+    delete builderKeyDeck[cardId];
+  } else {
+    if (builderMainDeck[cardId] > 1) builderMainDeck[cardId]--;
+    else delete builderMainDeck[cardId];
+  }
+  renderBuilderDeck();
+  filterDeckPool(currentPoolFilter);
+}
+
+function renderBuilderDeck() {
+  const mainTotal = Object.values(builderMainDeck).reduce((a,b) => a+b, 0);
+  const keyTotal = Object.keys(builderKeyDeck).length;
+  document.getElementById('dbMainCount').textContent = mainTotal;
+  document.getElementById('dbKeyCount').textContent = keyTotal;
+
+  // 메인 덱 목록
+  const mainList = document.getElementById('dbMainList');
+  mainList.innerHTML = '';
+  Object.entries(builderMainDeck).forEach(([id, count]) => {
+    const chip = document.createElement('div');
+    chip.className = 'deck-card-chip';
+    chip.innerHTML = `<span class="chip-count">${count}x</span>${CARDS[id]?.name || id}`;
+    chip.title = '클릭하면 1장 제거';
+    chip.addEventListener('click', () => removeFromBuilderDeck(id, false));
+    mainList.appendChild(chip);
+  });
+
+  // 키카드 덱 목록
+  const keyList = document.getElementById('dbKeyList');
+  keyList.innerHTML = '';
+  Object.keys(builderKeyDeck).forEach(id => {
+    const chip = document.createElement('div');
+    chip.className = 'deck-card-chip';
+    chip.style.borderColor = '#7c5cbf';
+    chip.innerHTML = `<span style="color:#9c7cdf">🔑</span>${CARDS[id]?.name || id}`;
+    chip.title = '클릭하면 제거';
+    chip.addEventListener('click', () => removeFromBuilderDeck(id, true));
+    keyList.appendChild(chip);
+  });
+
+  // 확정 버튼 활성화 조건: 메인 40~60장
+  const ok = mainTotal >= 40 && mainTotal <= 60;
+  document.getElementById('dbConfirmBtn').disabled = !ok;
+  document.getElementById('dbConfirmBtn').textContent = ok ? `덱 확정 (${mainTotal}장) →` : `덱 확정 (${mainTotal}장, 40~60장 필요)`;
+}
+
+function loadPreset(theme) {
+  if (theme === '펭귄') {
+    builderMainDeck = {
+      '펭귄 마을':4,'꼬마 펭귄':4,'펭귄 부부':4,'현자 펭귄':4,
+      '수문장 펭귄':4,'펭귄!돌격!':4,'펭귄의 영광':4,
+      '펭귄이여 영원하라':4,'펭귄 마법사':4,'구사일생':2,'눈에는 눈':2,
+    };
+    builderKeyDeck = { '펭귄 용사':1, '펭귄의 일격':1, '펭귄의 전설':1 };
+  }
+  renderBuilderDeck();
+  filterDeckPool(currentPoolFilter);
+  notify('펭귄 기본 덱 로드!');
+}
+
+function clearDeck() {
+  builderMainDeck = {};
+  builderKeyDeck = {};
+  renderBuilderDeck();
+  filterDeckPool(currentPoolFilter);
+}
+
+function confirmDeck() {
+  const mainTotal = Object.values(builderMainDeck).reduce((a,b) => a+b, 0);
+  if (mainTotal < 40 || mainTotal > 60) { notify('메인 덱은 40~60장이어야 합니다.'); return; }
+  // 덱 배열 생성
+  const deckArr = [];
+  Object.entries(builderMainDeck).forEach(([id, count]) => {
+    for (let i = 0; i < count; i++) deckArr.push(id);
+  });
+  const keyArr = Object.keys(builderKeyDeck);
+  // 저장
+  window._confirmedDeck = deckArr;
+  window._confirmedKeyDeck = keyArr;
+  // Firebase에 덱 확정 신호
+  if (roomRef) roomRef.child(myRole + 'DeckReady').set(true);
+  document.getElementById('deckBuilder').style.display = 'none';
+  // 대기 화면 표시
+  notify('덱 확정! 상대방을 기다리는 중...');
+  // 덱 빌더에서 직접 게임으로
+  checkBothDecksReady();
+}
+
+function checkBothDecksReady() {
+  if (!roomRef) { enterGameWithDeck(); return; }
+  roomRef.on('value', snap => {
+    const data = snap.val();
+    if (!data) return;
+    const hostReady = data.hostDeckReady;
+    const guestReady = data.guestDeckReady;
+    if (hostReady && guestReady) {
+      enterGameWithDeck();
+    }
+  });
+}
+
+function enterGameWithDeck() {
+  // initDecks를 confirmDeck에서 설정한 덱으로 오버라이드
+  if (window._confirmedDeck) {
+    G.myDeck = shuffle(window._confirmedDeck.map(id => ({ id, name: CARDS[id]?.name || id })));
+    G.myKeyDeck = (window._confirmedKeyDeck || []).map(id => ({ id, name: CARDS[id]?.name || id }));
+  }
+  enterGame();
+}
+
+// ─────────────────────────────────────────────
+// 범용 카드 효과
+// ─────────────────────────────────────────────
+function activateCard(handIdx) {
+  const c = G.myHand[handIdx];
+  if (!c) return;
+  const card = CARDS[c.id];
+
+  switch(c.id) {
+    case '구사일생':
+      notify('구사일생은 전투 시 자동으로 발동 여부를 물어봅니다.');
+      return;
+
+    case '눈에는 눈':
+      // 상대 서치 시 자동 트리거 — 수동으로도 발동 가능
+      G.myHand.splice(handIdx, 1);
+      G.myGrave.push({ id: c.id, name: c.name });
+      drawN(2);
+      log('눈에는 눈: 드로우 2장!', 'mine');
+      sendGameState(); renderAll();
+      return;
+
+    case '출입통제':
+      G.myHand.splice(handIdx, 1);
+      G.myGrave.push({ id: c.id, name: c.name });
+      log('출입통제 발동! 상대 소환 효과 무효', 'mine');
+      sendAction({ type: 'negate', reason: '출입통제', cardId: c.id });
+      sendGameState(); renderAll();
+      return;
+
+    case '단단한 카드 자물쇠':
+      if (G.opField.length === 0 && !G.opFieldCard) { notify('대상으로 할 카드가 없습니다.'); return; }
+      openCardPicker(
+        [...G.opField, ...(G.opFieldCard ? [G.opFieldCard] : [])],
+        '단단한 카드 자물쇠: 상대 필드 카드 1장 효과 무효',
+        1,
+        (selected) => {
+          const targets = [...G.opField, ...(G.opFieldCard ? [G.opFieldCard] : [])];
+          if (selected.length > 0) {
+            const t = targets[selected[0]];
+            log(`단단한 카드 자물쇠: ${t.name} 효과 턴 종료시까지 무효`, 'mine');
+            sendAction({ type: 'negateField', cardId: t.id });
+          }
+          G.myHand.splice(handIdx, 1);
+          G.myGrave.push({ id: c.id, name: c.name });
+          sendGameState(); renderAll();
+        }
+      );
+      return;
+
+    case '서치 봉인의 항아리':
+      // ① 덱으로 되돌리고 드로우
+      openCardPicker(
+        [{ id: '서치 봉인의 항아리', name: '서치 봉인의 항아리' }],
+        '서치 봉인의 항아리: ① 덱으로 되돌리고 드로우 / ② 버려서 서치 봉인',
+        1,
+        () => {},
+        false
+      );
+      // 직접 confirm으로 선택
+      const choice = confirm('서치 봉인의 항아리\n\n확인 = ① 덱으로 되돌리고 1장 드로우\n취소 = ② 패에서 버려서 이 턴 서치 봉인');
+      if (choice) {
+        // ① 덱으로
+        G.myHand.splice(handIdx, 1);
+        G.myDeck.push({ id: c.id, name: c.name });
+        G.myDeck = shuffle(G.myDeck);
+        drawOne();
+        log('서치 봉인의 항아리 ①: 덱으로 + 드로우', 'mine');
+      } else {
+        // ② 버리고 서치 봉인
+        G.myHand.splice(handIdx, 1);
+        G.myGrave.push({ id: c.id, name: c.name });
+        log('서치 봉인의 항아리 ②: 이 턴 서치 봉인!', 'mine');
+        sendAction({ type: 'searchBan', reason: '서치 봉인의 항아리' });
+      }
+      sendGameState(); renderAll();
+      return;
+
+    case '유혹의 황금사과':
+      G.myHand.splice(handIdx, 1);
+      G.myGrave.push({ id: c.id, name: c.name });
+      G.goldenAppleActive = true;
+      log('유혹의 황금사과 발동! 이 턴 상대 소환 시마다 1장 드로우', 'mine');
+      sendGameState(); renderAll();
+      return;
+
+    case '수호의 빛':
+      // 필드 마법
+      if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
+      G.myHand.splice(handIdx, 1);
+      G.myFieldCard = { id: c.id, name: c.name };
+      // 발동 시 제외된 카드 패에 넣기
+      if (G.myExile.length > 0) {
+        openCardPicker(
+          G.myExile,
+          '수호의 빛: 제외된 카드 1장 패에 넣기 (선택)',
+          1,
+          (selected) => {
+            if (selected.length > 0) {
+              const ec = G.myExile.splice(selected[0], 1)[0];
+              G.myHand.push({ id: ec.id, name: ec.name, isPublic: true });
+              log(`수호의 빛: ${ec.name} 패로`, 'mine');
+            }
+            sendGameState(); renderAll();
+          }
+        );
+      }
+      log('수호의 빛 필드 발동!', 'mine');
+      sendGameState(); renderAll();
+      return;
+
+    case '신성한 수호자':
+      // ① 패에서 제외 → 이 턴 제외 불가
+      G.myHand.splice(handIdx, 1);
+      G.myExile.push({ id: c.id, name: c.name });
+      G.exileBanActive = true;
+      log('신성한 수호자 ①: 이 턴 서로 카드 제외 불가!', 'mine');
+      sendAction({ type: 'exileBan' });
+      // ② 제외됐으면 수호의 빛 서치 자동
+      const lightIdx = G.myDeck.findIndex(dc => dc.id === '수호의 빛');
+      if (lightIdx >= 0) {
+        G.myDeck.splice(lightIdx, 1);
+        G.myHand.push({ id: '수호의 빛', name: '수호의 빛', isPublic: true });
+        log('신성한 수호자 ②: 수호의 빛 서치!', 'mine');
+      }
+      sendGameState(); renderAll();
+      return;
+
+    case '일격필살':
+      // 키카드 — 상대 패 1장 버리기
+      G.myHand.splice(handIdx, 1);
+      G.myGrave.push({ id: c.id, name: c.name });
+      log('일격필살: 상대 패 1장 버리기!', 'mine');
+      sendAction({ type: 'forceDiscard', count: 1, reason: '일격필살', attackerPicks: true });
+      sendGameState(); renderAll();
+      return;
+
+    case '단 한번의 기회':
+      // 키카드 — 드로우 1장
+      G.myHand.splice(handIdx, 1);
+      G.myGrave.push({ id: c.id, name: c.name });
+      drawOne();
+      log('단 한번의 기회: 드로우!', 'mine');
+      sendGameState(); renderAll();
+      return;
+
+    default:
+      // 기본 처리
+      G.myHand.splice(handIdx, 1);
+      G.myGrave.push({ id: c.id, name: c.name });
+      log(`발동: ${c.name}`, 'mine');
+      notify(`${c.name} 발동! (효과를 수동으로 처리하세요)`);
+      sendGameState(); renderAll();
+  }
+}
+
+// ─────────────────────────────────────────────
+// LOBBY → DECK BUILDER 연결
+// ─────────────────────────────────────────────
+// createRoom/joinRoom 후 덱 빌더로 이동하도록 startGame 수정
+const _origStartGame = typeof startGame === 'function' ? startGame : null;
+
+function goToDeckBuilder() {
+  document.getElementById('lobby').style.display = 'none';
+  document.getElementById('deckBuilder').style.display = 'flex';
+  filterDeckPool('전체');
+  renderBuilderDeck();
 }
 
 // ─────────────────────────────────────────────
