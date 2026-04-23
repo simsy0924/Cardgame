@@ -2026,13 +2026,16 @@ function listenRoom() {
       document.getElementById('startGameBtn').disabled = false;
     }
 
+    // 게임 시작 신호 — 덱 빌더로 이동 (로비에 있을 때만)
     if (data.status === 'playing' && document.getElementById('lobby').style.display !== 'none') {
       goToDeckBuilder();
     }
 
-    // Handle actions from opponent
+    // 상대 액션 처리 — 게임 중일 때만
     if (data.lastAction && data.lastAction.by !== myRole) {
-      handleOpponentAction(data.lastAction);
+      if (document.getElementById('game').style.display !== 'none') {
+        handleOpponentAction(data.lastAction);
+      }
     }
   });
 }
@@ -2382,32 +2385,61 @@ function clearDeck() {
 function confirmDeck() {
   const mainTotal = Object.values(builderMainDeck).reduce((a,b) => a+b, 0);
   if (mainTotal < 40 || mainTotal > 60) { notify('메인 덱은 40~60장이어야 합니다.'); return; }
-  // 덱 배열 생성
+
   const deckArr = [];
   Object.entries(builderMainDeck).forEach(([id, count]) => {
     for (let i = 0; i < count; i++) deckArr.push(id);
   });
   const keyArr = Object.keys(builderKeyDeck);
-  // 저장
+
   window._confirmedDeck = deckArr;
   window._confirmedKeyDeck = keyArr;
-  // Firebase에 덱 확정 신호
-  if (roomRef) roomRef.child(myRole + 'DeckReady').set(true);
+
   document.getElementById('deckBuilder').style.display = 'none';
-  // 대기 화면 표시
-  notify('덱 확정! 상대방을 기다리는 중...');
-  // 덱 빌더에서 직접 게임으로
+
+  // 대기 메시지 표시
+  document.getElementById('lobby').style.display = 'flex';
+  const statusEl = myRole === 'host'
+    ? document.getElementById('createStatus')
+    : document.getElementById('joinStatus');
+  statusEl.textContent = '덱 확정 완료! 상대방을 기다리는 중...';
+  statusEl.classList.remove('hidden');
+
+  if (!roomRef) {
+    // DEMO 모드
+    enterGameWithDeck();
+    return;
+  }
+
+  // Firebase에 내 덱 준비 완료 신호
+  roomRef.child(myRole + 'DeckReady').set(true);
+
+  // 상대방도 준비됐는지 polling
   checkBothDecksReady();
 }
 
 function checkBothDecksReady() {
   if (!roomRef) { enterGameWithDeck(); return; }
+
+  // 기존 리스너 제거 후 새로 등록
+  roomRef.off('value');
+
   roomRef.on('value', snap => {
     const data = snap.val();
     if (!data) return;
-    const hostReady = data.hostDeckReady;
-    const guestReady = data.guestDeckReady;
+
+    // 상대 이름 업데이트
+    if (myRole === 'host' && data.guest) {
+      opName = data.guest;
+      document.getElementById('hdrOpName').textContent = opName;
+    }
+
+    const hostReady = data.hostDeckReady === true;
+    const guestReady = data.guestDeckReady === true;
+
     if (hostReady && guestReady) {
+      // 리스너 제거 후 게임 시작
+      roomRef.off('value');
       enterGameWithDeck();
     }
   });
