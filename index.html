@@ -1167,173 +1167,175 @@ function onOpFieldClick(i) {
 // CARD DETAIL MODAL (효과 버튼 포함)
 // ─────────────────────────────────────────────
 function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -1) {
-  const card = CARDS[cardId] || { name: cardId, cardType: 'normal', effects: '효과 정보 없음' };
-  document.getElementById('mdCardName').textContent = card.name;
-  document.getElementById('mdCardEffects').textContent = card.effects || '효과 없음';
+  try {
+    const card = CARDS[cardId] || { name: cardId, cardType: 'normal', effects: '효과 정보 없음' };
+    document.getElementById('mdCardName').textContent = card.name;
+    document.getElementById('mdCardEffects').textContent = card.effects || '효과 없음';
 
-  // Meta chips
-  const meta = document.getElementById('mdCardMeta');
-  meta.innerHTML = '';
-  const typeChip = document.createElement('div');
-  typeChip.className = 'meta-chip';
-  typeChip.textContent = CARD_TYPE_LABEL[card.cardType] || card.cardType;
-  typeChip.style.borderColor = CARD_TYPE_COLOR[card.cardType] || '#555';
-  typeChip.style.color = CARD_TYPE_COLOR[card.cardType] || '#555';
-  meta.appendChild(typeChip);
-  if (card.atk !== undefined) {
-    const atkChip = document.createElement('div');
-    atkChip.className = 'meta-chip';
-    // 필드에 있으면 현재 공격력 표시
-    const fieldMon = fieldIdx >= 0 ? G.myField[fieldIdx] : G.myField.find(m => m.id === cardId);
-    const currentAtk = fieldMon ? fieldMon.atk : card.atk;
-    atkChip.textContent = `ATK ${currentAtk}${fieldMon && fieldMon.atk !== card.atk ? ` (기본 ${card.atk})` : ''}`;
-    atkChip.style.borderColor = '#c8a96e'; atkChip.style.color = '#c8a96e';
-    meta.appendChild(atkChip);
-  }
-  if (card.isKeyCard) {
-    const kc = document.createElement('div');
-    kc.className = 'meta-chip';
-    kc.textContent = '키카드';
-    kc.style.borderColor = '#7c5cbf'; kc.style.color = '#7c5cbf';
-    meta.appendChild(kc);
-  }
-
-  // ── 액션 버튼 생성 ──
-  const actions = document.getElementById('mdCardActions');
-  actions.innerHTML = '';
-
-  const addBtn = (label, cls, fn) => {
-    const b = document.createElement('button');
-    b.className = `btn ${cls}`;
-    b.textContent = label;
-    b.onclick = () => { closeModal('cardDetailModal'); fn(); };
-    actions.appendChild(b);
-  };
-
-  if (!opponentCard) {
-    // ── 패에 있는 카드 ──
-    if (handIdx >= 0) {
-      const isPenguin = isPenguinCard(cardId);
-      const canAct = isMyTurn && (currentPhase === 'deploy' || currentPhase === 'attack' || currentPhase === 'end');
-      const canActAnytime = currentPhase !== 'draw'; // 마법/함정은 언제든
-
-      if (isPenguin || card.theme === '펭귄') {
-        // 펭귄 카드 — 효과별 버튼
-        switch(cardId) {
-          case '펭귄 마을':
-            if (isMyTurn && currentPhase === 'deploy')
-              addBtn('① 공개하기', 'btn-primary', () => activatePenguinCard(handIdx, 1));
-            break;
-          case '꼬마 펭귄':
-            if (isMyTurn && currentPhase === 'deploy')
-              addBtn('① 패에서 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
-            break;
-          case '펭귄 부부':
-            if (isMyTurn && currentPhase === 'deploy')
-              addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
-            addBtn('② 보여주기 → 드로우2 → 버리기', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
-            break;
-          case '현자 펭귄':
-            if (isMyTurn && currentPhase === 'deploy')
-              addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
-            if (canAct && isPenguinVillageRevealed())
-              addBtn('① 드로우+버리기 [마을 공개 필요]', 'btn-secondary', () => activatePenguinCard(handIdx, 1));
-            if (isMyTurn && currentPhase === 'deploy')
-              addBtn('② 서치 (전개)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
-            break;
-          case '수문장 펭귄':
-            if (isMyTurn && currentPhase === 'deploy')
-              addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
-            break;
-          case '펭귄!돌격!':
-            if (isMyTurn && currentPhase === 'deploy')
-              addBtn('① 덱에서 펭귄 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
-            break;
-          case '펭귄의 영광':
-            if (canActAnytime)
-              addBtn('① 펭귄 용사 소환 + 상대 패 공개', 'btn-primary', () => activatePenguinCard(handIdx, 1));
-            break;
-          case '펭귄 용사':
-            if (isMyTurn && currentPhase === 'deploy')
-              addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
-            if (!isMyTurn)
-              addBtn('② 패로 되돌리기 + 마법 회수 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
-            break;
-          case '펭귄의 일격':
-            if (canActAnytime)
-              addBtn('① 패 1장 버리고 효과 무효', 'btn-primary', () => activatePenguinCard(handIdx, 1));
-            break;
-          case '펭귄이여 영원하라':
-            if (canActAnytime)
-              addBtn('① 필드 카드 교환 + 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
-            if (!isMyTurn)
-              addBtn('② 묘지 제외 → 소환 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
-            break;
-          case '펭귄의 전설':
-            if (isMyTurn && currentPhase === 'deploy')
-              addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
-            if (!isMyTurn)
-              addBtn('② 패로 + 묘지 소환 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
-            break;
-          case '펭귄 마법사':
-            if (isMyTurn && currentPhase === 'deploy')
-              addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
-            if (canActAnytime && !G.myHand[handIdx]?.isPublic)
-              addBtn('① 보여주기 → 서치 → 덱으로', 'btn-secondary', () => activatePenguinCard(handIdx, 1));
-            break;
-        }
-      } else {
-        // 비펭귄 범용 카드
-        if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
-          addBtn('소환', 'btn-primary', () => summonFromHand(handIdx));
-        if (['normal','magic','field'].includes(card.cardType) && isMyTurn && currentPhase === 'deploy')
-          addBtn('발동', 'btn-primary', () => activateCard(handIdx));
-        if (['magic','trap'].includes(card.cardType) && canActAnytime)
-          addBtn(`${card.cardType === 'trap' ? '함정' : '마법'} 발동`, 'btn-secondary', () => activateCard(handIdx));
-      }
-
-      // 항상: 패에서 버리기
-      addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
+    // Meta chips
+    const meta = document.getElementById('mdCardMeta');
+    meta.innerHTML = '';
+    const typeChip = document.createElement('div');
+    typeChip.className = 'meta-chip';
+    typeChip.textContent = CARD_TYPE_LABEL[card.cardType] || card.cardType;
+    typeChip.style.borderColor = CARD_TYPE_COLOR[card.cardType] || '#555';
+    typeChip.style.color = CARD_TYPE_COLOR[card.cardType] || '#555';
+    meta.appendChild(typeChip);
+    if (card.atk !== undefined) {
+      const atkChip = document.createElement('div');
+      atkChip.className = 'meta-chip';
+      const fieldMon = fieldIdx >= 0 ? G.myField[fieldIdx] : G.myField.find(m => m.id === cardId);
+      const currentAtk = fieldMon ? fieldMon.atk : card.atk;
+      atkChip.textContent = `ATK ${currentAtk}`;
+      atkChip.style.borderColor = '#c8a96e'; atkChip.style.color = '#c8a96e';
+      meta.appendChild(atkChip);
+    }
+    if (card.isKeyCard) {
+      const kc = document.createElement('div');
+      kc.className = 'meta-chip';
+      kc.textContent = '키카드';
+      kc.style.borderColor = '#7c5cbf'; kc.style.color = '#7c5cbf';
+      meta.appendChild(kc);
     }
 
-    // ── 필드에 있는 카드 (효과 발동) ──
-    if (fieldIdx >= 0) {
-      const mon = G.myField[fieldIdx];
-      if (mon) {
-        switch(mon.id) {
-          case '수문장 펭귄':
-            if (isMyTurn && currentPhase === 'deploy' && isPenguinVillageRevealed())
-              addBtn('① 공격력+1 + 서로 패 1장 버리기', 'btn-primary', () => activatePenguinFieldEffect(fieldIdx, 1));
-            break;
-          case '펭귄 용사':
-            if (!isMyTurn)
-              addBtn('② 패로 되돌리기 + 마법 회수', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 2));
-            break;
-          case '펭귄의 전설':
-            if (!isMyTurn)
-              addBtn('② 패로 + 묘지 소환 (상대 턴)', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 2));
-            break;
-          case '펭귄 마법사':
-            if (isMyTurn && currentPhase === 'deploy' && isPenguinVillageRevealed())
-              addBtn('③ 마을 트리거: 제외 몬스터 소환', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 3));
-            break;
+    // 액션 버튼
+    const actions = document.getElementById('mdCardActions');
+    actions.innerHTML = '';
+
+    const addBtn = (label, cls, fn) => {
+      const b = document.createElement('button');
+      b.className = `btn ${cls}`;
+      b.textContent = label;
+      b.onclick = () => { closeModal('cardDetailModal'); try { fn(); } catch(e) { console.error(e); notify('효과 처리 오류: ' + e.message); } };
+      actions.appendChild(b);
+    };
+
+    try {
+      if (!opponentCard) {
+        if (handIdx >= 0) {
+          const isPenguin = typeof isPenguinCard === 'function' ? isPenguinCard(cardId) : cardId.includes('펭귄');
+          const canActAnytime = currentPhase !== 'draw';
+
+          if (isPenguin) {
+            switch(cardId) {
+              case '펭귄 마을':
+                if (isMyTurn && currentPhase === 'deploy')
+                  addBtn('① 공개하기', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                break;
+              case '꼬마 펭귄':
+                if (isMyTurn && currentPhase === 'deploy')
+                  addBtn('① 패에서 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                break;
+              case '펭귄 부부':
+                if (isMyTurn && currentPhase === 'deploy')
+                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
+                addBtn('② 드로우2 + 버리기', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
+                break;
+              case '현자 펭귄':
+                if (isMyTurn && currentPhase === 'deploy')
+                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
+                if (isMyTurn)
+                  addBtn('① 드로우+버리기', 'btn-secondary', () => activatePenguinCard(handIdx, 1));
+                if (isMyTurn && currentPhase === 'deploy')
+                  addBtn('② 서치', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
+                break;
+              case '수문장 펭귄':
+                if (isMyTurn && currentPhase === 'deploy')
+                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
+                break;
+              case '펭귄!돌격!':
+                if (isMyTurn && currentPhase === 'deploy')
+                  addBtn('① 덱에서 펭귄 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                break;
+              case '펭귄의 영광':
+                addBtn('① 펭귄 용사 소환 + 상대 패 공개', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                break;
+              case '펭귄 용사':
+                if (isMyTurn && currentPhase === 'deploy')
+                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
+                if (!isMyTurn)
+                  addBtn('② 패로 + 마법 회수 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
+                break;
+              case '펭귄의 일격':
+                addBtn('① 패 1장 버리고 효과 무효', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                break;
+              case '펭귄이여 영원하라':
+                addBtn('① 필드 카드 교환 + 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                if (!isMyTurn)
+                  addBtn('② 묘지 제외 → 소환 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
+                break;
+              case '펭귄의 전설':
+                if (isMyTurn && currentPhase === 'deploy')
+                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
+                if (!isMyTurn)
+                  addBtn('② 패로 + 묘지 소환 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
+                break;
+              case '펭귄 마법사':
+                if (isMyTurn && currentPhase === 'deploy')
+                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
+                addBtn('① 보여주기 → 서치 → 덱으로', 'btn-secondary', () => activatePenguinCard(handIdx, 1));
+                break;
+              default:
+                if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
+                  addBtn('소환', 'btn-primary', () => summonFromHand(handIdx));
+            }
+          } else {
+            if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
+              addBtn('소환', 'btn-primary', () => summonFromHand(handIdx));
+            if (['normal','magic','field'].includes(card.cardType) && isMyTurn)
+              addBtn('발동', 'btn-primary', () => activateCard(handIdx));
+            if (['magic','trap'].includes(card.cardType) && canActAnytime)
+              addBtn(`${card.cardType === 'trap' ? '함정' : '마법'} 발동`, 'btn-secondary', () => activateCard(handIdx));
+          }
+          addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
+        }
+
+        if (fieldIdx >= 0) {
+          const mon = G.myField[fieldIdx];
+          if (mon) {
+            switch(mon.id) {
+              case '수문장 펭귄':
+                if (isMyTurn && currentPhase === 'deploy')
+                  addBtn('① 공격력+1 + 서로 패 버리기', 'btn-primary', () => activatePenguinFieldEffect(fieldIdx, 1));
+                break;
+              case '펭귄 용사':
+                if (!isMyTurn)
+                  addBtn('② 패로 + 마법 회수', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 2));
+                break;
+              case '펭귄의 전설':
+                if (!isMyTurn)
+                  addBtn('② 패로 + 묘지 소환', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 2));
+                break;
+              case '펭귄 마법사':
+                addBtn('③ 제외 몬스터 소환', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 3));
+                break;
+            }
+          }
+        }
+
+        if (handIdx === -2) {
+          addBtn('묘지 효과 발동', 'btn-secondary', () => activateGraveEffect(cardId));
         }
       }
+    } catch(e) {
+      console.error('버튼 생성 오류:', e);
     }
 
-    // ── 묘지 효과 버튼 (zone viewer에서 호출 시) ──
-    if (handIdx === -2) { // 묘지에서 열림
-      addBtn('묘지 효과 발동', 'btn-secondary', () => activateGraveEffect(cardId));
-    }
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn btn-secondary';
+    closeBtn.textContent = '닫기';
+    closeBtn.onclick = () => closeModal('cardDetailModal');
+    actions.appendChild(closeBtn);
+
+    document.getElementById('cardDetailModal').classList.remove('hidden');
+  } catch(e) {
+    console.error('openCardDetail 오류:', e);
+    // 최소한 모달은 열기
+    document.getElementById('mdCardName').textContent = cardId;
+    document.getElementById('mdCardEffects').textContent = CARDS[cardId]?.effects || '';
+    document.getElementById('mdCardActions').innerHTML = '<button class="btn btn-secondary" onclick="closeModal(\'cardDetailModal\')">닫기</button>';
+    document.getElementById('cardDetailModal').classList.remove('hidden');
   }
-
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'btn btn-secondary';
-  closeBtn.textContent = '닫기';
-  closeBtn.onclick = () => closeModal('cardDetailModal');
-  actions.appendChild(closeBtn);
-
-  document.getElementById('cardDetailModal').classList.remove('hidden');
 }
 
 // ─────────────────────────────────────────────
