@@ -1003,8 +1003,7 @@ function renderMyHand() {
   container.innerHTML = '';
   G.myHand.forEach((c, i) => {
     const el = renderCard(c, { selected: i === selectedCardIdx });
-    el.addEventListener('click', () => onMyHandClick(i));
-    el.addEventListener('dblclick', () => openCardDetail(c.id, i));
+    el.addEventListener('click', () => openCardDetail(c.id, i));
     container.appendChild(el);
   });
   document.getElementById('myHandCount').textContent = G.myHand.length;
