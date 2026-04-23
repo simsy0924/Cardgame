@@ -1496,8 +1496,10 @@ let G = {
 
 let selectedCardIdx = -1;     // index in myHand
 let selectedFieldIdx = -1;    // index in myField
-let pickerCallback = null;
+let pickerQueue = [];   // {cards, title, maxPick, callback} 대기열
+let pickerRunning = false;
 let pickerSelected = [];
+let pickerCurrentCards = [];
 
 // ─────────────────────────────────────────────
 // UTILS
@@ -2096,9 +2098,7 @@ function manualDiscard(handIdx) {
 }
 
 function executeCombat(atkIdx, defIdx) {
-  if (!isMyTurn || currentPhase !== 'attack') {
-    notify('공격 단계가 아닙니다.'); return;
-  }
+  if (!isMyTurn || currentPhase !== 'attack') { notify('공격 단계가 아닙니다.'); return; }
   const attacker = G.myField[atkIdx];
   const defender = G.opField[defIdx];
   if (!attacker || !defender) return;
@@ -2107,23 +2107,24 @@ function executeCombat(atkIdx, defIdx) {
   log(`전투: ${attacker.name}(${attacker.atk}) vs ${defender.name}(${defender.atk})`, 'mine');
 
   if (diff > 0) {
-    // My monster wins
+    // 내 몬스터 승리 — 상대 묘지, 상대 패 diff장 손실 (내가 공격자니까 상대 공개패 우선 선택)
     G.opField.splice(defIdx, 1);
     G.opGrave.push(defender);
-    // Opponent discards diff cards (they choose — we just record the event)
-    log(`상대의 ${defender.name} 묘지로. 상대는 패를 ${diff}장 버려야 합니다.`, 'system');
+    log(`${defender.name} 묘지. 상대 패 ${diff}장 손실`, 'system');
     notify(`공격 성공! 상대 패 ${diff}장 손실`);
+    // 상대에게 forceDiscard 전송 (공개패 우선)
+    sendAction({ type: 'forceDiscard', count: diff, attackerPicks: true });
   } else if (diff < 0) {
-    // Opponent's monster wins
+    // 상대 몬스터 승리 — 내 묘지, 내 패 |diff|장 손실
     G.myField.splice(atkIdx, 1);
     G.myGrave.push(attacker);
-    log(`내 ${attacker.name} 묘지로. 내 패를 ${Math.abs(diff)}장 버려야 합니다.`, 'mine');
-    // Force discard
-    forceDiscard(Math.abs(diff));
+    log(`${attacker.name} 묘지. 내 패 ${Math.abs(diff)}장 버리기`, 'mine');
+    // 펭귄 마을 ② 체크 먼저
+    const replaced = checkPenguinVillageReplace(Math.abs(diff));
+    if (!replaced) forceDiscard(Math.abs(diff), true); // 상대가 고름
   } else {
-    // Same ATK — both survive if ATK 0, else both go to grave
     if (attacker.atk === 0) {
-      log(`공격력 0끼리의 전투 — 양쪽 모두 필드 유지`, 'system');
+      log(`공격력 0 — 양쪽 유지`, 'system');
     } else {
       G.myField.splice(atkIdx, 1);
       G.opField.splice(defIdx, 1);
@@ -2133,7 +2134,7 @@ function executeCombat(atkIdx, defIdx) {
     }
   }
   sendAction({ type: 'combat', atkIdx, defIdx, atkCard: attacker, defCard: defender });
-  renderAll();
+  sendGameState(); renderAll();
 }
 
 function directAttack(atkIdx) {
@@ -2145,24 +2146,50 @@ function directAttack(atkIdx) {
   sendAction({ type: 'directAttack', atkIdx, card: attacker });
 }
 
-function forceDiscard(n) {
-  // Pick from hand — for attacked player, attacker picks public first, then random
-  // Simplified: player picks
-  openCardPicker(
-    G.myHand,
-    `패를 ${n}장 버려야 합니다`,
-    n,
-    (selected) => {
-      selected.sort((a, b) => b - a).forEach(i => {
-        const c = G.myHand.splice(i, 1)[0];
-        G.myGrave.push(c);
-        log(`패 버림: ${c.name}`, 'mine');
-      });
-      renderAll();
-      checkWinCondition();
-    },
-    false // opponent can't choose; but in this simplified version self chooses
-  );
+function forceDiscard(n, opponentPicks = false) {
+  if (G.myHand.length === 0) { checkWinCondition(); return; }
+  const actualN = Math.min(n, G.myHand.length);
+
+  if (opponentPicks) {
+    // 상대가 내 패를 고름 — 공개패는 상대가 고르고 일반패는 무작위
+    const publicCards = G.myHand.filter(c => c.isPublic);
+    const privateCards = G.myHand.filter(c => !c.isPublic);
+    let discarded = 0;
+
+    // 공개패 먼저 버리기 (상대가 고른 것처럼 시뮬레이션)
+    const toDiscard = [];
+    publicCards.forEach(c => { if (discarded < actualN) { toDiscard.push(c); discarded++; } });
+    // 나머지는 무작위
+    while (discarded < actualN && privateCards.length > 0) {
+      const idx = Math.floor(Math.random() * privateCards.length);
+      toDiscard.push(privateCards.splice(idx, 1)[0]);
+      discarded++;
+    }
+    toDiscard.forEach(c => {
+      const hi = G.myHand.findIndex(h => h.id === c.id && h.isPublic === c.isPublic);
+      if (hi >= 0) { G.myGrave.push(G.myHand.splice(hi, 1)[0]); log(`패 버림(상대 선택): ${c.name}`, 'mine'); }
+    });
+    sendGameState(); renderAll(); checkWinCondition();
+  } else {
+    // 내가 고름
+    openCardPicker(
+      G.myHand,
+      `패를 ${actualN}장 버려야 합니다 (${actualN}장 선택)`,
+      actualN,
+      (selected) => {
+        selected.sort((a,b) => b-a).forEach(i => {
+          if (G.myHand[i]) { G.myGrave.push(G.myHand.splice(i, 1)[0]); }
+        });
+        // 덜 선택했으면 나머지 무작위
+        const remaining = actualN - selected.length;
+        for (let i = 0; i < remaining && G.myHand.length > 0; i++) {
+          const ri = Math.floor(Math.random() * G.myHand.length);
+          G.myGrave.push(G.myHand.splice(ri, 1)[0]);
+        }
+        sendGameState(); renderAll(); checkWinCondition();
+      }
+    );
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -2212,17 +2239,41 @@ function advancePhase(phase) {
 // ─────────────────────────────────────────────
 // CARD PICKER MODAL
 // ─────────────────────────────────────────────
-function openCardPicker(cards, title, maxPick, callback, multi = true) {
-  pickerCallback = callback;
+// ─────────────────────────────────────────────
+// CARD PICKER — 큐 기반 (중첩 호출 안전)
+// ─────────────────────────────────────────────
+let pickerQueue = [];   // {cards, title, maxPick, callback} 대기열
+let pickerRunning = false;
+let pickerSelected = [];
+let pickerCurrentCards = [];
+
+// 외부에서 호출하는 함수
+function openCardPicker(cards, title, maxPick, callback) {
+  // 빈 배열이면 바로 빈 결과로 콜백
+  if (!cards || cards.length === 0) {
+    callback([]);
+    return;
+  }
+  // 큐에 추가
+  pickerQueue.push({ cards: [...cards], title, maxPick: Math.min(maxPick, cards.length), callback });
+  if (!pickerRunning) runNextPicker();
+}
+
+function runNextPicker() {
+  if (pickerQueue.length === 0) { pickerRunning = false; return; }
+  pickerRunning = true;
+  const { cards, title, maxPick } = pickerQueue[0];
   pickerSelected = [];
+  pickerCurrentCards = cards;
+
   document.getElementById('pickerTitle').textContent = title;
-  document.getElementById('pickerDesc').textContent = `${maxPick}장 선택`;
-  document.getElementById('cardPickerModal').dataset.maxPick = maxPick;
+  document.getElementById('pickerDesc').textContent = maxPick === 0 ? '선택 없이 확인 가능' : `최대 ${maxPick}장 선택`;
 
   const grid = document.getElementById('pickerGrid');
   grid.innerHTML = '';
   cards.forEach((c, i) => {
     const el = renderCard(c);
+    el.style.cursor = 'pointer';
     el.addEventListener('click', () => {
       const idx = pickerSelected.indexOf(i);
       if (idx >= 0) {
@@ -2231,6 +2282,8 @@ function openCardPicker(cards, title, maxPick, callback, multi = true) {
       } else if (pickerSelected.length < maxPick) {
         pickerSelected.push(i);
         el.classList.add('selected');
+        // maxPick이 1이면 바로 확정
+        if (maxPick === 1) confirmPick();
       }
     });
     grid.appendChild(el);
@@ -2240,9 +2293,16 @@ function openCardPicker(cards, title, maxPick, callback, multi = true) {
 }
 
 function confirmPick() {
-  if (pickerCallback) pickerCallback(pickerSelected);
-  pickerCallback = null;
   closeModal('cardPickerModal');
+  if (pickerQueue.length === 0) { pickerRunning = false; return; }
+  const { callback } = pickerQueue.shift();
+  const selected = [...pickerSelected];
+  pickerSelected = [];
+  // 콜백 실행 후 다음 picker
+  try { callback(selected); } catch(e) { console.error('picker 콜백 오류:', e); notify('효과 처리 오류: ' + e.message); }
+  // 큐에 다음 항목 있으면 실행
+  if (pickerQueue.length > 0) setTimeout(runNextPicker, 150);
+  else pickerRunning = false;
 }
 
 // ─────────────────────────────────────────────
@@ -2478,9 +2538,38 @@ function handleOpponentAction(action) {
       handleOpponentCombat(action);
       break;
     case 'directAttack':
-      log(`상대 직접 공격: ${action.card.name}(${action.card.atk}) — 패를 ${action.card.atk}장 버려야 합니다.`, 'opponent');
-      notify(`직접 공격 당함! 패 ${action.card.atk}장 버리기`);
-      forceDiscard(action.card.atk);
+      log(`상대 직접 공격! 패 ${action.card.atk}장 손실`, 'opponent');
+      notify(`직접 공격 당함! 패 ${action.card.atk}장 버려야 합니다`);
+      forceDiscard(action.card.atk, true); // 상대가 공격자 → 공개패 우선
+      break;
+    case 'forceDiscard':
+      // 상대가 내 패를 버리게 함 (상대가 공격자일 때)
+      if (action.attackerPicks) {
+        log(`상대 효과로 패 ${action.count}장 버리기`, 'opponent');
+        notify(`패 ${action.count}장을 버려야 합니다!`);
+        forceDiscard(action.count, true);
+      }
+      break;
+    case 'revealAllHand':
+      // 상대가 내 패를 전부 공개
+      G.myHand.forEach(c => { c.isPublic = true; });
+      log('상대 효과로 내 패가 전부 공개됨!', 'opponent');
+      notify('내 패가 전부 공개됐습니다!');
+      renderAll();
+      break;
+    case 'returnToHand':
+      // 내 필드 카드가 패로 돌아옴
+      { const idx = G.myField.findIndex(c => c.id === action.cardId);
+        if (idx >= 0) { const mon = G.myField.splice(idx,1)[0]; G.myHand.push({id:mon.id,name:mon.name,isPublic:true}); renderAll(); } }
+      break;
+    case 'opFieldRemove':
+      // 내 필드 카드가 제거됨
+      { const idx = G.myField.findIndex(c => c.id === action.cardId);
+        if (idx >= 0) { const mon = G.myField.splice(idx,1)[0]; if (action.to === 'grave') G.myGrave.push(mon); else G.myExile.push(mon); renderAll(); } }
+      break;
+    case 'negate':
+      log(`상대 효과 무효: ${action.reason || ''}`, 'opponent');
+      notify(`내 효과가 무효됐습니다! (${action.reason || ''})`);
       break;
     case 'endTurn':
       isMyTurn = true;
