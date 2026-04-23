@@ -840,7 +840,8 @@
 </div>
 
 <!-- ════════════ SCRIPTS ════════════ -->
-<script src="cards.js"></script>
+<script src="Cardgamedata.js"></script>
+<script src="penguin_effects.js"></script>
 <script>
 // ─────────────────────────────────────────────
 // Firebase Setup (사용자가 본인 config로 교체)
@@ -1137,13 +1138,35 @@ function onMyHandClick(i) {
 }
 
 function onMyFieldClick(i) {
-  if (!isMyTurn || currentPhase !== 'attack') return;
-  selectedFieldIdx = i;
-  // Highlight attack targets
-  document.querySelectorAll('#opField .zone-slot').forEach((el, j) => {
-    el.classList.toggle('attack-target', true);
-  });
-  notify('공격할 대상을 클릭하세요 (상대 몬스터 또는 직접 공격)');
+  if (!isMyTurn) return;
+
+  if (currentPhase === 'attack') {
+    selectedFieldIdx = i;
+    document.querySelectorAll('#opField .zone-slot').forEach((el) => {
+      el.classList.toggle('attack-target', true);
+    });
+    // 직접공격 버튼
+    if (G.opField.length === 0) {
+      if (confirm(`${G.myField[i]?.name}으로 직접 공격할까요? (상대 패 ${G.myField[i]?.atk}장 손실)`)) {
+        directAttack(i);
+      }
+      selectedFieldIdx = -1;
+    } else {
+      notify('공격할 상대 몬스터를 클릭하세요');
+    }
+    return;
+  }
+
+  if (currentPhase === 'deploy') {
+    const mon = G.myField[i];
+    if (!mon) return;
+    const card = CARDS[mon.id];
+    if (!card) return;
+    // 펭귄 몬스터 필드 효과
+    if (card.theme === '펭귄' || mon.id.includes('펭귄')) {
+      activatePenguinEffect(mon.id, -1, i);
+    }
+  }
 }
 
 function onOpFieldClick(i) {
@@ -1252,23 +1275,21 @@ function doDrawPhase() {
 }
 
 function drawCards(n) {
-  // Simulate draw from deck (in real game, deck is shuffled array)
-  // We use dummy card IDs for now unless deck is set up
-  const allIds = Object.keys(CARDS);
   for (let i = 0; i < n; i++) {
-    if (G.myDeckCount <= 0) {
-      // Deck empty: shuffle grave into deck
-      G.myDeckCount = G.myGrave.length;
+    if (!G.myDeck || G.myDeck.length === 0) {
+      // 덱 소진 → 묘지를 덱으로
+      if (G.myGrave.length === 0) { notify('덱과 묘지 모두 비어있습니다.'); break; }
+      G.myDeck = shuffle([...G.myGrave]);
       G.myGrave = [];
-      log('덱이 소진되어 묘지를 덱으로 되돌렸습니다.', 'system');
-      renderCounts();
+      G.myDeckCount = G.myDeck.length;
+      log('덱 소진 → 묘지를 덱으로 되돌렸습니다.', 'system');
     }
-    const randomId = allIds[Math.floor(Math.random() * allIds.length)];
-    const card = CARDS[randomId];
-    G.myHand.push({ id: randomId, name: card.name, isPublic: false });
-    G.myDeckCount--;
+    const card = G.myDeck.pop();
+    G.myDeckCount = G.myDeck.length;
+    G.myHand.push({ id: card.id, name: card.name, isPublic: false });
   }
   renderMyHand();
+  renderCounts();
 }
 
 function endDeploy() {
@@ -1287,7 +1308,8 @@ function endAttack() {
 
 function endTurn() {
   if (!isMyTurn || currentPhase !== 'end') return;
-  // Switch turns
+  // 펭귄 턴 종료 처리 (ATK 버프 원복 등)
+  if (typeof onTurnEnd_penguin === 'function') onTurnEnd_penguin();
   G.turn++;
   isMyTurn = false;
   advancePhase('draw');
@@ -1307,7 +1329,13 @@ function summonMonster(handIdx) {
   const card = CARDS[c.id];
   if (!card || card.cardType !== 'monster') { notify('몬스터 카드가 아닙니다.'); return; }
 
-  // Remove from hand, add to field
+  // 펭귄 몬스터면 효과 엔진으로
+  if (card.theme === '펭귄' || c.id.includes('펭귄')) {
+    const handled = activatePenguinEffect(c.id, handIdx, -1);
+    if (handled) return;
+  }
+
+  // 일반 소환
   G.myHand.splice(handIdx, 1);
   G.myField.push({ id: c.id, name: card.name, atk: card.atk || 0 });
   selectedCardIdx = -1;
@@ -1321,23 +1349,28 @@ function activateCard(handIdx) {
   const card = CARDS[c.id];
   if (!card) return;
 
+  // 펭귄 카드면 효과 엔진으로
+  if (card.theme === '펭귄' || c.id.includes('펭귄')) {
+    const handled = activatePenguinEffect(c.id, handIdx, -1);
+    if (handled) return;
+  }
+
+  // 범용 카드 처리
   if (card.cardType === 'field') {
-    // Place in field zone
     G.myHand.splice(handIdx, 1);
     if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
     G.myFieldCard = { id: c.id, name: card.name };
     log(`필드 마법 발동: ${card.name}`, 'mine');
     sendAction({ type: 'fieldCard', cardId: c.id });
   } else {
-    // Send to grave after use
     G.myHand.splice(handIdx, 1);
     G.myGrave.push({ id: c.id, name: card.name });
     log(`발동: ${card.name}`, 'mine');
     sendAction({ type: 'activate', cardId: c.id });
+    notify(`${card.name} 발동!`);
   }
   selectedCardIdx = -1;
   renderAll();
-  notify(`${card.name} 발동! (효과는 수동으로 처리하세요)`);
 }
 
 function manualDiscard(handIdx) {
@@ -1737,6 +1770,9 @@ function handleOpponentAction(action) {
       const win = (action.winner === myRole);
       showGameOver(win);
       break;
+    default:
+      // 펭귄 관련 상대 액션
+      if (typeof handlePenguinOpAction === 'function') handlePenguinOpAction(action);
   }
 }
 
@@ -1817,11 +1853,29 @@ function enterGame() {
 }
 
 function initDecks() {
-  // Build a default mixed deck for demo
-  const allIds = Object.keys(CARDS).filter(id => !CARDS[id].isKeyCard);
-  G.myDeckCount = 50;
-  G.opDeckCount = 50;
-  // In a full implementation, players would build decks in lobby
+  // 펭귄 테마 덱 (40장) + 키카드 덱
+  const penguinDeck = [
+    '펭귄 마을','펭귄 마을','펭귄 마을','펭귄 마을',
+    '꼬마 펭귄','꼬마 펭귄','꼬마 펭귄','꼬마 펭귄',
+    '펭귄 부부','펭귄 부부','펭귄 부부','펭귄 부부',
+    '현자 펭귄','현자 펭귄','현자 펭귄','현자 펭귄',
+    '수문장 펭귄','수문장 펭귄','수문장 펭귄','수문장 펭귄',
+    '펭귄!돌격!','펭귄!돌격!','펭귄!돌격!','펭귄!돌격!',
+    '펭귄의 영광','펭귄의 영광','펭귄의 영광','펭귄의 영광',
+    '펭귄이여 영원하라','펭귄이여 영원하라','펭귄이여 영원하라','펭귄이여 영원하라',
+    '펭귄 마법사','펭귄 마법사','펭귄 마법사','펭귄 마법사',
+    '구사일생','구사일생','단단한 카드 자물쇠','눈에는 눈',
+  ];
+  const keyDeck = ['펭귄 용사','펭귄의 일격','펭귄의 전설'];
+
+  G.myDeck = shuffle(penguinDeck.map(id => ({ id, name: CARDS[id]?.name || id })));
+  G.myKeyDeck = keyDeck.map(id => ({ id, name: CARDS[id]?.name || id }));
+  G.myDeckCount = G.myDeck.length;
+
+  // 상대도 같은 구성으로 (실제는 상대가 선택)
+  G.opDeck = shuffle(penguinDeck.map(id => ({ id, name: CARDS[id]?.name || id })));
+  G.opKeyDeck = keyDeck.map(id => ({ id, name: CARDS[id]?.name || id }));
+  G.opDeckCount = G.opDeck.length;
 }
 
 // ─────────────────────────────────────────────
