@@ -1,0 +1,1837 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CardGame — 핸드 배틀</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;700;900&family=Black+Han+Sans&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #13131e;
+    --surface2: #1c1c2e;
+    --border: #2a2a45;
+    --accent: #c8a96e;
+    --accent2: #7c5cbf;
+    --danger: #c84848;
+    --safe: #4a8c5c;
+    --text: #e8e0d0;
+    --text-dim: #888080;
+    --monster: #8B5E3C;
+    --normal: #4A7C59;
+    --magic: #3A5F8A;
+    --trap: #7A3A5A;
+    --field: #5A6A3A;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Serif KR', serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── LOBBY ── */
+  #lobby {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    gap: 2rem;
+    padding: 2rem;
+    background: radial-gradient(ellipse at 50% 0%, #1e1040 0%, #0a0a0f 70%);
+  }
+
+  .title-block {
+    text-align: center;
+  }
+
+  .title-block h1 {
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: clamp(2.5rem, 8vw, 5rem);
+    letter-spacing: .15em;
+    color: var(--accent);
+    text-shadow: 0 0 40px #c8a96e66, 0 2px 0 #000;
+    line-height: 1;
+  }
+
+  .title-block p {
+    color: var(--text-dim);
+    font-size: .9rem;
+    margin-top: .5rem;
+    letter-spacing: .1em;
+  }
+
+  .lobby-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    width: min(420px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .lobby-card h2 {
+    font-size: 1rem;
+    letter-spacing: .1em;
+    color: var(--accent);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: .75rem;
+  }
+
+  input[type="text"] {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .7rem 1rem;
+    color: var(--text);
+    font-family: inherit;
+    font-size: .95rem;
+    outline: none;
+    transition: border-color .2s;
+  }
+
+  input[type="text"]:focus { border-color: var(--accent); }
+  input[type="text"]::placeholder { color: var(--text-dim); }
+
+  .btn {
+    width: 100%;
+    padding: .75rem;
+    border: none;
+    border-radius: 6px;
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: 1rem;
+    letter-spacing: .12em;
+    cursor: pointer;
+    transition: all .2s;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #1a1000;
+  }
+
+  .btn-primary:hover { background: #dfc07e; transform: translateY(-1px); }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+
+  .btn-secondary:hover { background: #c8a96e22; }
+
+  .btn-danger {
+    background: var(--danger);
+    color: #fff;
+  }
+
+  .btn-safe {
+    background: var(--safe);
+    color: #fff;
+  }
+
+  .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+  .room-code-display {
+    text-align: center;
+    background: var(--surface2);
+    border: 1px dashed var(--accent);
+    border-radius: 8px;
+    padding: 1rem;
+  }
+
+  .room-code-display .code {
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: 2.5rem;
+    color: var(--accent);
+    letter-spacing: .3em;
+  }
+
+  .room-code-display p {
+    color: var(--text-dim);
+    font-size: .8rem;
+    margin-top: .3rem;
+  }
+
+  .status-msg {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: .85rem;
+    padding: .5rem;
+    background: var(--surface2);
+    border-radius: 6px;
+    min-height: 2rem;
+  }
+
+  /* ── GAME BOARD ── */
+  #game { display: none; flex-direction: column; min-height: 100vh; }
+
+  .game-header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: .6rem 1.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .game-header .room-info {
+    font-size: .8rem;
+    color: var(--text-dim);
+    letter-spacing: .05em;
+  }
+
+  .game-header .room-info span {
+    color: var(--accent);
+    font-family: 'Black Han Sans', sans-serif;
+    letter-spacing: .1em;
+  }
+
+  .phase-indicator {
+    display: flex;
+    gap: .4rem;
+    align-items: center;
+  }
+
+  .phase-chip {
+    padding: .25rem .7rem;
+    border-radius: 20px;
+    font-size: .75rem;
+    font-family: 'Black Han Sans', sans-serif;
+    letter-spacing: .08em;
+    border: 1px solid transparent;
+    opacity: .4;
+    transition: all .3s;
+  }
+
+  .phase-chip.active {
+    opacity: 1;
+    border-color: var(--accent);
+    color: var(--accent);
+    background: #c8a96e18;
+  }
+
+  .turn-label {
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: .85rem;
+    padding: .3rem .8rem;
+    border-radius: 4px;
+    letter-spacing: .05em;
+  }
+
+  .turn-mine { background: #4a8c5c33; color: #6ab87c; border: 1px solid #4a8c5c; }
+  .turn-opponent { background: #c8484833; color: #e87070; border: 1px solid #c84848; }
+
+  /* ── BOARD AREAS ── */
+  .board {
+    flex: 1;
+    display: grid;
+    grid-template-rows: 1fr auto 1fr;
+    gap: 0;
+    overflow: hidden;
+  }
+
+  .player-area {
+    display: flex;
+    flex-direction: column;
+    padding: .8rem 1rem;
+    gap: .5rem;
+    min-height: 0;
+  }
+
+  .player-area.opponent { background: #0d0d18; }
+  .player-area.self { background: #10101a; }
+
+  .area-label {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    font-size: .75rem;
+    color: var(--text-dim);
+    letter-spacing: .08em;
+  }
+
+  .area-label strong { color: var(--text); font-size: .9rem; }
+
+  .hand-count {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: .1rem .5rem;
+    font-size: .8rem;
+    color: var(--accent);
+    font-family: 'Black Han Sans', sans-serif;
+  }
+
+  /* ── MONSTER ZONE ── */
+  .monster-zone {
+    display: flex;
+    gap: .5rem;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .zone-slot {
+    width: 80px;
+    height: 110px;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    flex-shrink: 0;
+    transition: border-color .2s;
+  }
+
+  .zone-slot.active { border-color: var(--accent); }
+  .zone-slot.attack-target { border-color: var(--danger); animation: pulse-red .6s infinite alternate; }
+
+  @keyframes pulse-red {
+    from { box-shadow: 0 0 0 0 #c8484844; }
+    to { box-shadow: 0 0 0 6px #c8484800; }
+  }
+
+  /* ── CENTER DIVIDER ── */
+  .center-divider {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .4rem 1rem;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .field-zone {
+    display: flex;
+    align-items: center;
+    gap: .4rem;
+    font-size: .75rem;
+    color: var(--text-dim);
+  }
+
+  .field-card-slot {
+    width: 60px;
+    height: 40px;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: .6rem;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+
+  .phase-actions {
+    display: flex;
+    gap: .5rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .btn-sm {
+    padding: .35rem .8rem;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    border-radius: 4px;
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: .75rem;
+    letter-spacing: .05em;
+    cursor: pointer;
+    transition: all .15s;
+  }
+
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm.active-phase { background: var(--accent); color: #1a1000; border-color: var(--accent); }
+  .btn-sm:disabled { opacity: .3; cursor: not-allowed; }
+
+  /* ── HAND ── */
+  .hand-area {
+    display: flex;
+    gap: .4rem;
+    overflow-x: auto;
+    padding: .3rem 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+    flex-shrink: 0;
+  }
+
+  /* ── CARD COMPONENTS ── */
+  .card {
+    width: 78px;
+    height: 108px;
+    border-radius: 6px;
+    border: 1.5px solid var(--border);
+    background: var(--surface2);
+    display: flex;
+    flex-direction: column;
+    cursor: pointer;
+    transition: transform .15s, border-color .15s, box-shadow .15s;
+    position: relative;
+    flex-shrink: 0;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  .card:hover { transform: translateY(-6px) scale(1.04); box-shadow: 0 8px 24px #000a; }
+  .card.selected { border-color: var(--accent); box-shadow: 0 0 12px #c8a96e88; transform: translateY(-10px); }
+  .card.public-card { border-color: #c88040; }
+  .card.public-card::after {
+    content: "공개";
+    position: absolute;
+    top: 2px; right: 2px;
+    font-size: .5rem;
+    background: #c88040;
+    color: #fff;
+    padding: 1px 3px;
+    border-radius: 2px;
+    font-family: 'Black Han Sans', sans-serif;
+  }
+
+  .card-type-bar {
+    height: 4px;
+    width: 100%;
+  }
+
+  .card-body {
+    flex: 1;
+    padding: .3rem .35rem;
+    display: flex;
+    flex-direction: column;
+    gap: .2rem;
+    overflow: hidden;
+  }
+
+  .card-name {
+    font-size: .55rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--text);
+    word-break: keep-all;
+  }
+
+  .card-type-label {
+    font-size: .5rem;
+    color: var(--text-dim);
+    font-family: 'Black Han Sans', sans-serif;
+    letter-spacing: .05em;
+  }
+
+  .card-atk {
+    position: absolute;
+    bottom: 3px; right: 4px;
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: .7rem;
+    color: var(--accent);
+  }
+
+  /* Field card in zone */
+  .field-card-display {
+    font-size: .5rem;
+    color: var(--accent);
+    text-align: center;
+    padding: 2px;
+    word-break: break-all;
+    line-height: 1.2;
+  }
+
+  /* back of card (opponent hand) */
+  .card-back {
+    width: 78px;
+    height: 108px;
+    border-radius: 6px;
+    border: 1.5px solid var(--border);
+    background: linear-gradient(135deg, #1e1e32, #13132a);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: .55rem;
+    color: var(--text-dim);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card-back::before {
+    content: '';
+    position: absolute;
+    inset: 6px;
+    border: 1px solid #2a2a45;
+    border-radius: 4px;
+  }
+
+  .card-back.public-back {
+    border-color: #c88040;
+    background: linear-gradient(135deg, #2a1a10, #1a1208);
+  }
+
+  .card-back.public-back .pub-name {
+    font-size: .5rem;
+    color: #c88040;
+    padding: 4px;
+    text-align: center;
+    word-break: break-all;
+    z-index: 1;
+    line-height: 1.2;
+  }
+
+  /* ── LOG PANEL ── */
+  .log-panel {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: .6rem 1rem;
+    max-height: 120px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .log-panel h3 {
+    font-size: .7rem;
+    color: var(--text-dim);
+    letter-spacing: .1em;
+    margin-bottom: .4rem;
+    font-family: 'Black Han Sans', sans-serif;
+  }
+
+  .log-entry {
+    font-size: .75rem;
+    color: var(--text-dim);
+    padding: .15rem 0;
+    border-bottom: 1px solid #1a1a2a;
+    line-height: 1.4;
+  }
+
+  .log-entry.mine { color: #6ab87c; }
+  .log-entry.opponent { color: #e87070; }
+  .log-entry.system { color: var(--accent); font-style: italic; }
+
+  /* ── MODAL ── */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: #000b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 1rem;
+  }
+
+  .modal-overlay.hidden { display: none; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    width: min(520px, 100%);
+    max-height: 90vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .modal h2 {
+    font-family: 'Black Han Sans', sans-serif;
+    color: var(--accent);
+    font-size: 1.1rem;
+    letter-spacing: .08em;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: .75rem;
+  }
+
+  .modal-effects {
+    font-size: .82rem;
+    line-height: 1.7;
+    color: var(--text);
+    white-space: pre-wrap;
+    background: var(--surface2);
+    border-radius: 6px;
+    padding: .8rem;
+  }
+
+  .modal-meta {
+    display: flex;
+    gap: .5rem;
+    flex-wrap: wrap;
+    font-size: .75rem;
+  }
+
+  .meta-chip {
+    padding: .2rem .6rem;
+    border-radius: 20px;
+    border: 1px solid;
+    font-family: 'Black Han Sans', sans-serif;
+    letter-spacing: .05em;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: .5rem;
+    flex-wrap: wrap;
+  }
+
+  .modal-actions .btn { flex: 1; min-width: 100px; width: auto; }
+
+  /* ── CARD PICKER ── */
+  .card-picker-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    max-height: 50vh;
+    overflow-y: auto;
+    padding: .5rem 0;
+  }
+
+  /* ── GAME OVER ── */
+  #gameover {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: #000d;
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 1.5rem;
+    text-align: center;
+  }
+
+  #gameover.show { display: flex; }
+
+  .gameover-title {
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: clamp(3rem, 10vw, 6rem);
+    letter-spacing: .2em;
+    text-shadow: 0 0 40px currentColor;
+  }
+
+  .gameover-title.win { color: var(--accent); }
+  .gameover-title.lose { color: var(--danger); }
+
+  /* ── UTILS ── */
+  .hidden { display: none !important; }
+  .flex-row { display: flex; align-items: center; gap: .5rem; }
+  .spacer { flex: 1; }
+
+  .graveyard-info {
+    display: flex;
+    gap: .6rem;
+    font-size: .7rem;
+    color: var(--text-dim);
+  }
+
+  .zone-info {
+    padding: .2rem .5rem;
+    background: var(--surface2);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+  }
+
+  .zone-info:hover { border-color: var(--accent); color: var(--text); }
+
+  .notification {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    background: var(--surface2);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: .75rem 1.2rem;
+    font-size: .85rem;
+    color: var(--accent);
+    z-index: 300;
+    animation: slide-in .3s ease;
+    max-width: 300px;
+  }
+
+  @keyframes slide-in {
+    from { transform: translateX(120%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  @media (max-width: 600px) {
+    .zone-slot { width: 60px; height: 84px; }
+    .card { width: 58px; height: 80px; }
+    .card-back { width: 58px; height: 80px; }
+    .card-name { font-size: .48rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════ LOBBY ════════════ -->
+<div id="lobby">
+  <div class="title-block">
+    <h1>CARD<br>GAME</h1>
+    <p>패가 목숨 · 핸드 배틀 TCG</p>
+  </div>
+
+  <div class="lobby-card">
+    <h2>플레이어 설정</h2>
+    <input id="playerName" type="text" placeholder="닉네임 입력" maxlength="12">
+    <div id="deckBuilderBtn" style="display:none">
+      <!-- 덱 빌더는 v2에서 추가 예정 -->
+    </div>
+  </div>
+
+  <div class="lobby-card">
+    <h2>새 방 만들기</h2>
+    <button class="btn btn-primary" onclick="createRoom()">방 만들기</button>
+    <div id="createStatus" class="status-msg hidden"></div>
+    <div id="roomCodeBlock" class="room-code-display hidden">
+      <div class="code" id="roomCodeText">----</div>
+      <p>상대방에게 이 코드를 알려주세요</p>
+    </div>
+    <button id="startGameBtn" class="btn btn-safe hidden" onclick="startGame()">게임 시작 (상대 입장 후)</button>
+  </div>
+
+  <div class="lobby-card">
+    <h2>방 참가하기</h2>
+    <input id="joinCode" type="text" placeholder="방 코드 4자리" maxlength="4" style="text-transform:uppercase;letter-spacing:.2em;font-size:1.2rem;text-align:center">
+    <button class="btn btn-secondary" onclick="joinRoom()">참가</button>
+    <div id="joinStatus" class="status-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ════════════ GAME ════════════ -->
+<div id="game">
+  <!-- Header -->
+  <div class="game-header">
+    <div class="room-info">방코드 <span id="hdrRoomCode">----</span> · <span id="hdrMyName">나</span> vs <span id="hdrOpName">상대</span></div>
+    <div class="phase-indicator">
+      <div class="phase-chip" id="phDraw">드로우</div>
+      <div class="phase-chip" id="phDeploy">전개</div>
+      <div class="phase-chip" id="phAttack">공격</div>
+      <div class="phase-chip" id="phEnd">엔드</div>
+    </div>
+    <div id="turnLabel" class="turn-label turn-opponent">상대 턴</div>
+  </div>
+
+  <!-- Board -->
+  <div class="board">
+
+    <!-- OPPONENT AREA -->
+    <div class="player-area opponent">
+      <div class="area-label">
+        <strong id="opNameLabel">상대</strong>
+        <span>패</span>
+        <span class="hand-count" id="opHandCount">0</span>
+        <span class="spacer"></span>
+        <div class="graveyard-info">
+          <span class="zone-info" onclick="showZone('opGrave')">묘지 <span id="opGraveCount">0</span></span>
+          <span class="zone-info" onclick="showZone('opExile')">제외 <span id="opExileCount">0</span></span>
+        </div>
+      </div>
+      <!-- Opponent hand (backs / revealed publics) -->
+      <div class="hand-area" id="opHand"></div>
+      <!-- Opponent field -->
+      <div class="monster-zone" id="opField"></div>
+    </div>
+
+    <!-- CENTER -->
+    <div class="center-divider">
+      <div class="field-zone">
+        <span>상대 필드</span>
+        <div class="field-card-slot" id="opFieldZone" onclick="viewFieldCard('op')">비어있음</div>
+      </div>
+      <div class="phase-actions" id="phaseActions">
+        <button class="btn-sm" id="btnDraw" onclick="doDrawPhase()">드로우</button>
+        <button class="btn-sm" id="btnEndDeploy" onclick="endDeploy()">전개 종료</button>
+        <button class="btn-sm" id="btnEndAttack" onclick="endAttack()">공격 종료</button>
+        <button class="btn-sm" id="btnEndTurn" onclick="endTurn()">턴 종료</button>
+        <button class="btn-sm" onclick="concede()" style="color:var(--danger);border-color:var(--danger)">항복</button>
+      </div>
+      <div class="field-zone">
+        <div class="field-card-slot" id="myFieldZone" onclick="viewFieldCard('me')">비어있음</div>
+        <span>내 필드</span>
+      </div>
+    </div>
+
+    <!-- MY AREA -->
+    <div class="player-area self">
+      <!-- My field -->
+      <div class="monster-zone" id="myField"></div>
+      <div class="area-label">
+        <strong id="myNameLabel">나</strong>
+        <span>패</span>
+        <span class="hand-count" id="myHandCount">0</span>
+        <span class="spacer"></span>
+        <div class="graveyard-info">
+          <span class="zone-info" onclick="showZone('myGrave')">묘지 <span id="myGraveCount">0</span></span>
+          <span class="zone-info" onclick="showZone('myExile')">제외 <span id="myExileCount">0</span></span>
+        </div>
+      </div>
+      <!-- My hand -->
+      <div class="hand-area" id="myHand"></div>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="log-panel">
+    <h3>게임 로그</h3>
+    <div id="logEntries"></div>
+  </div>
+</div>
+
+<!-- ════════════ GAME OVER ════════════ -->
+<div id="gameover">
+  <div class="gameover-title" id="gameoverTitle">승리!</div>
+  <p id="gameoverMsg" style="color:var(--text-dim);font-size:1rem"></p>
+  <button class="btn btn-primary" style="width:200px" onclick="location.reload()">로비로</button>
+</div>
+
+<!-- ════════════ MODALS ════════════ -->
+
+<!-- Card Detail Modal -->
+<div class="modal-overlay hidden" id="cardDetailModal">
+  <div class="modal">
+    <h2 id="mdCardName">카드명</h2>
+    <div class="modal-meta" id="mdCardMeta"></div>
+    <div class="modal-effects" id="mdCardEffects"></div>
+    <div class="modal-actions" id="mdCardActions">
+      <button class="btn btn-secondary" onclick="closeModal('cardDetailModal')">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- Card Picker Modal (for targeting / discard / etc) -->
+<div class="modal-overlay hidden" id="cardPickerModal">
+  <div class="modal">
+    <h2 id="pickerTitle">카드 선택</h2>
+    <p id="pickerDesc" style="font-size:.82rem;color:var(--text-dim)"></p>
+    <div class="card-picker-grid" id="pickerGrid"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('cardPickerModal')">취소</button>
+      <button class="btn btn-primary" id="pickerConfirmBtn" onclick="confirmPick()">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- Zone Viewer Modal -->
+<div class="modal-overlay hidden" id="zoneViewModal">
+  <div class="modal">
+    <h2 id="zoneViewTitle">묘지</h2>
+    <div class="card-picker-grid" id="zoneViewGrid"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('zoneViewModal')">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ SCRIPTS ════════════ -->
+<script src="cards.js"></script>
+<script>
+// ─────────────────────────────────────────────
+// Firebase Setup (사용자가 본인 config로 교체)
+// ─────────────────────────────────────────────
+// 아래 firebaseConfig를 본인의 Firebase 프로젝트 설정으로 교체하세요
+const firebaseConfig = {
+  apiKey: "AIzaSyC-Qi2mzllnzwQKetxLy9BnepVEaugbUzA",
+  authDomain: "cardgame-1b151.firebaseapp.com",
+  databaseURL: "https://cardgame-1b151-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "cardgame-1b151",
+  storageBucket: "cardgame-1b151.firebasestorage.app",
+  messagingSenderId: "179779519297",
+  appId: "1:179779519297:web:634cdc2de3c866e09e57c0"
+};
+
+// ─────────────────────────────────────────────
+// LOCAL DEMO MODE (Firebase 없이 같은 화면에서 테스트)
+// Firebase 설정 전에 URL에 ?demo=true 붙이면 로컬 시뮬레이션 모드
+// ─────────────────────────────────────────────
+const DEMO_MODE = new URLSearchParams(location.search).get('demo') === 'true';
+
+// ─────────────────────────────────────────────
+// GAME STATE
+// ─────────────────────────────────────────────
+let db = null;
+let roomRef = null;
+let roomCode = '';
+let myRole = ''; // 'host' | 'guest'
+let myName = '';
+let opName = '';
+let isMyTurn = false;
+let currentPhase = ''; // draw | deploy | attack | end
+
+// Local game state (synced from Firebase)
+let G = {
+  myHand: [],         // {id, name, isPublic}
+  opHand: [],         // opponent visible cards
+  myField: [],        // [{id, name, atk}] up to 5
+  opField: [],
+  myGrave: [],
+  opGrave: [],
+  myExile: [],
+  opExile: [],
+  myFieldCard: null,
+  opFieldCard: null,
+  myKeyDeck: [],
+  opKeyDeck: [],
+  myDeckCount: 0,
+  opDeckCount: 0,
+  turn: 1,
+  phase: 'draw',
+  activePlayer: 'host', // 'host' | 'guest'
+};
+
+let selectedCardIdx = -1;     // index in myHand
+let selectedFieldIdx = -1;    // index in myField
+let pickerCallback = null;
+let pickerSelected = [];
+
+// ─────────────────────────────────────────────
+// UTILS
+// ─────────────────────────────────────────────
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function generateCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({length: 4}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+function notify(msg, duration = 2500) {
+  const el = document.createElement('div');
+  el.className = 'notification';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), duration);
+}
+
+function log(msg, type = '') {
+  const el = document.createElement('div');
+  el.className = `log-entry ${type}`;
+  el.textContent = msg;
+  const container = document.getElementById('logEntries');
+  container.prepend(el);
+  // Keep last 50 logs
+  while (container.children.length > 50) container.lastChild.remove();
+}
+
+// ─────────────────────────────────────────────
+// CARD RENDERING
+// ─────────────────────────────────────────────
+function renderCard(cardData, opts = {}) {
+  // cardData: {id, name, isPublic?, atk?}
+  const card = CARDS[cardData.id] || { name: cardData.name, cardType: 'normal', effects: '' };
+  const el = document.createElement('div');
+  el.className = 'card' + (cardData.isPublic ? ' public-card' : '') + (opts.selected ? ' selected' : '');
+
+  const color = CARD_TYPE_COLOR[card.cardType] || '#555';
+  const typeBar = document.createElement('div');
+  typeBar.className = 'card-type-bar';
+  typeBar.style.background = color;
+  el.appendChild(typeBar);
+
+  const body = document.createElement('div');
+  body.className = 'card-body';
+  body.innerHTML = `
+    <div class="card-type-label">${CARD_TYPE_LABEL[card.cardType] || ''}</div>
+    <div class="card-name">${card.name}</div>
+  `;
+  el.appendChild(body);
+
+  if (card.cardType === 'monster' && card.atk !== undefined) {
+    const atk = document.createElement('div');
+    atk.className = 'card-atk';
+    atk.textContent = `ATK ${card.atk}`;
+    el.appendChild(atk);
+  }
+
+  return el;
+}
+
+function renderCardBack(cardData) {
+  // For opponent hand
+  const el = document.createElement('div');
+  if (cardData.isPublic) {
+    el.className = 'card-back public-back';
+    const name = document.createElement('div');
+    name.className = 'pub-name';
+    name.textContent = cardData.name;
+    el.appendChild(name);
+  } else {
+    el.className = 'card-back';
+    el.textContent = '?';
+  }
+  return el;
+}
+
+// ─────────────────────────────────────────────
+// RENDER ALL UI FROM G
+// ─────────────────────────────────────────────
+function renderAll() {
+  renderMyHand();
+  renderOpHand();
+  renderMyField();
+  renderOpField();
+  renderCounts();
+  renderPhase();
+  renderFieldZones();
+}
+
+function renderMyHand() {
+  const container = document.getElementById('myHand');
+  container.innerHTML = '';
+  G.myHand.forEach((c, i) => {
+    const el = renderCard(c, { selected: i === selectedCardIdx });
+    el.addEventListener('click', () => onMyHandClick(i));
+    el.addEventListener('dblclick', () => openCardDetail(c.id, i));
+    container.appendChild(el);
+  });
+  document.getElementById('myHandCount').textContent = G.myHand.length;
+}
+
+function renderOpHand() {
+  const container = document.getElementById('opHand');
+  container.innerHTML = '';
+  G.opHand.forEach((c, i) => {
+    const el = renderCardBack(c);
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', () => {
+      if (c.isPublic) openCardDetail(c.id, -1, true);
+    });
+    container.appendChild(el);
+  });
+  document.getElementById('opHandCount').textContent = G.opHand.length;
+}
+
+function renderMyField() {
+  const container = document.getElementById('myField');
+  container.innerHTML = '';
+  const slots = 5 + G.myExtraSlots;
+  for (let i = 0; i < slots; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'zone-slot';
+    const mon = G.myField[i];
+    if (mon) {
+      const card = CARDS[mon.id] || {};
+      slot.classList.toggle('active', true);
+      const nameEl = document.createElement('div');
+      nameEl.style.cssText = 'font-size:.55rem;text-align:center;padding:3px;word-break:keep-all;color:var(--text)';
+      nameEl.textContent = mon.name;
+      const atkEl = document.createElement('div');
+      atkEl.style.cssText = 'font-size:.65rem;color:var(--accent);font-family:Black Han Sans,sans-serif';
+      atkEl.textContent = `ATK ${mon.atk ?? (card.atk ?? '?')}`;
+      slot.appendChild(nameEl);
+      slot.appendChild(atkEl);
+      slot.addEventListener('click', () => onMyFieldClick(i));
+    } else {
+      slot.style.cursor = 'default';
+    }
+    container.appendChild(slot);
+  }
+}
+
+function renderOpField() {
+  const container = document.getElementById('opField');
+  container.innerHTML = '';
+  G.opField.forEach((mon, i) => {
+    const slot = document.createElement('div');
+    slot.className = 'zone-slot active';
+    const nameEl = document.createElement('div');
+    nameEl.style.cssText = 'font-size:.55rem;text-align:center;padding:3px;word-break:keep-all;color:var(--text)';
+    nameEl.textContent = mon.name;
+    const atkEl = document.createElement('div');
+    atkEl.style.cssText = 'font-size:.65rem;color:var(--danger);font-family:Black Han Sans,sans-serif';
+    atkEl.textContent = `ATK ${mon.atk ?? '?'}`;
+    slot.appendChild(nameEl);
+    slot.appendChild(atkEl);
+    slot.addEventListener('click', () => onOpFieldClick(i));
+    container.appendChild(slot);
+  });
+  // add empty padding slots up to 5
+  const maxSlots = 5 + (G.opExtraSlots || 0);
+  for (let i = G.opField.length; i < maxSlots; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'zone-slot';
+    container.appendChild(slot);
+  }
+}
+
+function renderCounts() {
+  document.getElementById('myHandCount').textContent = G.myHand.length;
+  document.getElementById('opHandCount').textContent = G.opHand.length;
+  document.getElementById('myGraveCount').textContent = G.myGrave.length;
+  document.getElementById('opGraveCount').textContent = G.opGrave.length;
+  document.getElementById('myExileCount').textContent = G.myExile.length;
+  document.getElementById('opExileCount').textContent = G.opExile.length;
+}
+
+function renderPhase() {
+  ['Draw','Deploy','Attack','End'].forEach(p => {
+    const el = document.getElementById('ph' + p);
+    el.classList.toggle('active', currentPhase === p.toLowerCase());
+  });
+
+  // Phase action buttons visibility
+  const mine = isMyTurn;
+  document.getElementById('btnDraw').classList.toggle('active-phase', mine && currentPhase === 'draw');
+  document.getElementById('btnEndDeploy').classList.toggle('active-phase', mine && currentPhase === 'deploy');
+  document.getElementById('btnEndAttack').classList.toggle('active-phase', mine && currentPhase === 'attack');
+  document.getElementById('btnEndTurn').classList.toggle('active-phase', mine && currentPhase === 'end');
+
+  // Enable/disable buttons
+  document.getElementById('btnDraw').disabled = !mine || currentPhase !== 'draw';
+  document.getElementById('btnEndDeploy').disabled = !mine || currentPhase !== 'deploy';
+  document.getElementById('btnEndAttack').disabled = !mine || currentPhase !== 'attack';
+  document.getElementById('btnEndTurn').disabled = !mine || currentPhase !== 'end';
+
+  const turnLabel = document.getElementById('turnLabel');
+  turnLabel.textContent = mine ? '내 턴' : '상대 턴';
+  turnLabel.className = 'turn-label ' + (mine ? 'turn-mine' : 'turn-opponent');
+}
+
+function renderFieldZones() {
+  const myFZ = document.getElementById('myFieldZone');
+  const opFZ = document.getElementById('opFieldZone');
+  if (G.myFieldCard) {
+    myFZ.innerHTML = `<div class="field-card-display">${G.myFieldCard.name}</div>`;
+  } else {
+    myFZ.textContent = '비어있음';
+  }
+  if (G.opFieldCard) {
+    opFZ.innerHTML = `<div class="field-card-display">${G.opFieldCard.name}</div>`;
+  } else {
+    opFZ.textContent = '비어있음';
+  }
+}
+
+// ─────────────────────────────────────────────
+// CARD INTERACTIONS
+// ─────────────────────────────────────────────
+function onMyHandClick(i) {
+  if (selectedCardIdx === i) {
+    selectedCardIdx = -1;
+  } else {
+    selectedCardIdx = i;
+  }
+  renderMyHand();
+}
+
+function onMyFieldClick(i) {
+  if (!isMyTurn || currentPhase !== 'attack') return;
+  selectedFieldIdx = i;
+  // Highlight attack targets
+  document.querySelectorAll('#opField .zone-slot').forEach((el, j) => {
+    el.classList.toggle('attack-target', true);
+  });
+  notify('공격할 대상을 클릭하세요 (상대 몬스터 또는 직접 공격)');
+}
+
+function onOpFieldClick(i) {
+  if (selectedFieldIdx < 0) return;
+  // Combat: myField[selectedFieldIdx] attacks opField[i]
+  executeCombat(selectedFieldIdx, i);
+  selectedFieldIdx = -1;
+  document.querySelectorAll('.zone-slot.attack-target').forEach(el => el.classList.remove('attack-target'));
+}
+
+// ─────────────────────────────────────────────
+// CARD DETAIL MODAL
+// ─────────────────────────────────────────────
+function openCardDetail(cardId, handIdx = -1, opponentCard = false) {
+  const card = CARDS[cardId] || { name: cardId, cardType: 'normal', effects: '효과 정보 없음', atk: undefined };
+  document.getElementById('mdCardName').textContent = card.name;
+  document.getElementById('mdCardEffects').textContent = card.effects || '효과 없음';
+
+  const meta = document.getElementById('mdCardMeta');
+  meta.innerHTML = '';
+  const typeChip = document.createElement('div');
+  typeChip.className = 'meta-chip';
+  typeChip.textContent = CARD_TYPE_LABEL[card.cardType] || card.cardType;
+  typeChip.style.borderColor = CARD_TYPE_COLOR[card.cardType] || '#555';
+  typeChip.style.color = CARD_TYPE_COLOR[card.cardType] || '#555';
+  meta.appendChild(typeChip);
+
+  if (card.atk !== undefined) {
+    const atkChip = document.createElement('div');
+    atkChip.className = 'meta-chip';
+    atkChip.textContent = `ATK ${card.atk}`;
+    atkChip.style.borderColor = '#c8a96e';
+    atkChip.style.color = '#c8a96e';
+    meta.appendChild(atkChip);
+  }
+
+  if (card.isKeyCard) {
+    const kc = document.createElement('div');
+    kc.className = 'meta-chip';
+    kc.textContent = '키카드';
+    kc.style.borderColor = '#7c5cbf';
+    kc.style.color = '#7c5cbf';
+    meta.appendChild(kc);
+  }
+
+  // Actions
+  const actions = document.getElementById('mdCardActions');
+  actions.innerHTML = '';
+
+  if (!opponentCard && handIdx >= 0 && isMyTurn) {
+    const handCard = G.myHand[handIdx];
+    const cardInfo = CARDS[handCard.id] || {};
+
+    // Actions depend on phase and card type
+    if (currentPhase === 'deploy') {
+      if (cardInfo.cardType === 'monster') {
+        const summonBtn = document.createElement('button');
+        summonBtn.className = 'btn btn-primary';
+        summonBtn.textContent = '소환 시도';
+        summonBtn.onclick = () => { closeModal('cardDetailModal'); summonMonster(handIdx); };
+        actions.appendChild(summonBtn);
+      }
+      if (['normal', 'magic', 'field'].includes(cardInfo.cardType)) {
+        const activateBtn = document.createElement('button');
+        activateBtn.className = 'btn btn-primary';
+        activateBtn.textContent = '발동';
+        activateBtn.onclick = () => { closeModal('cardDetailModal'); activateCard(handIdx); };
+        actions.appendChild(activateBtn);
+      }
+    }
+    if (currentPhase !== 'draw') {
+      if (cardInfo.cardType === 'trap' || cardInfo.cardType === 'magic') {
+        const trapBtn = document.createElement('button');
+        trapBtn.className = 'btn btn-secondary';
+        trapBtn.textContent = cardInfo.cardType === 'trap' ? '함정 발동' : '마법 발동';
+        trapBtn.onclick = () => { closeModal('cardDetailModal'); activateCard(handIdx); };
+        actions.appendChild(trapBtn);
+      }
+    }
+    const discardBtn = document.createElement('button');
+    discardBtn.className = 'btn btn-danger';
+    discardBtn.textContent = '패에서 버리기';
+    discardBtn.onclick = () => { closeModal('cardDetailModal'); manualDiscard(handIdx); };
+    actions.appendChild(discardBtn);
+  }
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn btn-secondary';
+  closeBtn.textContent = '닫기';
+  closeBtn.onclick = () => closeModal('cardDetailModal');
+  actions.appendChild(closeBtn);
+
+  document.getElementById('cardDetailModal').classList.remove('hidden');
+}
+
+// ─────────────────────────────────────────────
+// GAME ACTIONS (sent to Firebase)
+// ─────────────────────────────────────────────
+function doDrawPhase() {
+  if (!isMyTurn || currentPhase !== 'draw') return;
+  // Draw 1 card
+  drawCards(1);
+  advancePhase('deploy');
+  log(`내 드로우 단계: 1장 드로우`, 'mine');
+  sendAction({ type: 'draw', count: 1 });
+}
+
+function drawCards(n) {
+  // Simulate draw from deck (in real game, deck is shuffled array)
+  // We use dummy card IDs for now unless deck is set up
+  const allIds = Object.keys(CARDS);
+  for (let i = 0; i < n; i++) {
+    if (G.myDeckCount <= 0) {
+      // Deck empty: shuffle grave into deck
+      G.myDeckCount = G.myGrave.length;
+      G.myGrave = [];
+      log('덱이 소진되어 묘지를 덱으로 되돌렸습니다.', 'system');
+      renderCounts();
+    }
+    const randomId = allIds[Math.floor(Math.random() * allIds.length)];
+    const card = CARDS[randomId];
+    G.myHand.push({ id: randomId, name: card.name, isPublic: false });
+    G.myDeckCount--;
+  }
+  renderMyHand();
+}
+
+function endDeploy() {
+  if (!isMyTurn || currentPhase !== 'deploy') return;
+  advancePhase('attack');
+  log(`전개 단계 종료`, 'mine');
+  sendAction({ type: 'phaseEnd', phase: 'deploy' });
+}
+
+function endAttack() {
+  if (!isMyTurn || currentPhase !== 'attack') return;
+  advancePhase('end');
+  log(`공격 단계 종료`, 'mine');
+  sendAction({ type: 'phaseEnd', phase: 'attack' });
+}
+
+function endTurn() {
+  if (!isMyTurn || currentPhase !== 'end') return;
+  // Switch turns
+  G.turn++;
+  isMyTurn = false;
+  advancePhase('draw');
+  log(`턴 종료 — 상대 턴`, 'mine');
+  sendAction({ type: 'endTurn' });
+  renderPhase();
+}
+
+function summonMonster(handIdx) {
+  if (!isMyTurn || currentPhase !== 'deploy') {
+    notify('전개 단계에만 소환할 수 있습니다.'); return;
+  }
+  if (G.myField.length >= 5 + (G.myExtraSlots || 0)) {
+    notify('몬스터 존이 가득 찼습니다.'); return;
+  }
+  const c = G.myHand[handIdx];
+  const card = CARDS[c.id];
+  if (!card || card.cardType !== 'monster') { notify('몬스터 카드가 아닙니다.'); return; }
+
+  // Remove from hand, add to field
+  G.myHand.splice(handIdx, 1);
+  G.myField.push({ id: c.id, name: card.name, atk: card.atk || 0 });
+  selectedCardIdx = -1;
+  log(`소환: ${card.name} (ATK ${card.atk})`, 'mine');
+  sendAction({ type: 'summon', cardId: c.id });
+  renderAll();
+}
+
+function activateCard(handIdx) {
+  const c = G.myHand[handIdx];
+  const card = CARDS[c.id];
+  if (!card) return;
+
+  if (card.cardType === 'field') {
+    // Place in field zone
+    G.myHand.splice(handIdx, 1);
+    if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
+    G.myFieldCard = { id: c.id, name: card.name };
+    log(`필드 마법 발동: ${card.name}`, 'mine');
+    sendAction({ type: 'fieldCard', cardId: c.id });
+  } else {
+    // Send to grave after use
+    G.myHand.splice(handIdx, 1);
+    G.myGrave.push({ id: c.id, name: card.name });
+    log(`발동: ${card.name}`, 'mine');
+    sendAction({ type: 'activate', cardId: c.id });
+  }
+  selectedCardIdx = -1;
+  renderAll();
+  notify(`${card.name} 발동! (효과는 수동으로 처리하세요)`);
+}
+
+function manualDiscard(handIdx) {
+  const c = G.myHand[handIdx];
+  const card = CARDS[c.id];
+  G.myHand.splice(handIdx, 1);
+  G.myGrave.push({ id: c.id, name: c.name });
+  selectedCardIdx = -1;
+  log(`패를 버림: ${c.name}`, 'mine');
+  sendAction({ type: 'discard', cardId: c.id });
+  renderAll();
+  checkWinCondition();
+}
+
+function executeCombat(atkIdx, defIdx) {
+  if (!isMyTurn || currentPhase !== 'attack') {
+    notify('공격 단계가 아닙니다.'); return;
+  }
+  const attacker = G.myField[atkIdx];
+  const defender = G.opField[defIdx];
+  if (!attacker || !defender) return;
+
+  const diff = attacker.atk - defender.atk;
+  log(`전투: ${attacker.name}(${attacker.atk}) vs ${defender.name}(${defender.atk})`, 'mine');
+
+  if (diff > 0) {
+    // My monster wins
+    G.opField.splice(defIdx, 1);
+    G.opGrave.push(defender);
+    // Opponent discards diff cards (they choose — we just record the event)
+    log(`상대의 ${defender.name} 묘지로. 상대는 패를 ${diff}장 버려야 합니다.`, 'system');
+    notify(`공격 성공! 상대 패 ${diff}장 손실`);
+  } else if (diff < 0) {
+    // Opponent's monster wins
+    G.myField.splice(atkIdx, 1);
+    G.myGrave.push(attacker);
+    log(`내 ${attacker.name} 묘지로. 내 패를 ${Math.abs(diff)}장 버려야 합니다.`, 'mine');
+    // Force discard
+    forceDiscard(Math.abs(diff));
+  } else {
+    // Same ATK — both survive if ATK 0, else both go to grave
+    if (attacker.atk === 0) {
+      log(`공격력 0끼리의 전투 — 양쪽 모두 필드 유지`, 'system');
+    } else {
+      G.myField.splice(atkIdx, 1);
+      G.opField.splice(defIdx, 1);
+      G.myGrave.push(attacker);
+      G.opGrave.push(defender);
+      log(`공격력 동일 — 양쪽 묘지`, 'system');
+    }
+  }
+  sendAction({ type: 'combat', atkIdx, defIdx, atkCard: attacker, defCard: defender });
+  renderAll();
+}
+
+function directAttack(atkIdx) {
+  if (!isMyTurn || currentPhase !== 'attack') return;
+  if (G.opField.length > 0) { notify('상대 필드에 몬스터가 있습니다. 직접 공격 불가.'); return; }
+  const attacker = G.myField[atkIdx];
+  log(`직접 공격: ${attacker.name}(${attacker.atk}) — 상대는 패를 ${attacker.atk}장 버려야 합니다.`, 'mine');
+  notify(`직접 공격! 상대 패 ${attacker.atk}장 손실`);
+  sendAction({ type: 'directAttack', atkIdx, card: attacker });
+}
+
+function forceDiscard(n) {
+  // Pick from hand — for attacked player, attacker picks public first, then random
+  // Simplified: player picks
+  openCardPicker(
+    G.myHand,
+    `패를 ${n}장 버려야 합니다`,
+    n,
+    (selected) => {
+      selected.sort((a, b) => b - a).forEach(i => {
+        const c = G.myHand.splice(i, 1)[0];
+        G.myGrave.push(c);
+        log(`패 버림: ${c.name}`, 'mine');
+      });
+      renderAll();
+      checkWinCondition();
+    },
+    false // opponent can't choose; but in this simplified version self chooses
+  );
+}
+
+// ─────────────────────────────────────────────
+// WIN CONDITION
+// ─────────────────────────────────────────────
+function checkWinCondition() {
+  if (G.myHand.length === 0) {
+    showGameOver(false);
+    sendAction({ type: 'gameOver', winner: myRole === 'host' ? 'guest' : 'host' });
+  }
+}
+
+function showGameOver(win) {
+  const el = document.getElementById('gameover');
+  const title = document.getElementById('gameoverTitle');
+  const msg = document.getElementById('gameoverMsg');
+  el.classList.add('show');
+  if (win) {
+    title.textContent = '승리!';
+    title.className = 'gameover-title win';
+    msg.textContent = '상대의 패를 모두 털었습니다.';
+  } else {
+    title.textContent = '패배...';
+    title.className = 'gameover-title lose';
+    msg.textContent = '패가 0장이 되었습니다.';
+  }
+}
+
+function concede() {
+  if (!confirm('정말 항복하시겠습니까?')) return;
+  showGameOver(false);
+  sendAction({ type: 'gameOver', winner: myRole === 'host' ? 'guest' : 'host' });
+}
+
+// ─────────────────────────────────────────────
+// PHASE MANAGEMENT
+// ─────────────────────────────────────────────
+function advancePhase(phase) {
+  currentPhase = phase;
+  G.phase = phase;
+  ['Draw','Deploy','Attack','End'].forEach(p => {
+    document.getElementById('ph' + p).classList.toggle('active', phase === p.toLowerCase());
+  });
+  renderPhase();
+}
+
+// ─────────────────────────────────────────────
+// CARD PICKER MODAL
+// ─────────────────────────────────────────────
+function openCardPicker(cards, title, maxPick, callback, multi = true) {
+  pickerCallback = callback;
+  pickerSelected = [];
+  document.getElementById('pickerTitle').textContent = title;
+  document.getElementById('pickerDesc').textContent = `${maxPick}장 선택`;
+  document.getElementById('cardPickerModal').dataset.maxPick = maxPick;
+
+  const grid = document.getElementById('pickerGrid');
+  grid.innerHTML = '';
+  cards.forEach((c, i) => {
+    const el = renderCard(c);
+    el.addEventListener('click', () => {
+      const idx = pickerSelected.indexOf(i);
+      if (idx >= 0) {
+        pickerSelected.splice(idx, 1);
+        el.classList.remove('selected');
+      } else if (pickerSelected.length < maxPick) {
+        pickerSelected.push(i);
+        el.classList.add('selected');
+      }
+    });
+    grid.appendChild(el);
+  });
+
+  document.getElementById('cardPickerModal').classList.remove('hidden');
+}
+
+function confirmPick() {
+  if (pickerCallback) pickerCallback(pickerSelected);
+  pickerCallback = null;
+  closeModal('cardPickerModal');
+}
+
+// ─────────────────────────────────────────────
+// ZONE VIEWER
+// ─────────────────────────────────────────────
+function showZone(zoneKey) {
+  const zoneMap = {
+    myGrave: { label: '내 묘지', cards: G.myGrave },
+    opGrave: { label: '상대 묘지', cards: G.opGrave },
+    myExile: { label: '내 제외 존', cards: G.myExile },
+    opExile: { label: '상대 제외 존', cards: G.opExile },
+  };
+  const zone = zoneMap[zoneKey];
+  document.getElementById('zoneViewTitle').textContent = zone.label;
+  const grid = document.getElementById('zoneViewGrid');
+  grid.innerHTML = '';
+  if (zone.cards.length === 0) {
+    grid.innerHTML = '<p style="color:var(--text-dim);font-size:.85rem">카드 없음</p>';
+  } else {
+    zone.cards.forEach(c => {
+      const el = renderCard(c);
+      el.addEventListener('click', () => openCardDetail(c.id));
+      grid.appendChild(el);
+    });
+  }
+  document.getElementById('zoneViewModal').classList.remove('hidden');
+}
+
+function viewFieldCard(who) {
+  const card = who === 'me' ? G.myFieldCard : G.opFieldCard;
+  if (!card) { notify('필드 존이 비어있습니다.'); return; }
+  openCardDetail(card.id);
+}
+
+// ─────────────────────────────────────────────
+// MODAL UTILS
+// ─────────────────────────────────────────────
+function closeModal(id) {
+  document.getElementById(id).classList.add('hidden');
+}
+
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', (e) => { if (e.target === el) el.classList.add('hidden'); });
+});
+
+// ─────────────────────────────────────────────
+// FIREBASE / MULTIPLAYER
+// ─────────────────────────────────────────────
+let firebaseLoaded = false;
+
+function loadFirebase(callback) {
+  if (firebaseLoaded) { callback(); return; }
+  const scripts = [
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js',
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js',
+  ];
+  let loaded = 0;
+  scripts.forEach(src => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => { loaded++; if (loaded === scripts.length) { firebaseLoaded = true; callback(); } };
+    document.head.appendChild(s);
+  });
+}
+
+function initFirebase() {
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+  db = firebase.database();
+}
+
+function createRoom() {
+  myName = document.getElementById('playerName').value.trim() || '플레이어1';
+  const statusEl = document.getElementById('createStatus');
+  statusEl.textContent = 'Firebase 연결 중...';
+  statusEl.classList.remove('hidden');
+
+  if (DEMO_MODE) {
+    roomCode = generateCode();
+    myRole = 'host';
+    document.getElementById('roomCodeText').textContent = roomCode;
+    document.getElementById('roomCodeBlock').classList.remove('hidden');
+    document.getElementById('startGameBtn').classList.remove('hidden');
+    statusEl.textContent = 'DEMO 모드: 같은 화면에서 테스트';
+    return;
+  }
+
+  loadFirebase(() => {
+    initFirebase();
+    roomCode = generateCode();
+    myRole = 'host';
+    roomRef = db.ref(`rooms/${roomCode}`);
+    roomRef.set({
+      host: myName,
+      guest: null,
+      status: 'waiting',
+      turn: 0,
+      actions: null,
+    }).then(() => {
+      document.getElementById('roomCodeText').textContent = roomCode;
+      document.getElementById('roomCodeBlock').classList.remove('hidden');
+      document.getElementById('startGameBtn').classList.remove('hidden');
+      statusEl.textContent = '방 생성 완료! 상대를 기다리는 중...';
+      document.getElementById('hdrRoomCode').textContent = roomCode;
+      listenRoom();
+    }).catch(e => { statusEl.textContent = '오류: ' + e.message; });
+  });
+}
+
+function joinRoom() {
+  myName = document.getElementById('playerName').value.trim() || '플레이어2';
+  const code = document.getElementById('joinCode').value.trim().toUpperCase();
+  if (code.length !== 4) { alert('4자리 코드를 입력하세요.'); return; }
+  const statusEl = document.getElementById('joinStatus');
+  statusEl.textContent = '연결 중...';
+  statusEl.classList.remove('hidden');
+
+  if (DEMO_MODE) {
+    roomCode = code;
+    myRole = 'guest';
+    statusEl.textContent = 'DEMO 모드로 참가';
+    enterGame();
+    return;
+  }
+
+  loadFirebase(() => {
+    initFirebase();
+    roomCode = code;
+    myRole = 'guest';
+    roomRef = db.ref(`rooms/${roomCode}`);
+    roomRef.child('guest').set(myName).then(() => {
+      statusEl.textContent = '참가 완료! 호스트의 시작을 기다리는 중...';
+      document.getElementById('hdrRoomCode').textContent = roomCode;
+      listenRoom();
+    }).catch(e => { statusEl.textContent = '오류: ' + e.message; });
+  });
+}
+
+function startGame() {
+  if (!db && !DEMO_MODE) { alert('Firebase가 연결되지 않았습니다.'); return; }
+  if (DEMO_MODE) { enterGame(); return; }
+  roomRef.update({ status: 'playing', activePlayer: 'host' });
+}
+
+function listenRoom() {
+  if (!roomRef) return;
+  roomRef.on('value', snap => {
+    const data = snap.val();
+    if (!data) return;
+
+    if (data.guest && myRole === 'host') {
+      opName = data.guest;
+      document.getElementById('hdrOpName').textContent = opName;
+      document.getElementById('opNameLabel').textContent = opName;
+      document.getElementById('startGameBtn').disabled = false;
+    }
+
+    if (data.status === 'playing' && document.getElementById('lobby').style.display !== 'none') {
+      enterGame();
+    }
+
+    // Handle actions from opponent
+    if (data.lastAction && data.lastAction.by !== myRole) {
+      handleOpponentAction(data.lastAction);
+    }
+  });
+}
+
+function sendAction(action) {
+  if (!roomRef) return;
+  action.by = myRole;
+  action.ts = Date.now();
+  roomRef.update({ lastAction: action });
+}
+
+function handleOpponentAction(action) {
+  switch (action.type) {
+    case 'draw':
+      // Opponent drew cards
+      for (let i = 0; i < (action.count || 1); i++) {
+        G.opHand.push({ id: action.cardId || 'unknown', name: '?', isPublic: false });
+      }
+      renderOpHand(); renderCounts();
+      break;
+    case 'summon':
+      const sc = CARDS[action.cardId] || {};
+      // Remove from opponent hand
+      const publicIdx = G.opHand.findIndex(c => c.id === action.cardId);
+      if (publicIdx >= 0) G.opHand.splice(publicIdx, 1);
+      else if (G.opHand.length > 0) G.opHand.pop();
+      G.opField.push({ id: action.cardId, name: sc.name || action.cardId, atk: sc.atk || 0 });
+      log(`상대 소환: ${sc.name || action.cardId}`, 'opponent');
+      renderAll();
+      break;
+    case 'activate':
+    case 'discard':
+      const ac = CARDS[action.cardId] || { name: action.cardId };
+      const ahi = G.opHand.findIndex(c => c.id === action.cardId);
+      if (ahi >= 0) G.opHand.splice(ahi, 1);
+      else if (G.opHand.length > 0) G.opHand.pop();
+      G.opGrave.push({ id: action.cardId, name: ac.name });
+      log(`상대 ${action.type === 'discard' ? '버림' : '발동'}: ${ac.name}`, 'opponent');
+      renderAll();
+      break;
+    case 'fieldCard':
+      const fc = CARDS[action.cardId] || { name: action.cardId };
+      const fhi = G.opHand.findIndex(c => c.id === action.cardId);
+      if (fhi >= 0) G.opHand.splice(fhi, 1);
+      else if (G.opHand.length > 0) G.opHand.pop();
+      G.opFieldCard = { id: action.cardId, name: fc.name };
+      log(`상대 필드 카드: ${fc.name}`, 'opponent');
+      renderAll();
+      break;
+    case 'combat':
+      handleOpponentCombat(action);
+      break;
+    case 'directAttack':
+      log(`상대 직접 공격: ${action.card.name}(${action.card.atk}) — 패를 ${action.card.atk}장 버려야 합니다.`, 'opponent');
+      notify(`직접 공격 당함! 패 ${action.card.atk}장 버리기`);
+      forceDiscard(action.card.atk);
+      break;
+    case 'endTurn':
+      isMyTurn = true;
+      advancePhase('draw');
+      log(`상대 턴 종료 — 내 턴`, 'system');
+      notify('내 턴입니다!');
+      renderPhase();
+      // Auto-draw
+      break;
+    case 'phaseEnd':
+      // Opponent ended a phase
+      break;
+    case 'gameOver':
+      const win = (action.winner === myRole);
+      showGameOver(win);
+      break;
+  }
+}
+
+function handleOpponentCombat(action) {
+  // action.atkCard attacks action.defCard
+  const atkCard = action.atkCard; // opponent's monster
+  const defCard = action.defCard; // my monster
+  const diff = atkCard.atk - defCard.atk;
+
+  log(`상대 전투: ${atkCard.name}(${atkCard.atk}) vs ${defCard.name}(${defCard.atk})`, 'opponent');
+
+  if (diff > 0) {
+    // Opponent wins — my monster goes to grave, I lose diff cards
+    const myIdx = G.myField.findIndex(c => c.id === defCard.id);
+    if (myIdx >= 0) { G.myGrave.push(G.myField.splice(myIdx, 1)[0]); }
+    // Attacker (opponent) picks my cards
+    // Simplified: I discard randomly
+    for (let i = 0; i < diff && G.myHand.length > 0; i++) {
+      // Opponent would pick; simulate by discarding from end
+      G.myGrave.push(G.myHand.pop());
+    }
+    log(`내 ${defCard.name} 묘지. 패 ${diff}장 잃음`, 'opponent');
+    checkWinCondition();
+  } else if (diff < 0) {
+    // I win — opponent's monster goes to grave
+    const opIdx = G.opField.findIndex(c => c.id === atkCard.id);
+    if (opIdx >= 0) { G.opGrave.push(G.opField.splice(opIdx, 1)[0]); }
+    log(`상대 ${atkCard.name} 묘지`, 'mine');
+  } else {
+    if (atkCard.atk !== 0) {
+      const myIdx = G.myField.findIndex(c => c.id === defCard.id);
+      const opIdx = G.opField.findIndex(c => c.id === atkCard.id);
+      if (myIdx >= 0) G.myGrave.push(G.myField.splice(myIdx, 1)[0]);
+      if (opIdx >= 0) G.opGrave.push(G.opField.splice(opIdx, 1)[0]);
+    }
+  }
+  renderAll();
+}
+
+// ─────────────────────────────────────────────
+// ENTER GAME
+// ─────────────────────────────────────────────
+function enterGame() {
+  opName = myRole === 'host' ? (document.getElementById('joinCode').value || '상대') : (document.getElementById('playerName').value || '호스트');
+  myName = document.getElementById('playerName').value.trim() || (myRole === 'host' ? '호스트' : '게스트');
+
+  document.getElementById('lobby').style.display = 'none';
+  document.getElementById('game').style.display = 'flex';
+
+  document.getElementById('hdrMyName').textContent = myName;
+  document.getElementById('hdrOpName').textContent = opName;
+  document.getElementById('hdrRoomCode').textContent = roomCode;
+  document.getElementById('myNameLabel').textContent = myName;
+  document.getElementById('opNameLabel').textContent = opName;
+
+  // Set turn: host goes first
+  isMyTurn = (myRole === 'host');
+  G.myExtraSlots = 0;
+  G.opExtraSlots = 0;
+
+  // Initialize deck & starting hand
+  initDecks();
+
+  // Host: 6 cards (no draw on first turn), Guest: 7 cards
+  const startCards = (myRole === 'host') ? 6 : 7;
+  for (let i = 0; i < startCards; i++) drawCards(1);
+
+  // Host: skip draw phase on turn 1
+  if (myRole === 'host') {
+    advancePhase('deploy');
+    log('선공 첫 턴: 드로우 없이 전개 단계 시작', 'system');
+  } else {
+    advancePhase('draw');
+  }
+
+  log('게임 시작!', 'system');
+  renderAll();
+}
+
+function initDecks() {
+  // Build a default mixed deck for demo
+  const allIds = Object.keys(CARDS).filter(id => !CARDS[id].isKeyCard);
+  G.myDeckCount = 50;
+  G.opDeckCount = 50;
+  // In a full implementation, players would build decks in lobby
+}
+
+// ─────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────
+document.getElementById('playerName').focus();
+
+if (DEMO_MODE) {
+  document.getElementById('createStatus').textContent = 'DEMO 모드 활성화';
+}
+</script>
+</body>
+</html>
