@@ -884,9 +884,6 @@
     white-space: nowrap;
   }
 </style>
-<!-- Firebase Auth + Firestore (compat) — Auth 초기화용 -->
-<script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
@@ -2213,43 +2210,23 @@ function initAuth() {
 
 // ── Google 로그인 ─────────────────────────────────────────────
 function signInWithGoogle() {
-  // SDK가 이미 로드된 경우 바로 실행
+  // initAuth가 이미 완료된 경우 (SDK 로드됨)
   if (window.firebase && firebase.auth) {
     _doGoogleSignIn(); return;
   }
-  // SDK가 아직 없으면 직접 로드 후 실행
+  // 아직 SDK 로드 중이면 잠깐 대기 후 재시도
   notify('로그인 준비 중...');
-  const AUTH_SDK = 'https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js';
-  const FS_SDK   = 'https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js';
-  function loadScript(src, cb) {
-    if (document.querySelector('script[src="' + src + '"]')) { cb(); return; }
-    const s = document.createElement('script');
-    s.src = src; s.async = false;
-    s.onload = cb;
-    s.onerror = () => notify('SDK 로드 실패: ' + src);
-    document.head.appendChild(s);
-  }
-  loadScript(AUTH_SDK, () => {
-    loadScript(FS_SDK, () => {
-      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-      fsdb = firebase.firestore();
-      firebase.auth().onAuthStateChanged(async (user) => {
-        currentUser = user;
-        if (user) {
-          await ensureUserDoc(user);
-          userProfile = await getUserProfile(user.uid);
-          renderProfileUI(user);
-          const nameInput = document.getElementById('playerName');
-          if (nameInput && !nameInput.value.trim())
-            nameInput.value = userProfile?.nickname || user.displayName || '';
-        } else {
-          userProfile = null;
-          renderLoggedOutUI();
-        }
-      });
+  let tries = 0;
+  const poll = setInterval(() => {
+    tries++;
+    if (window.firebase && firebase.auth) {
+      clearInterval(poll);
       _doGoogleSignIn();
-    });
-  });
+    } else if (tries > 20) {
+      clearInterval(poll);
+      notify('로그인 실패: Firebase를 불러올 수 없습니다.');
+    }
+  }, 300);
 }
 
 function _doGoogleSignIn() {
@@ -5607,14 +5584,35 @@ if (DEMO_MODE) {
   document.getElementById('createStatus').textContent = 'DEMO 모드 활성화';
 }
 
-// ★ 계정 시스템 초기화 (Auth + Firestore SDK가 <head>에서 이미 로드됨)
+// ★ 계정 시스템 초기화 — SDK를 동적으로 로드한 뒤 initAuth 실행
 (function startAccountSystem() {
-  if (window.firebase && firebase.auth) {
-    initAuth();
-  } else {
-    window.addEventListener('load', () => {
-      if (window.firebase && firebase.auth) initAuth();
+  const AUTH_SDK = 'https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js';
+  const FS_SDK   = 'https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js';
+
+  function loadScript(src, cb) {
+    if (document.querySelector('script[src="' + src + '"]')) { cb(); return; }
+    const s = document.createElement('script');
+    s.src = src; s.async = false;
+    s.onload = cb;
+    s.onerror = () => console.warn('Account SDK 로드 실패:', src);
+    document.head.appendChild(s);
+  }
+
+  // firebase-app-compat이 이미 로드된 상태(loadFirebase가 먼저 불릴 수 있음)
+  // → 순서 보장을 위해 window load 이후 실행
+  function run() {
+    loadScript(AUTH_SDK, () => {
+      loadScript(FS_SDK, () => {
+        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+        initAuth();
+      });
     });
+  }
+
+  if (document.readyState === 'complete') {
+    run();
+  } else {
+    window.addEventListener('load', run);
   }
 })();
 
