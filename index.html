@@ -2447,7 +2447,7 @@ function startKeyFetchEffect() {
     return;
   }
   if (activeChainState && activeChainState.active && activeChainState.priority !== myRole) {
-    notify('현재 체인 우선권은 상대에게 있습니다. (체인 시작 직후에는 상대가 먼저 응답)');
+    notify('현재 체인 우선권은 상대에게 있습니다.');
     return;
   }
   if (activeChainState && activeChainState.active && usedKeyFetchInChain[myRole]) {
@@ -2455,9 +2455,10 @@ function startKeyFetchEffect() {
     return;
   }
   const options = G.myKeyDeck.map(c => ({ id: c.id, name: c.name }));
-  openCardPicker(options, '기본 효과: 키 카드 덱에서 1장 가져오기', 1, (sel) => {
-    if (sel.length === 0) return;
+  openCardPicker(options, '키 카드 덱에서 1장 가져오기 (유발 즉시)', 1, (sel) => {
+    if (!sel || sel.length === 0) return; // 취소 시 무시
     const picked = options[sel[0]];
+    if (!picked) return;
     const effect = {
       type: 'keyFetch',
       label: `키 카드 가져오기 (${picked.name})`,
@@ -2469,10 +2470,6 @@ function startKeyFetchEffect() {
 }
 
 function beginChain(effect) {
-  if (!roomRef) {
-    executeChainLocally([{ ...effect, by: myRole }]);
-    return;
-  }
   const chainState = {
     active: true,
     startedBy: myRole,
@@ -2482,9 +2479,17 @@ function beginChain(effect) {
   };
   activeChainState = chainState;
   if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
+  log(`체인 1: ${effect.label} 발동`, 'mine');
+
+  if (!roomRef) {
+    // 로컬/데모: 상대 자동 패스 → 즉시 해결
+    const localState = { ...chainState, passCount: 2 };
+    resolveChain(localState);
+    return;
+  }
+
   roomRef.child('chainState').set(chainState);
   syncClockRunState(chainState.priority);
-  log(`체인 1: ${effect.label} 발동`, 'mine');
 }
 
 function openChainResponse() {
@@ -2493,14 +2498,15 @@ function openChainResponse() {
     notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
     return;
   }
-  const options = G.myKeyDeck.map(c => ({ id: c.id, name: c.name }));
+  const options = (G.myKeyDeck || []).map(c => ({ id: c.id, name: c.name }));
   if (options.length === 0) {
-    notify('키 카드 덱에 발동 가능한 카드가 없습니다.');
+    notify('키 카드 덱에 발동 가능한 카드가 없습니다. 패스하세요.');
     return;
   }
   openCardPicker(options, '체인 응답: 키 카드 가져오기 (유발 즉시)', 1, (sel) => {
-    if (sel.length === 0) return;
+    if (!sel || sel.length === 0) return; // 취소 시 무시
     const picked = options[sel[0]];
+    if (!picked) return;
     addChainLink({
       type: 'keyFetch',
       label: `키 카드 가져오기 (${picked.name})`,
@@ -2510,21 +2516,32 @@ function openChainResponse() {
 }
 
 function passChainPriority() {
-  if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole || !roomRef) return;
+  if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
+
   const next = { ...activeChainState };
   next.passCount = (next.passCount || 0) + 1;
   next.priority = myRole === 'host' ? 'guest' : 'host';
+  log('체인 패스', 'system');
+
   if (next.passCount >= 2) {
     resolveChain(next);
     return;
   }
+
+  if (!roomRef) {
+    // 로컬/데모: 상대도 자동 패스 → 즉시 해결
+    next.passCount = 2;
+    resolveChain(next);
+    return;
+  }
+
+  activeChainState = next;
   roomRef.child('chainState').set(next);
   syncClockRunState(next.priority);
-  log('체인 패스', 'system');
 }
 
 function addChainLink(effect) {
-  if (!activeChainState || !activeChainState.active || !roomRef) return;
+  if (!activeChainState || !activeChainState.active) return;
   if (effect.type === 'keyFetch' && usedKeyFetchInChain[myRole]) {
     notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
     return;
@@ -2535,9 +2552,16 @@ function addChainLink(effect) {
   next.passCount = 0;
   activeChainState = next;
   if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
+  log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
+
+  if (!roomRef) {
+    // 로컬: 상대 패스 자동 처리 → 즉시 해결
+    next.passCount = 2;
+    resolveChain(next);
+    return;
+  }
   roomRef.child('chainState').set(next);
   syncClockRunState(next.priority);
-  log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
 }
 
 function enqueueTriggeredEffect(effect) {
@@ -3561,6 +3585,8 @@ function startGame() {
 
 let _deckBuilderOpened = false; // 덱 빌더 중복 진입 방지
 
+let lastHandledActionTs = 0; // 중복 처리 방지
+
 function listenRoom() {
   if (!roomRef) return;
   roomRef.on('value', snap => {
@@ -3574,15 +3600,17 @@ function listenRoom() {
       document.getElementById('startGameBtn').disabled = false;
     }
 
-    // 게임 시작 신호 — 게스트만 여기서 덱 빌더로 이동 (호스트는 startGame에서 직접)
     if (data.status === 'playing' && myRole === 'guest' && !_deckBuilderOpened) {
       _deckBuilderOpened = true;
       goToDeckBuilder();
     }
 
-    // 상대 액션 처리 — 게임 중일 때만
-    if (data.lastAction && data.lastAction.by !== myRole) {
+    // 상대 액션 처리 — ts로 중복 방지
+    if (data.lastAction &&
+        data.lastAction.by !== myRole &&
+        data.lastAction.ts > lastHandledActionTs) {
       if (document.getElementById('game').style.display !== 'none') {
+        lastHandledActionTs = data.lastAction.ts;
         handleOpponentAction(data.lastAction);
       }
     }
@@ -3742,6 +3770,7 @@ function enterGame() {
 
   timeoutHandled = false;
   lastSyncedClockRunner = null;
+  lastHandledActionTs = 0;
   gameClock = { host: 500, guest: 500, runningFor: 'host', lastUpdated: Date.now() };
   G.myExtraSlots = 0;
   G.opExtraSlots = 0;
