@@ -3038,16 +3038,28 @@ function loadFirebase(callback) {
     'https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js',
     'https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js',
   ];
-  let loaded = 0;
-  scripts.forEach(src => {
+
+  const loadScriptInOrder = (idx) => {
+    if (idx >= scripts.length) {
+      firebaseLoaded = true;
+      callback();
+      return;
+    }
     const s = document.createElement('script');
-    s.src = src;
-    s.onload = () => { loaded++; if (loaded === scripts.length) { firebaseLoaded = true; callback(); } };
+    s.src = scripts[idx];
+    s.async = false;
+    s.onload = () => loadScriptInOrder(idx + 1);
+    s.onerror = () => notify('Firebase SDK 로드 실패. 네트워크 상태를 확인하세요.');
     document.head.appendChild(s);
-  });
+  };
+
+  loadScriptInOrder(0);
 }
 
 function initFirebase() {
+  if (!window.firebase || typeof firebase.database !== 'function') {
+    throw new Error('Firebase Database SDK가 초기화되지 않았습니다.');
+  }
   if (!firebase.apps.length) {
     firebase.initializeApp(firebaseConfig);
   }
@@ -3071,7 +3083,12 @@ function createRoom() {
   }
 
   loadFirebase(() => {
-    initFirebase();
+    try {
+      initFirebase();
+    } catch (e) {
+      statusEl.textContent = e.message;
+      return;
+    }
     roomCode = generateCode();
     myRole = 'host';
     roomRef = db.ref(`rooms/${roomCode}`);
@@ -3110,7 +3127,12 @@ function joinRoom() {
   }
 
   loadFirebase(() => {
-    initFirebase();
+    try {
+      initFirebase();
+    } catch (e) {
+      statusEl.textContent = e.message;
+      return;
+    }
     roomCode = code;
     myRole = 'guest';
     roomRef = db.ref(`rooms/${roomCode}`);
