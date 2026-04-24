@@ -2624,10 +2624,14 @@ function listenOpponentState() {
 function listenChainState() {
   if (!roomRef) return;
   roomRef.child('chainState').on('value', snap => {
+    const wasActive = !!(activeChainState && activeChainState.active);
     const data = snap.val();
     activeChainState = data;
     renderChainActions();
     if (!data) return;
+    if (wasActive && !data.active && pendingTriggerEffects.length > 0) {
+      setTimeout(flushTriggeredEffects, 0);
+    }
     if (!data.active && data.resolvedLinks && data.resolvedAt && data.resolvedAt !== lastResolvedChainAt) {
       lastResolvedChainAt = data.resolvedAt;
       executeChainLocally([...data.resolvedLinks].reverse());
