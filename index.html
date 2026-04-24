@@ -970,6 +970,7 @@
         <button class="btn-sm" id="btnEndDeploy" onclick="endDeploy()">전개 종료</button>
         <button class="btn-sm" id="btnEndAttack" onclick="endAttack()">공격 종료</button>
         <button class="btn-sm" id="btnEndTurn" onclick="endTurn()">턴 종료</button>
+        <button class="btn-sm" id="btnKeyFetch" onclick="startKeyFetchEffect()">키카드 가져오기</button>
         <button class="btn-sm hidden" id="btnChainRespond" onclick="openChainResponse()">체인 응답</button>
         <button class="btn-sm hidden" id="btnChainPass" onclick="passChainPriority()">체인 패스</button>
         <button class="btn-sm" onclick="concede()" style="color:var(--danger);border-color:var(--danger)">항복</button>
@@ -1515,7 +1516,7 @@ function summonFromDeck(cardId) {
   if (G.myField.length >= maxFieldSlots()) { notify('몬스터 존이 가득 찼습니다.'); return false; }
   if (!removeFromDeck(cardId)) return false;
   const card = CARDS[cardId];
-  G.myField.push({ id: cardId, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0 });
+  G.myField.push({ id: cardId, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'deck' });
   log(`덱에서 소환: ${card.name}`, 'mine');
   sendGameState(); onSummon(cardId, 'deck'); return true;
 }
@@ -1524,7 +1525,7 @@ function summonFromHand(handIdx) {
   const c = G.myHand[handIdx]; const card = CARDS[c.id];
   if (!card || card.cardType !== 'monster') return false;
   G.myHand.splice(handIdx, 1);
-  G.myField.push({ id: c.id, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0 });
+  G.myField.push({ id: c.id, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'hand' });
   log(`패에서 소환: ${card.name}`, 'mine'); selectedCardIdx = -1;
   sendGameState(); onSummon(c.id, 'hand'); return true;
 }
@@ -1533,7 +1534,7 @@ function summonFromGrave(cardId) {
   const idx = G.myGrave.findIndex(c => c.id === cardId);
   if (idx < 0) return false;
   const c = G.myGrave.splice(idx, 1)[0]; const card = CARDS[cardId];
-  G.myField.push({ id: cardId, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0 });
+  G.myField.push({ id: cardId, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'grave' });
   log(`묘지에서 소환: ${card.name}`, 'mine'); sendGameState(); onSummon(cardId, 'grave'); return true;
 }
 function drawOne() {
@@ -1581,10 +1582,13 @@ function triggerKkomaPenguin(from) {
 // 펭귄 부부 ①
 function triggerPenguinBubu(from) {
   if (from !== 'deck' || !canUseEffect('펭귄 부부', 1)) return;
+  const bubu = [...G.myField].reverse().find(c => c.id === '펭귄 부부' && c.summonedFrom === 'deck');
+  if (bubu) bubu.bubuTriggerReady = true;
   enqueueTriggeredEffect({ type: 'triggerPenguinBubu1', label: '펭귄 부부 ①' });
 }
 function resolvePenguinBubu1() {
   markEffectUsed('펭귄 부부', 1);
+  G.myField.forEach(c => { if (c.id === '펭귄 부부') c.bubuTriggerReady = false; });
   const targets = findAllInDeck(c => isPenguinCard(c.id));
   if (targets.length === 0) return;
   openCardPicker(targets, `펭귄 부부 ①: 펭귄 카드 최대 2장 서치`, Math.min(2, targets.length), (sel) => {
@@ -1594,6 +1598,20 @@ function resolvePenguinBubu1() {
       sendGameState(); renderAll();
     });
   });
+}
+function activatePenguinBubu1FromField(fieldIdx) {
+  const mon = G.myField[fieldIdx];
+  if (!mon || mon.id !== '펭귄 부부') return;
+  if (mon.summonedFrom !== 'deck') { notify('덱에서 소환된 경우에만 발동할 수 있습니다.'); return; }
+  if (!mon.bubuTriggerReady || !canUseEffect('펭귄 부부', 1)) { notify('발동 가능한 소환 유발 효과가 없습니다.'); return; }
+  if (activeChainState && activeChainState.active && activeChainState.priority !== myRole) {
+    notify('현재 체인 우선권이 없습니다.');
+    return;
+  }
+  mon.bubuTriggerReady = false;
+  const effect = { type: 'triggerPenguinBubu1', label: '펭귄 부부 ①' };
+  if (activeChainState && activeChainState.active) addChainLink(effect);
+  else beginChain(effect);
 }
 // 펭귄 부부 ②
 function activatePenguinBubu2(handIdx) {
@@ -1902,6 +1920,7 @@ function activatePenguinCard(handIdx, effectNum) {
 function activatePenguinFieldEffect(fieldIdx, effectNum) {
   const mon = G.myField[fieldIdx]; if (!mon) return;
   switch(mon.id) {
+    case '펭귄 부부': if (effectNum===1) activatePenguinBubu1FromField(fieldIdx); break;
     case '현자 펭귄': if (effectNum===1) activateSagePenguin1(); else if (effectNum===2) activateSagePenguin2(); break;
     case '수문장 펭귄': if (effectNum===1) activateSummonerPenguin1(fieldIdx); break;
     case '펭귄 용사': if (effectNum===2) activatePenguinHero2(); break;
@@ -2201,10 +2220,48 @@ function renderPhase() {
 function renderChainActions() {
   const btnRespond = document.getElementById('btnChainRespond');
   const btnPass = document.getElementById('btnChainPass');
+  const btnKeyFetch = document.getElementById('btnKeyFetch');
   if (!btnRespond || !btnPass) return;
   const myPriority = activeChainState && activeChainState.active && activeChainState.priority === myRole;
   btnRespond.classList.toggle('hidden', !myPriority);
   btnPass.classList.toggle('hidden', !myPriority);
+  if (btnKeyFetch) {
+    const noKeyCard = !G.myKeyDeck || G.myKeyDeck.length === 0;
+    const inDraw = currentPhase === 'draw';
+    const cannotRespond = activeChainState && activeChainState.active && !myPriority;
+    btnKeyFetch.disabled = noKeyCard || inDraw || cannotRespond;
+  }
+}
+
+function startKeyFetchEffect() {
+  if (!G.myKeyDeck || G.myKeyDeck.length === 0) {
+    notify('키 카드 덱이 비어있습니다.');
+    return;
+  }
+  if (currentPhase === 'draw') {
+    notify('드로우 단계에는 키카드 가져오기를 사용할 수 없습니다.');
+    return;
+  }
+  if (activeChainState && activeChainState.active && activeChainState.priority !== myRole) {
+    notify('현재 체인 우선권이 없습니다.');
+    return;
+  }
+  if (activeChainState && activeChainState.active && usedKeyFetchInChain[myRole]) {
+    notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
+    return;
+  }
+  const options = G.myKeyDeck.map(c => ({ id: c.id, name: c.name }));
+  openCardPicker(options, '기본 효과: 키 카드 덱에서 1장 가져오기', 1, (sel) => {
+    if (sel.length === 0) return;
+    const picked = options[sel[0]];
+    const effect = {
+      type: 'keyFetch',
+      label: `키 카드 가져오기 (${picked.name})`,
+      cardId: picked.id,
+    };
+    if (activeChainState && activeChainState.active) addChainLink(effect);
+    else beginChain(effect);
+  });
 }
 
 function beginChain(effect) {
@@ -2220,6 +2277,7 @@ function beginChain(effect) {
     links: [{ ...effect, by: myRole }],
   };
   activeChainState = chainState;
+  if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
   roomRef.child('chainState').set(chainState);
   log(`체인 1: ${effect.label} 발동`, 'mine');
 }
@@ -2547,6 +2605,10 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
           const mon = G.myField[fieldIdx];
           if (mon) {
             switch(mon.id) {
+              case '펭귄 부부':
+                if (mon.summonedFrom === 'deck' && mon.bubuTriggerReady && canUseEffect('펭귄 부부', 1))
+                  addBtn('① 소환 유발 효과', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 1));
+                break;
               case '현자 펭귄':
                 if (isMyTurn)
                   addBtn('① 드로우+버리기', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 1));
