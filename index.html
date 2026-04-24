@@ -1600,18 +1600,31 @@ function activatePenguinVillage1(handIdx) {
   beginChain({ type: 'penguinVillage1', label: '펭귄 마을 ①' });
   notify('체인 1: 펭귄 마을 ① 발동. 상대 응답을 기다립니다.');
 }
-// 꼬마 펭귄 ②
+// 꼬마 펭귄 ② — 기동효과이므로 체인 경유
 function triggerKkomaPenguin(from) {
   if (!canUseEffect('꼬마 펭귄', 2, 2)) return;
   const targets = findAllInDeck(c => isPenguinMonster(c.id));
-  if (targets.length === 0) return; markEffectUsed('꼬마 펭귄', 2);
-  openCardPicker(targets, '꼬마 펭귄 ②: 덱에서 펭귄 몬스터 1장 소환', 1, (sel) => { if (sel.length > 0) summonFromDeck(targets[sel[0]].id); });
+  if (targets.length === 0) return;
+  // ★ 임의효과: 발동 여부 먼저 물어보기
+  if (!confirm('꼬마 펭귄 ②\n덱에서 펭귄 몬스터 1장을 소환합니까?')) return;
+  markEffectUsed('꼬마 펭귄', 2);
+  // ★ 기동효과이므로 체인 시작 (상대 응답 기회)
+  enqueueTriggeredEffect({ type: 'triggerKkomaPenguin', label: '꼬마 펭귄 ②' });
+}
+function resolveKkomaPenguin() {
+  const targets = findAllInDeck(c => isPenguinMonster(c.id));
+  if (targets.length === 0) return;
+  openCardPicker(targets, '꼬마 펭귄 ②: 덱에서 펭귄 몬스터 1장 소환', 1, (sel) => {
+    if (sel.length > 0) summonFromDeck(targets[sel[0]].id);
+  });
 }
 // 펭귄 부부 ①
 function triggerPenguinBubu(from) {
   if (from !== 'deck' || !canUseEffect('펭귄 부부', 1)) return;
   const bubu = [...G.myField].reverse().find(c => c.id === '펭귄 부부' && c.summonedFrom === 'deck');
   if (bubu) bubu.bubuTriggerReady = true;
+  // ★ 임의효과: 발동 여부 먼저 물어보기
+  if (!confirm('펭귄 부부 ①\n덱에서 펭귄 카드를 최대 2장 패에 넣겠습니까?')) return;
   enqueueTriggeredEffect({ type: 'triggerPenguinBubu1', label: '펭귄 부부 ①' });
 }
 function resolvePenguinBubu1() {
@@ -1621,8 +1634,8 @@ function resolvePenguinBubu1() {
   if (targets.length === 0) return;
   openCardPicker(targets, `펭귄 부부 ①: 펭귄 카드 최대 2장 서치`, Math.min(2, targets.length), (sel) => {
     sel.forEach(i => searchToHand(targets[i].id));
-    openCardPicker(G.myHand, '펭귄 부부 ①: 패 1장 버리기', 1, (sel2) => {
-      if (sel2.length > 0) { G.myGrave.push(G.myHand.splice(sel2[0], 1)[0]); }
+    // ★ 코스트(패 버리기)는 강제 — 취소 없음, 반드시 1장 선택
+    _forcedDiscardOne('펭귄 부부 ①: 패 1장 버리기 (코스트, 필수)', () => {
       sendGameState(); renderAll();
     });
   });
@@ -1633,7 +1646,7 @@ function activatePenguinBubu1FromField(fieldIdx) {
   if (mon.summonedFrom !== 'deck') { notify('덱에서 소환된 경우에만 발동할 수 있습니다.'); return; }
   if (!mon.bubuTriggerReady || !canUseEffect('펭귄 부부', 1)) { notify('발동 가능한 소환 유발 효과가 없습니다.'); return; }
   if (activeChainState && activeChainState.active && activeChainState.priority !== myRole) {
-    notify('현재 체인 우선권은 상대에게 있습니다. (체인 시작 직후에는 상대가 먼저 응답)');
+    notify('현재 체인 우선권은 상대에게 있습니다.');
     return;
   }
   mon.bubuTriggerReady = false;
@@ -1648,8 +1661,8 @@ function activatePenguinBubu2(handIdx) {
 function resolvePenguinBubu2() {
   if (!canUseEffect('펭귄 부부', 2)) { notify('이미 사용했습니다.'); return; }
   markEffectUsed('펭귄 부부', 2); drawN(2);
-  openCardPicker(G.myHand, '펭귄 부부 ②: 패 1장 버리기', 1, (sel) => {
-    if (sel.length > 0) { G.myGrave.push(G.myHand.splice(sel[0], 1)[0]); }
+  // ★ 코스트(패 버리기)는 강제 — 취소 없음
+  _forcedDiscardOne('펭귄 부부 ②: 패 1장 버리기 (코스트, 필수)', () => {
     const idx = G.myHand.findIndex(c => c.id === '펭귄 부부');
     if (idx >= 0) { G.myDeck.push({id:'펭귄 부부',name:'펭귄 부부'}); G.myDeck = shuffle(G.myDeck); G.myHand.splice(idx,1); log('펭귄 부부 덱으로', 'mine'); }
     sendGameState(); renderAll();
@@ -1806,6 +1819,7 @@ function resolvePenguinGlory2() {
 // 펭귄 용사 ① 트리거
 function triggerPenguinHero(from) {
   if (!canUseEffect('펭귄 용사', 1)) return;
+  if (!confirm('펭귄 용사 ①\n덱에서 펭귄 카드 서치 + 펭귄 몬스터 소환 + 패 1장 버리기를 발동합니까?')) return;
   enqueueTriggeredEffect({ type: 'triggerPenguinHero1', label: '펭귄 용사 ①' });
 }
 function resolvePenguinHero1() {
@@ -1817,10 +1831,13 @@ function resolvePenguinHero1() {
     if (monTargets.length > 0) {
       openCardPicker(monTargets, '펭귄 용사 ①: 펭귄 몬스터 소환', 1, (sel2) => {
         if (sel2.length > 0) summonFromDeck(monTargets[sel2[0]].id);
-        openCardPicker(G.myHand, '펭귄 용사 ①: 패 1장 버리기', 1, (sel3) => {
-          if (sel3.length > 0) { G.myGrave.push(G.myHand.splice(sel3[0], 1)[0]); }
+        _forcedDiscardOne('펭귄 용사 ①: 패 1장 버리기 (코스트, 필수)', () => {
           sendGameState(); renderAll();
         });
+      });
+    } else {
+      _forcedDiscardOne('펭귄 용사 ①: 패 1장 버리기 (코스트, 필수)', () => {
+        sendGameState(); renderAll();
       });
     }
   });
@@ -1913,6 +1930,7 @@ function resolvePenguinForever2() {
 // 펭귄의 전설 ①
 function triggerPenguinLegend(from) {
   if (!canUseEffect('펭귄의 전설', 1)) return;
+  if (!confirm('펭귄의 전설 ①\n묘지에서 꼬마 펭귄을 최대 2장 소환합니까?')) return;
   enqueueTriggeredEffect({ type: 'triggerPenguinLegend1', label: '펭귄의 전설 ①' });
 }
 function resolvePenguinLegend1() {
@@ -1962,6 +1980,7 @@ function resolvePenguinWizard1() {
 // 펭귄 마법사 ②
 function triggerPenguinWizard(from) {
   if (!canUseEffect('펭귄 마법사', 2, 2) || G.opField.length === 0) return;
+  if (!confirm('펭귄 마법사 ②\n패를 버리고 상대 몬스터를 제외합니까?')) return;
   enqueueTriggeredEffect({ type: 'triggerPenguinWizard2', label: '펭귄 마법사 ②' });
 }
 function resolvePenguinWizard2() {
@@ -2598,6 +2617,8 @@ function executeChainLocally(links) {
       resolveKeyFetch(link.cardId);
     } else if (link.type === 'penguinVillage1') {
       resolvePenguinVillage1();
+    } else if (link.type === 'triggerKkomaPenguin') {
+      resolveKkomaPenguin();
     } else if (link.type === 'triggerPenguinBubu1') {
       resolvePenguinBubu1();
     } else if (link.type === 'triggerPenguinHero1') {
@@ -2643,6 +2664,34 @@ function executeChainLocally(links) {
   sendGameState();
   renderAll();
   usedKeyFetchInChain = {};
+}
+
+// ★ 강제 패 버리기 — 반드시 1장 선택해야 함, 취소 불가
+function _forcedDiscardOne(title, callback) {
+  if (G.myHand.length === 0) { callback(); return; }
+  // 취소 버튼을 숨기고, 카드 탭하는 순간 바로 확정 (maxPick=1이면 자동 확정)
+  // 선택을 안 하면 모달이 닫히지 않음 — 반드시 골라야 함
+  const _originalConfirm = window._pickerAllowClose;
+  window._pickerAllowClose = false; // 닫기 버튼 비활성화 신호
+
+  // 모달 열기 전에 닫기 버튼 숨기기
+  const modal = document.getElementById('cardPickerModal');
+  const cancelBtn = modal ? modal.querySelector('.btn-secondary') : null;
+  if (cancelBtn) cancelBtn.style.display = 'none';
+
+  openCardPicker(G.myHand, title, 1, (sel) => {
+    // 복원
+    if (cancelBtn) cancelBtn.style.display = '';
+    window._pickerAllowClose = true;
+
+    // sel은 무조건 1장 — maxPick=1이면 탭하는 순간 바로 확정되어 여기 도달
+    if (sel.length > 0) {
+      const c = G.myHand.splice(sel[0], 1)[0];
+      G.myGrave.push(c);
+      log(`버림(코스트): ${c.name}`, 'mine');
+    }
+    callback();
+  });
 }
 
 function resolveKeyFetch(cardId) {
@@ -3651,34 +3700,38 @@ function enterGame() {
   isMyTurn = (myRole === 'host');
   timeoutHandled = false;
   lastSyncedClockRunner = null;
+  // ★ 타이머는 Firebase listenClockState()가 동기화할 때까지 초기값만 세팅
+  // 호스트가 게임 시작 시 Firebase에 clock을 기록 → 게스트도 같은 시점 기준
   gameClock = { host: 500, guest: 500, runningFor: 'host', lastUpdated: Date.now() };
   G.myExtraSlots = 0;
   G.opExtraSlots = 0;
   G.penguinHeroAtkBuff = false;
   attackedMonstersThisTurn.clear();
 
-  // 덱 초기화 (penguin_engine.js의 PENGUIN_MAIN_DECK 사용)
   initDecks();
 
-  // 초기 패: 선공 6장, 후공 7장
   const startCards = (myRole === 'host') ? 6 : 7;
   drawCards(startCards);
 
-  // 선공 첫 턴 드로우 없음
   if (myRole === 'host') {
     advancePhase('deploy');
     log('선공 첫 턴: 드로우 없이 전개 단계 시작', 'system');
+    // 호스트가 타이머 초기값을 Firebase에 기록 (게스트와 시작 시점 동기화)
+    if (roomRef) {
+      const startTime = Date.now();
+      roomRef.child('clock').set({
+        host: 500, guest: 500, runningFor: 'host', lastUpdated: startTime
+      });
+    }
   } else {
     advancePhase('draw');
   }
 
-  // Firebase 상태 동기화 시작
   sendGameState();
   listenOpponentState();
   listenChainState();
   listenClockState();
   startClockTicker();
-  syncClockRunState(getPriorityOwner());
 
   log('게임 시작!', 'system');
   renderAll();
