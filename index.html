@@ -233,6 +233,30 @@
   .turn-mine { background: #4a8c5c33; color: #6ab87c; border: 1px solid #4a8c5c; }
   .turn-opponent { background: #c8484833; color: #e87070; border: 1px solid #c84848; }
 
+  .clock-wrap {
+    display: flex;
+    gap: .4rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .clock-chip {
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: .75rem;
+    padding: .25rem .6rem;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    background: var(--surface2);
+    letter-spacing: .04em;
+  }
+
+  .clock-chip.running {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: #c8a96e1a;
+  }
+
   /* ── BOARD AREAS ── */
   .board {
     flex: 1;
@@ -934,6 +958,10 @@
       <div class="phase-chip" id="phAttack">공격</div>
       <div class="phase-chip" id="phEnd">엔드</div>
     </div>
+    <div class="clock-wrap">
+      <div id="myClockChip" class="clock-chip">내 시간 500초</div>
+      <div id="opClockChip" class="clock-chip">상대 시간 500초</div>
+    </div>
     <div id="turnLabel" class="turn-label turn-opponent">상대 턴</div>
   </div>
 
@@ -1605,7 +1633,7 @@ function activatePenguinBubu1FromField(fieldIdx) {
   if (mon.summonedFrom !== 'deck') { notify('덱에서 소환된 경우에만 발동할 수 있습니다.'); return; }
   if (!mon.bubuTriggerReady || !canUseEffect('펭귄 부부', 1)) { notify('발동 가능한 소환 유발 효과가 없습니다.'); return; }
   if (activeChainState && activeChainState.active && activeChainState.priority !== myRole) {
-    notify('현재 체인 우선권이 없습니다.');
+    notify('현재 체인 우선권은 상대에게 있습니다. (체인 시작 직후에는 상대가 먼저 응답)');
     return;
   }
   mon.bubuTriggerReady = false;
@@ -2072,6 +2100,10 @@ let lastResolvedChainAt = 0;
 let pendingTriggerEffects = [];
 let usedKeyFetchInChain = {};
 let attackedMonstersThisTurn = new Set();
+let gameClock = { host: 500, guest: 500, runningFor: null, lastUpdated: Date.now() };
+let clockTicker = null;
+let timeoutHandled = false;
+let lastSyncedClockRunner = null;
 
 // ─────────────────────────────────────────────
 // UTILS
@@ -2096,6 +2128,89 @@ function notify(msg, duration = 2500) {
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), duration);
+}
+
+function formatSeconds(sec) {
+  return `${Math.max(0, Math.ceil(sec))}초`;
+}
+
+function getOtherRole(role) {
+  return role === 'host' ? 'guest' : 'host';
+}
+
+function getPriorityOwner() {
+  if (activeChainState && activeChainState.active && activeChainState.priority) return activeChainState.priority;
+  return isMyTurn ? myRole : getOtherRole(myRole);
+}
+
+function getEffectiveClock(now = Date.now()) {
+  const c = { ...gameClock };
+  if (c.runningFor && c.lastUpdated) {
+    const elapsed = Math.max(0, (now - c.lastUpdated) / 1000);
+    c[c.runningFor] = Math.max(0, (c[c.runningFor] ?? 0) - elapsed);
+  }
+  return c;
+}
+
+function renderClock() {
+  const myChip = document.getElementById('myClockChip');
+  const opChip = document.getElementById('opClockChip');
+  if (!myChip || !opChip || !myRole) return;
+  const c = getEffectiveClock();
+  const myTime = c[myRole] ?? 0;
+  const opRole = getOtherRole(myRole);
+  const opTime = c[opRole] ?? 0;
+  myChip.textContent = `내 시간 ${formatSeconds(myTime)}`;
+  opChip.textContent = `상대 시간 ${formatSeconds(opTime)}`;
+  myChip.classList.toggle('running', c.runningFor === myRole);
+  opChip.classList.toggle('running', c.runningFor === opRole);
+}
+
+function handleTimeOut(winnerRole) {
+  if (timeoutHandled) return;
+  timeoutHandled = true;
+  const iWon = winnerRole === myRole;
+  showGameOver(iWon);
+  const loser = getOtherRole(winnerRole);
+  const loserName = loser === myRole ? myName : opName;
+  log(`시간 초과: ${loserName || (loser === 'host' ? '호스트' : '게스트')} 패배`, 'system');
+  if (roomRef) {
+    sendAction({ type: 'gameOver', winner: winnerRole, reason: 'timeout' });
+  }
+}
+
+function tickClockUI() {
+  renderClock();
+  const c = getEffectiveClock();
+  if (c.host <= 0) handleTimeOut('guest');
+  else if (c.guest <= 0) handleTimeOut('host');
+}
+
+function startClockTicker() {
+  if (clockTicker) clearInterval(clockTicker);
+  clockTicker = setInterval(tickClockUI, 250);
+  tickClockUI();
+}
+
+function syncClockRunState(newRunningFor) {
+  if (!newRunningFor) return;
+  if (lastSyncedClockRunner === newRunningFor) return;
+  lastSyncedClockRunner = newRunningFor;
+  const now = Date.now();
+  if (!roomRef) {
+    const c = getEffectiveClock(now);
+    gameClock = { host: c.host, guest: c.guest, runningFor: newRunningFor, lastUpdated: now };
+    renderClock();
+    return;
+  }
+  roomRef.child('clock').transaction(curr => {
+    const base = curr || { host: 500, guest: 500, runningFor: null, lastUpdated: now };
+    const elapsed = base.runningFor ? Math.max(0, (now - (base.lastUpdated || now)) / 1000) : 0;
+    if (base.runningFor) base[base.runningFor] = Math.max(0, (base[base.runningFor] ?? 500) - elapsed);
+    base.runningFor = newRunningFor;
+    base.lastUpdated = now;
+    return base;
+  });
 }
 
 function log(msg, type = '') {
@@ -2168,6 +2283,7 @@ function renderAll() {
   renderCounts();
   renderPhase();
   renderFieldZones();
+  renderClock();
 }
 
 function renderMyHand() {
@@ -2282,6 +2398,7 @@ function renderPhase() {
   turnLabel.textContent = mine ? '내 턴' : '상대 턴';
   turnLabel.className = 'turn-label ' + (mine ? 'turn-mine' : 'turn-opponent');
   renderChainActions();
+  syncClockRunState(getPriorityOwner());
 }
 
 function renderChainActions() {
@@ -2310,7 +2427,7 @@ function startKeyFetchEffect() {
     return;
   }
   if (activeChainState && activeChainState.active && activeChainState.priority !== myRole) {
-    notify('현재 체인 우선권이 없습니다.');
+    notify('현재 체인 우선권은 상대에게 있습니다. (체인 시작 직후에는 상대가 먼저 응답)');
     return;
   }
   if (activeChainState && activeChainState.active && usedKeyFetchInChain[myRole]) {
@@ -2425,7 +2542,7 @@ function flushTriggeredEffects() {
 function activateQuickEffect(effect) {
   if (activeChainState && activeChainState.active) {
     if (activeChainState.priority !== myRole) {
-      notify('현재 체인 우선권이 없습니다.');
+      notify('현재 체인 우선권은 상대에게 있습니다. (체인 시작 직후에는 상대가 먼저 응답)');
       return;
     }
     addChainLink(effect);
@@ -2437,7 +2554,7 @@ function activateQuickEffect(effect) {
 function activateIgnitionEffect(effect) {
   if (activeChainState && activeChainState.active) {
     if (activeChainState.priority !== myRole) {
-      notify('현재 체인 우선권이 없습니다.');
+      notify('현재 체인 우선권은 상대에게 있습니다. (체인 시작 직후에는 상대가 먼저 응답)');
       return;
     }
     addChainLink(effect);
@@ -2819,6 +2936,21 @@ function listenChainState() {
     if (data.priority === myRole) {
       notify(`체인 우선권: ${data.links?.length || 0}체인. 응답 또는 패스를 선택하세요.`);
     }
+  });
+}
+
+function listenClockState() {
+  if (!roomRef) return;
+  roomRef.child('clock').on('value', snap => {
+    const data = snap.val();
+    if (!data) return;
+    gameClock = {
+      host: typeof data.host === 'number' ? data.host : 500,
+      guest: typeof data.guest === 'number' ? data.guest : 500,
+      runningFor: data.runningFor || null,
+      lastUpdated: data.lastUpdated || Date.now(),
+    };
+    renderClock();
   });
 }
 
@@ -3260,6 +3392,7 @@ function createRoom() {
       turn: 0,
       actions: null,
       chainState: { active: false, links: [], priority: null, passCount: 0 },
+      clock: { host: 500, guest: 500, runningFor: 'host', lastUpdated: Date.now() },
     }).then(() => {
       document.getElementById('roomCodeText').textContent = roomCode;
       document.getElementById('roomCodeBlock').classList.remove('hidden');
@@ -3317,7 +3450,11 @@ function joinRoom() {
 function startGame() {
   if (!db && !DEMO_MODE) { alert('Firebase가 연결되지 않았습니다.'); return; }
   if (DEMO_MODE) { goToDeckBuilder(); return; }
-  roomRef.update({ status: 'playing', activePlayer: 'host' });
+  roomRef.update({
+    status: 'playing',
+    activePlayer: 'host',
+    clock: { host: 500, guest: 500, runningFor: 'host', lastUpdated: Date.now() },
+  });
   goToDeckBuilder();
 }
 
@@ -3445,6 +3582,9 @@ function handleOpponentAction(action) {
     case 'gameOver':
       const win = (action.winner === myRole);
       showGameOver(win);
+      if (action.reason === 'timeout') {
+        log('시간 제한 500초 초과로 게임 종료', 'system');
+      }
       break;
     default:
       // 펭귄 관련 상대 액션
@@ -3500,6 +3640,9 @@ function enterGame() {
   document.getElementById('opNameLabel').textContent = opName;
 
   isMyTurn = (myRole === 'host');
+  timeoutHandled = false;
+  lastSyncedClockRunner = null;
+  gameClock = { host: 500, guest: 500, runningFor: 'host', lastUpdated: Date.now() };
   G.myExtraSlots = 0;
   G.opExtraSlots = 0;
   G.penguinHeroAtkBuff = false;
@@ -3524,6 +3667,9 @@ function enterGame() {
   sendGameState();
   listenOpponentState();
   listenChainState();
+  listenClockState();
+  startClockTicker();
+  syncClockRunState(getPriorityOwner());
 
   log('게임 시작!', 'system');
   renderAll();
