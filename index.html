@@ -1537,7 +1537,7 @@ function isPenguinCard(cardId) { return cardId.includes('펭귄'); }
 function isPenguinMonster(cardId) { const card = CARDS[cardId]; return card && card.cardType === 'monster' && isPenguinCard(cardId); }
 function findAllInDeck(predicate) { return G.myDeck.filter(predicate); }
 function removeFromDeck(cardId) { const idx = G.myDeck.findIndex(c => c.id === cardId); if (idx >= 0) { G.myDeck.splice(idx, 1); return true; } return false; }
-function searchToHand(cardId) { if (!removeFromDeck(cardId)) return false; const card = CARDS[cardId]; G.myHand.push({ id: cardId, name: card.name, isPublic: true }); log(`서치: ${card.name} → 공개패`, 'mine'); sendGameState(); return true; }
+function searchToHand(cardId) { if (!removeFromDeck(cardId)) return false; const card = CARDS[cardId]; G.myHand.push({ id: cardId, name: card.name, isPublic: true }); log(`서치: ${card.name} → 공개패`, 'mine'); sendAction({ type: 'search', cardName: card.name }); sendGameState(); return true; }
 function maxFieldSlots() { return 5; }
 
 function summonFromDeck(cardId) {
@@ -1578,12 +1578,19 @@ function sendToGrave(cardId, from = 'field') {
   sendGameState();
 }
 function onSummon(cardId, from) {
+  // 유혹의 황금사과: 상대가 소환할 때 내가 드로우
+  if (G.goldenAppleActive && !isMyTurn) {
+    drawOne();
+    log('유혹의 황금사과: 상대 소환으로 드로우!', 'mine');
+    sendGameState();
+  }
   switch(cardId) {
     case '꼬마 펭귄': triggerKkomaPenguin(from); break;
     case '펭귄 부부': triggerPenguinBubu(from); break;
     case '펭귄 용사': triggerPenguinHero(from); break;
     case '펭귄의 전설': triggerPenguinLegend(from); break;
     case '펭귄 마법사': triggerPenguinWizard(from); break;
+    case '전원소의 지배자': triggerJibaejaJeon2(); break;
   }
   renderAll();
 }
@@ -1592,6 +1599,7 @@ function resetTurnEffects() {
   resetEffectUsed();
   if (G.penguinHeroAtkBuff) { G.myField.forEach(c => { if (isPenguinMonster(c.id)) c.atk = c.atkBase || CARDS[c.id]?.atk || 0; }); G.penguinHeroAtkBuff = false; }
   G.myField.forEach(c => { if (c.id === '수문장 펭귄') c.atk = c.atkBase || 3; });
+  resetJibaeEffects();
 }
 
 // 펭귄 마을 ①
@@ -2792,6 +2800,20 @@ function executeChainLocally(links) {
   usedKeyFetchInChain = {};
 }
 
+function manualDiscard(handIdx) {
+  if (handIdx < 0 || !G.myHand[handIdx]) return;
+  const c = G.myHand.splice(handIdx, 1)[0];
+  G.myGrave.push({ id: c.id, name: c.name });
+  selectedCardIdx = -1;
+  log(`패를 버림: ${c.name}`, 'mine');
+  sendAction({ type: 'discard', cardId: c.id });
+  onJibaeryongDiscarded(c.id);
+  onHandDiscarded_jibaeSasl();
+  sendGameState();
+  renderAll();
+  checkWinCondition();
+}
+
 // ★ 강제 패 버리기 — 반드시 1장 선택해야 함, 취소 불가
 function _forcedDiscardOne(title, callback) {
   if (G.myHand.length === 0) { callback(); return; }
@@ -2800,6 +2822,8 @@ function _forcedDiscardOne(title, callback) {
       const c = G.myHand.splice(sel[0], 1)[0];
       G.myGrave.push(c);
       log(`버림(코스트): ${c.name}`, 'mine');
+      onJibaeryongDiscarded(c.id);
+      onHandDiscarded_jibaeSasl();
     }
     callback();
   }, true); // forced=true: 반드시 선택, 취소 불가
@@ -3054,6 +3078,66 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                 if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
                   addBtn('효과 소환 전용', 'btn-secondary', () => notify('통상 소환은 없습니다.'));
             }
+          } else if (cardId === '일격필살') {
+            // 키카드 — 언제든 발동 가능, 묘지에 있을 때 효과 대상 안 됨
+            if (handIdx >= 0 && currentPhase !== 'draw')
+              addBtn('① 상대 패 1장 버리기', 'btn-primary', () => activateCard(handIdx));
+            if (handIdx >= 0) addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
+          } else if (cardId === '단 한번의 기회') {
+            // 키카드 — 언제든 발동 가능
+            if (handIdx >= 0 && currentPhase !== 'draw')
+              addBtn('① 드로우 1장', 'btn-primary', () => activateCard(handIdx));
+            if (handIdx >= 0) addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
+          } else if (card.theme === '지배자') {
+            // ── 지배자/지배룡 카드 버튼 ──
+            const canAnyTurn = isMyTurn || hasKeyCardMonsterOnField();
+            if (handIdx >= 0) {
+              switch(cardId) {
+                case '수원소의 지배자':
+                  if (canAnyTurn && canUseEffect('수원소의 지배자',1))
+                    addBtn('① 버리고 → 지배자 서치 + 드로우', 'btn-primary', () => activateJibaejaShui1(handIdx));
+                  break;
+                case '화원소의 지배자':
+                  if (canAnyTurn && canUseEffect('화원소의 지배자',1))
+                    addBtn('① 버리고 → 지배자 소환 + 드로우', 'btn-primary', () => activateJibaejaHwa1(handIdx));
+                  break;
+                case '전원소의 지배자':
+                  if (canAnyTurn && canUseEffect('전원소의 지배자',1))
+                    addBtn('① 버리고 → 패/묘지 지배자 소환 + 드로우', 'btn-primary', () => activateJibaejaJeon1(handIdx));
+                  break;
+                case '풍원소의 지배자':
+                  if (canAnyTurn && G.opGrave.length > 0 && canUseEffect('풍원소의 지배자',1))
+                    addBtn('① 버리고 → 상대 묘지 제외 + 드로우', 'btn-primary', () => activateJibaejaFung1(handIdx));
+                  break;
+                case '사원소의 지배자':
+                  if (canSummonSaWonsoJibaeja())
+                    addBtn('소환 (지배자 4종 제외)', 'btn-primary', () => summonSaWonsoJibaeja());
+                  else
+                    addBtn('소환 불가 (필드/묘지 지배자 4종 필요)', 'btn-secondary', () => notify('필드/묘지에 카드명이 다른 지배자 4종이 필요합니다.'));
+                  break;
+                case '사원소의 지배룡':
+                  if (canSummonSaWonsoJibaeryong())
+                    addBtn('소환 (지배룡 4종 제외)', 'btn-primary', () => summonSaWonsoJibaeryong());
+                  else
+                    addBtn('소환 불가 (필드/묘지 지배룡 4종 필요)', 'btn-secondary', () => notify('필드/묘지에 카드명이 다른 지배룡 4종이 필요합니다.'));
+                  break;
+                case '사원소의 기적':
+                  if (!saWonsoMirakUsed)
+                    addBtn('① 4종 묘지로 (게임 중 1번)', 'btn-primary', () => activateSaWonsoMirak(handIdx));
+                  else
+                    addBtn('이미 발동했습니다', 'btn-secondary', () => notify('사원소의 기적은 게임 중 1번밖에 발동할 수 없습니다.'));
+                  break;
+                case '지배의 사슬':
+                  // ①은 자동 트리거, ②는 묘지에서
+                  addBtn('카드 설명 보기', 'btn-secondary', () => {});
+                  break;
+                case '지배룡과 지배자':
+                  if (currentPhase === 'attack' && canUseEffect('지배룡과 지배자',1))
+                    addBtn('① 공격 단계 강화', 'btn-primary', () => activateJibaeryongJibaeja1(handIdx));
+                  break;
+              }
+              addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
+            }
           } else {
             if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
               addBtn('효과 소환 전용', 'btn-secondary', () => notify('통상 소환은 없습니다. 카드 효과로만 소환할 수 있습니다.'));
@@ -3106,8 +3190,51 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                   addBtn('② 패로 + 묘지 소환', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 2));
                 break;
               case '펭귄 마법사':
-                // ③은 펭귄 마을 효과로 묘지로 보내졌을 때 자동 트리거 — 수동 발동 불가
                 addBtn('③ 자동 트리거 효과 (수동 발동 불가)', 'btn-secondary', () => notify('펭귄 마법사 ③은 펭귄 마을 효과로 묘지로 보내졌을 때 자동 발동합니다.'));
+                break;
+              // ── 지배자 필드 효과 ──
+              case '수원소의 지배자':
+                if (isMyTurn && currentPhase === 'deploy' && canUseEffect('수원소의 지배자',2))
+                  addBtn('② 지배자 소환', 'btn-secondary', () => activateJibaejaShui2(fieldIdx));
+                if (isMyTurn && currentPhase === 'deploy' && canUseEffect('수원소의 지배자',3))
+                  addBtn('③ 지배룡 소환 + 패 버리기', 'btn-secondary', () => activateJibaeja3(fieldIdx, '수원소의 지배자'));
+                break;
+              case '화원소의 지배자':
+                if (isMyTurn && currentPhase === 'deploy' && canUseEffect('화원소의 지배자',2))
+                  addBtn('② 지배자 서치', 'btn-secondary', () => activateJibaejaHwa2(fieldIdx));
+                if (isMyTurn && currentPhase === 'deploy' && canUseEffect('화원소의 지배자',3))
+                  addBtn('③ 지배룡 소환 + 패 버리기', 'btn-secondary', () => activateJibaeja3(fieldIdx, '화원소의 지배자'));
+                break;
+              case '전원소의 지배자':
+                if (isMyTurn && currentPhase === 'deploy' && canUseEffect('전원소의 지배자',3))
+                  addBtn('③ 지배룡 소환 + 패 버리기', 'btn-secondary', () => activateJibaeja3(fieldIdx, '전원소의 지배자'));
+                break;
+              case '풍원소의 지배자':
+                if (isMyTurn && currentPhase === 'deploy' && canUseEffect('풍원소의 지배자',3))
+                  addBtn('③ 지배룡 소환 + 패 버리기', 'btn-secondary', () => activateJibaeja3(fieldIdx, '풍원소의 지배자'));
+                break;
+              case '수원소의 지배룡':
+              case '화원소의 지배룡':
+              case '전원소의 지배룡':
+              case '풍원소의 지배룡':
+                if (isMyTurn && canUseEffect(mon.id,3))
+                  addBtn('③ 필드→묘지 + 지배자 버리고 드로우', 'btn-secondary', () => activateJibaeryong3(fieldIdx, mon.id));
+                break;
+              case '사원소의 지배룡':
+                if (isMyTurn && currentPhase === 'deploy' && canUseEffect('사원소의 지배룡',1))
+                  addBtn('① 지배자 2장 서치 + 버리기', 'btn-secondary', () => activateSaWonsoJibaeryong1(fieldIdx));
+                if (currentPhase === 'attack' && G.myHand.length < G.opHand.length && canUseEffect('사원소의 지배룡',2))
+                  addBtn('② ATK 상승 (패 차이만큼)', 'btn-secondary', () => activateSaWonsoJibaeryong2(fieldIdx));
+                if (G.myHand.length <= 5 && canUseEffect('사원소의 지배룡',3))
+                  addBtn('③ 효과 무효 + 패 2장 버리기', 'btn-secondary', () => tryActivateSaWonsoJibaeryong3());
+                break;
+              case '사원소의 지배자':
+                if (isMyTurn && currentPhase === 'deploy' && canUseEffect('사원소의 지배자',1))
+                  addBtn('① 지배룡 2장 서치 + 버리기', 'btn-secondary', () => activateSaWonsoJibaeja1(fieldIdx));
+                if (canUseEffect('사원소의 지배자',2))
+                  addBtn('② 제외 후 지배자/지배룡 소환', 'btn-secondary', () => activateSaWonsoJibaeja2(fieldIdx));
+                if (G.myHand.length <= 5 && canUseEffect('사원소의 지배자',3))
+                  addBtn('③ 상대 필드 카드 묘지 + 패 버리기', 'btn-secondary', () => tryActivateSaWonsoJibaeja3());
                 break;
             }
           }
@@ -3126,6 +3253,18 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
             case '펭귄의 영광':
             case '펭귄이여 영원하라':
               addBtn('② 묘지 제외 → 드로우', 'btn-secondary', () => activateGraveEffect(cardId));
+              break;
+            case '지배의 사슬':
+              if (!isMyTurn && canUseEffect('지배의 사슬',2))
+                addBtn('② 묘지 제외 → 제외 카드 덱으로 + 드로우 (상대 턴)', 'btn-secondary', () => activateJibaeSasl2());
+              break;
+            case '지배룡과 지배자':
+              if (canUseEffect('지배룡과 지배자',2))
+                addBtn('② 묘지 제외 → 드로우', 'btn-secondary', () => activateJibaeryongJibaeja2());
+              break;
+            case '풍원소의 지배자':
+              if (canUseEffect('풍원소의 지배자',2) && G.myGrave.some(c=>c.id==='풍원소의 지배자'))
+                addBtn('② 지배룡 묘지 → 이 카드 소환 (자신/상대 턴)', 'btn-secondary', () => activateJibaejaFung2());
               break;
             default:
               addBtn('묘지 효과 발동', 'btn-secondary', () => activateGraveEffect(cardId));
@@ -3344,38 +3483,7 @@ function summonMonster(handIdx) {
   notify('통상 소환은 없습니다. 카드 효과로만 소환할 수 있습니다.');
 }
 
-function activateCard(handIdx) {
-  const c = G.myHand[handIdx];
-  const card = CARDS[c.id];
-  if (!card) return;
-  if (card.cardType === 'trap' && isMyTurn) {
-    notify('함정은 상대 턴에만 발동할 수 있습니다.');
-    return;
-  }
-
-  // 펭귄 카드면 효과 엔진으로
-  if (card.theme === '펭귄' || c.id.includes('펭귄')) {
-    const handled = activatePenguinEffect(c.id, handIdx, -1);
-    if (handled) return;
-  }
-
-  // 범용 카드 처리
-  if (card.cardType === 'field') {
-    G.myHand.splice(handIdx, 1);
-    if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
-    G.myFieldCard = { id: c.id, name: card.name };
-    log(`필드 마법 발동: ${card.name}`, 'mine');
-    sendAction({ type: 'fieldCard', cardId: c.id });
-  } else {
-    G.myHand.splice(handIdx, 1);
-    G.myGrave.push({ id: c.id, name: card.name });
-    log(`발동: ${card.name}`, 'mine');
-    sendAction({ type: 'activate', cardId: c.id });
-    notify(`${card.name} 발동!`);
-  }
-  selectedCardIdx = -1;
-  renderAll();
-}
+// activateCard: 아래 두 번째 정의 사용
 
 function executeCombat(atkIdx, defIdx) {
   if (!isMyTurn || currentPhase !== 'attack') { notify('공격 단계가 아닙니다.'); return; }
@@ -3383,6 +3491,11 @@ function executeCombat(atkIdx, defIdx) {
   const defender = G.opField[defIdx];
   if (!attacker || !defender) return;
   if (attackedMonstersThisTurn.has(attacker.id)) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
+  // 수호의 빛: 공격 단계에 1회만 공격 가능
+  if ((G.myFieldCard?.id === '수호의 빛' || G.opFieldCard?.id === '수호의 빛') && attackedMonstersThisTurn.size > 0) {
+    notify('수호의 빛: 공격 단계에 몬스터 하나로만 공격할 수 있습니다.');
+    return;
+  }
 
   const diff = attacker.atk - defender.atk;
   log(`전투: ${attacker.name}(${attacker.atk}) vs ${defender.name}(${defender.atk})`, 'mine');
@@ -3404,7 +3517,21 @@ function executeCombat(atkIdx, defIdx) {
     onSentToGrave(attacker.id);
     // 펭귄 마을 ② 체크 먼저
     const replaced = checkPenguinVillageReplace(Math.abs(diff));
-    if (!replaced) forceDiscard(Math.abs(diff), true); // 상대가 고름
+    if (!replaced) {
+      // 구사일생 체크: 공격력 차 >= 내 패 수일 때 발동 가능
+      const guIdxInHand = G.myHand.findIndex(c => c.id === '구사일생');
+      if (guIdxInHand >= 0 && Math.abs(diff) >= G.myHand.length) {
+        if (confirm(`구사일생 발동? (전투 데미지 0 + 드로우 1장)\n조건: 공격력 차(${Math.abs(diff)}) ≥ 패 수(${G.myHand.length})`)) {
+          G.myHand.splice(guIdxInHand, 1);
+          G.myGrave.push({ id: '구사일생', name: '구사일생' });
+          drawOne();
+          log('구사일생: 전투 데미지 0 + 드로우', 'mine');
+          sendGameState(); renderAll();
+          return; // 데미지 없음
+        }
+      }
+      forceDiscard(Math.abs(diff), true);
+    }
   } else {
     if (attacker.atk === 0) {
       log(`공격력 0 — 양쪽 유지`, 'system');
@@ -3432,6 +3559,8 @@ function directAttack(atkIdx) {
   notify(`직접 공격! 상대 패 ${attacker.atk}장 손실`);
   sendAction({ type: 'directAttack', atkIdx, card: attacker });
   attackedMonstersThisTurn.add(attacker.id);
+  sendAction({ type: 'directAttack', card: attacker });
+  sendGameState(); renderAll();
 }
 
 function forceDiscard(n, opponentPicks = false) {
@@ -3856,9 +3985,23 @@ function sendAction(action) {
 function handleOpponentAction(action) {
   switch (action.type) {
     case 'draw':
-      // listenOpponentState가 실시간으로 처리 — 여기서 중복 처리 안 함
-      // log만 남김
       log('상대 드로우', 'opponent');
+      break;
+    case 'search':
+      // 상대가 서치 → 눈에는 눈 자동 체크
+      log(`상대 서치: ${action.cardName || ''}`, 'opponent');
+      { const eyeIdx = G.myHand.findIndex(c => c.id === '눈에는 눈');
+        if (eyeIdx >= 0 && canUseEffect('눈에는 눈', 1)) {
+          if (confirm('눈에는 눈 발동? (드로우 2장)')) {
+            markEffectUsed('눈에는 눈', 1);
+            G.myHand.splice(eyeIdx, 1);
+            G.myGrave.push({ id: '눈에는 눈', name: '눈에는 눈' });
+            drawN(2);
+            log('눈에는 눈: 드로우 2장!', 'mine');
+            sendGameState(); renderAll();
+          }
+        }
+      }
       break;
     case 'summon':
       const sc = CARDS[action.cardId] || {};
@@ -4105,7 +4248,7 @@ function initDecks() {
     '펭귄 마법사','펭귄 마법사','펭귄 마법사','펭귄 마법사',
     '구사일생','구사일생','눈에는 눈','눈에는 눈',
   ];
-  const keyDeck = ['펭귄 용사', '펭귄의 일격', '펭귄의 전설'];
+  const keyDeck = ['펭귄 용사', '펭귄의 일격', '펭귄의 전설', '일격필살', '단 한번의 기회'];
 
   const baseDeck = window._confirmedDeck || penguinDeck;
   const baseKeyDeck = window._confirmedKeyDeck || keyDeck;
@@ -4273,7 +4416,7 @@ function loadPreset(theme) {
       '수문장 펭귄':4,'펭귄!돌격!':4,'펭귄의 영광':4,
       '펭귄이여 영원하라':4,'펭귄 마법사':4,'구사일생':2,'눈에는 눈':2,
     };
-    builderKeyDeck = { '펭귄 용사':1, '펭귄의 일격':1, '펭귄의 전설':1 };
+    builderKeyDeck = { '펭귄 용사':1, '펭귄의 일격':1, '펭귄의 전설':1, '일격필살':1, '단 한번의 기회':1 };
   }
   renderBuilderDeck();
   filterDeckPool(currentPoolFilter);
@@ -4352,8 +4495,652 @@ function enterGameWithDeck() {
 }
 
 // ─────────────────────────────────────────────
-// 범용 카드 효과
+// 지배자/지배룡 엔진
 // ─────────────────────────────────────────────
+
+// 헬퍼
+function isJibaeCard(id) { return id && (id.includes('지배자') || id.includes('지배룡')); }
+function isJibaejaMonster(id) { return id && id.includes('지배자') && CARDS[id]?.cardType === 'monster'; }
+function isJibaeryongMonster(id) { return id && id.includes('지배룡') && CARDS[id]?.cardType === 'monster'; }
+
+// 키카드 몬스터 필드 존재 여부 (퀵 효과 조건)
+function hasKeyCardMonsterOnField() {
+  const allField = [...G.myField, ...G.opField];
+  return allField.some(c => CARDS[c.id]?.isKeyCard && CARDS[c.id]?.cardType === 'monster');
+}
+
+// 사원소 소환 조건 체크
+function canSummonSaWonsoJibaeryong() {
+  // 필드/묘지에서 카드명이 다른 지배룡 4종 제외 가능한지
+  const names = new Set();
+  [...G.myField, ...G.myGrave].forEach(c => { if (isJibaeryongMonster(c.id)) names.add(c.id); });
+  return names.size >= 4;
+}
+function canSummonSaWonsoJibaeja() {
+  const names = new Set();
+  [...G.myField, ...G.myGrave].forEach(c => { if (isJibaejaMonster(c.id)) names.add(c.id); });
+  return names.size >= 4;
+}
+
+// 사원소의 기적 발동 여부 상태
+let saWonsoMirakActive = false; // 기적 발동 중 (효과 발동마다 패 1장 버리기)
+let saWonsoMirakType = null;    // 'jibaeJa' | 'jibaeryong'
+let saWonsoMirakUsed = false;   // 게임 중 1번
+
+// 지배자/지배룡 효과 발동 시 기적 코스트 체크
+function jibaeMirakCostIfNeeded(callback) {
+  if (!saWonsoMirakActive) { callback(); return; }
+  _forcedDiscardOne('사원소의 기적: 효과 발동 코스트 (패 1장 버리기, 필수)', callback);
+}
+
+// ── 지배자 ① 공통 (퀵/기동 효과) ─────────────────────────
+// 수원소의 지배자 ①: 버리고 → 지배자 서치 + 드로우 선택
+function activateJibaejaShui1(handIdx) {
+  const canQuick = isMyTurn || hasKeyCardMonsterOnField();
+  if (!canQuick) { notify('자신/상대 필드에 키카드 몬스터가 없으면 자신 턴에만 발동할 수 있습니다.'); return; }
+  if (!canUseEffect('수원소의 지배자', 1)) { notify('이미 사용했습니다.'); return; }
+  _forcedDiscardOne('수원소의 지배자 ①: 이 카드를 버리고 발동 (코스트)', () => {
+    markEffectUsed('수원소의 지배자', 1);
+    jibaeMirakCostIfNeeded(() => {
+      const targets = findAllInDeck(c => isJibaejaMonster(c.id));
+      if (targets.length === 0) { notify('덱에 지배자 몬스터가 없습니다.'); return; }
+      openCardPicker(targets, '수원소의 지배자 ①: 덱에서 지배자 몬스터 서치', 1, (sel) => {
+        if (sel.length > 0) searchToHand(targets[sel[0]].id);
+        if (confirm('1장 드로우하겠습니까?')) drawOne();
+        sendGameState(); renderAll();
+      });
+    });
+  });
+}
+// 화원소의 지배자 ①: 버리고 → 지배자 소환 + 드로우 선택
+function activateJibaejaHwa1(handIdx) {
+  const canQuick = isMyTurn || hasKeyCardMonsterOnField();
+  if (!canQuick) { notify('키카드 몬스터가 없으면 자신 턴에만 발동할 수 있습니다.'); return; }
+  if (!canUseEffect('화원소의 지배자', 1)) { notify('이미 사용했습니다.'); return; }
+  _forcedDiscardOne('화원소의 지배자 ①: 이 카드를 버리고 발동 (코스트)', () => {
+    markEffectUsed('화원소의 지배자', 1);
+    jibaeMirakCostIfNeeded(() => {
+      const targets = findAllInDeck(c => isJibaejaMonster(c.id));
+      if (targets.length === 0) { notify('덱에 지배자 몬스터가 없습니다.'); return; }
+      openCardPicker(targets, '화원소의 지배자 ①: 덱에서 지배자 몬스터 소환', 1, (sel) => {
+        if (sel.length > 0) summonFromDeck(targets[sel[0]].id);
+        if (confirm('1장 드로우하겠습니까?')) drawOne();
+        sendGameState(); renderAll();
+      });
+    });
+  });
+}
+// 전원소의 지배자 ①: 버리고 → 패/묘지에서 다른 지배자 소환 + 드로우
+function activateJibaejaJeon1(handIdx) {
+  const canQuick = isMyTurn || hasKeyCardMonsterOnField();
+  if (!canQuick) { notify('키카드 몬스터가 없으면 자신 턴에만 발동할 수 있습니다.'); return; }
+  if (!canUseEffect('전원소의 지배자', 1)) { notify('이미 사용했습니다.'); return; }
+  _forcedDiscardOne('전원소의 지배자 ①: 이 카드를 버리고 발동 (코스트)', () => {
+    markEffectUsed('전원소의 지배자', 1);
+    jibaeMirakCostIfNeeded(() => {
+      const targets = [
+        ...G.myHand.filter(c => isJibaejaMonster(c.id) && c.id !== '전원소의 지배자').map(c => ({...c, _from: 'hand'})),
+        ...G.myGrave.filter(c => isJibaejaMonster(c.id) && c.id !== '전원소의 지배자').map(c => ({...c, _from: 'grave'})),
+      ];
+      if (targets.length === 0) { notify('패/묘지에 다른 지배자 몬스터가 없습니다.'); return; }
+      openCardPicker(targets, '전원소의 지배자 ①: 패/묘지에서 지배자 소환', 1, (sel) => {
+        if (sel.length > 0) {
+          const t = targets[sel[0]];
+          if (t._from === 'hand') {
+            const hi = G.myHand.findIndex(c => c.id === t.id);
+            if (hi >= 0) summonFromHand(hi);
+          } else {
+            summonFromGrave(t.id);
+          }
+        }
+        if (confirm('1장 드로우하겠습니까?')) drawOne();
+        sendGameState(); renderAll();
+      });
+    });
+  });
+}
+// 풍원소의 지배자 ①: 버리고 → 상대 묘지 제외 + 드로우
+function activateJibaejaFung1(handIdx) {
+  const canQuick = isMyTurn || hasKeyCardMonsterOnField();
+  if (!canQuick) { notify('키카드 몬스터가 없으면 자신 턴에만 발동할 수 있습니다.'); return; }
+  if (!canUseEffect('풍원소의 지배자', 1)) { notify('이미 사용했습니다.'); return; }
+  if (G.opGrave.length === 0) { notify('상대 묘지에 카드가 없습니다.'); return; }
+  _forcedDiscardOne('풍원소의 지배자 ①: 이 카드를 버리고 발동 (코스트)', () => {
+    markEffectUsed('풍원소의 지배자', 1);
+    jibaeMirakCostIfNeeded(() => {
+      openCardPicker(G.opGrave, '풍원소의 지배자 ①: 상대 묘지 카드 1장 제외', 1, (sel) => {
+        if (sel.length > 0) {
+          const c = G.opGrave.splice(sel[0], 1)[0];
+          G.opExile.push(c);
+          log(`풍원소의 지배자 ①: 상대 묘지 ${c.name} 제외`, 'mine');
+          sendAction({ type: 'opGraveExile', cardId: c.id });
+        }
+        drawOne();
+        sendGameState(); renderAll();
+      });
+    });
+  });
+}
+// 풍원소의 지배자 ②: 자신/상대 턴에 덱에서 지배룡 묘지 → 이 카드 소환 + 드로우
+function activateJibaejaFung2() {
+  if (!canUseEffect('풍원소의 지배자', 2)) { notify('이미 사용했습니다.'); return; }
+  const targets = findAllInDeck(c => isJibaeryongMonster(c.id));
+  if (targets.length === 0) { notify('덱에 지배룡 몬스터가 없습니다.'); return; }
+  const inGrave = G.myGrave.some(c => c.id === '풍원소의 지배자');
+  if (!inGrave) { notify('묘지에 풍원소의 지배자가 없습니다.'); return; }
+  markEffectUsed('풍원소의 지배자', 2);
+  openCardPicker(targets, '풍원소의 지배자 ②: 덱에서 지배룡 묘지로', 1, (sel) => {
+    if (sel.length > 0) {
+      const id = targets[sel[0]].id;
+      removeFromDeck(id);
+      G.myGrave.push({ id, name: CARDS[id].name });
+      log(`풍원소의 지배자 ②: ${CARDS[id].name} 덱→묘지`, 'mine');
+      onSentToGraveFromNonHand(id); // 지배룡 ① 트리거
+    }
+    // 묘지에서 소환
+    summonFromGrave('풍원소의 지배자');
+    drawOne();
+    sendGameState(); renderAll();
+  });
+}
+
+// ── 지배자 ② (기동효과) ──────────────────────────────────
+// 수원소의 지배자 ②: 전개단계 → 지배자 소환
+function activateJibaejaShui2(fieldIdx) {
+  if (!isMyTurn || currentPhase !== 'deploy') { notify('전개 단계에만 발동할 수 있습니다.'); return; }
+  if (!canUseEffect('수원소의 지배자', 2)) { notify('이미 사용했습니다.'); return; }
+  jibaeMirakCostIfNeeded(() => {
+    const targets = findAllInDeck(c => isJibaejaMonster(c.id));
+    if (targets.length === 0) { notify('덱에 지배자 몬스터가 없습니다.'); return; }
+    markEffectUsed('수원소의 지배자', 2);
+    openCardPicker(targets, '수원소의 지배자 ②: 덱에서 지배자 소환', 1, (sel) => {
+      if (sel.length > 0) summonFromDeck(targets[sel[0]].id);
+      sendGameState(); renderAll();
+    });
+  });
+}
+// 화원소의 지배자 ②: 전개단계 → 지배자 서치
+function activateJibaejaHwa2(fieldIdx) {
+  if (!isMyTurn || currentPhase !== 'deploy') { notify('전개 단계에만 발동할 수 있습니다.'); return; }
+  if (!canUseEffect('화원소의 지배자', 2)) { notify('이미 사용했습니다.'); return; }
+  jibaeMirakCostIfNeeded(() => {
+    const targets = findAllInDeck(c => isJibaejaMonster(c.id));
+    if (targets.length === 0) { notify('덱에 지배자 몬스터가 없습니다.'); return; }
+    markEffectUsed('화원소의 지배자', 2);
+    openCardPicker(targets, '화원소의 지배자 ②: 덱에서 지배자 서치', 1, (sel) => {
+      if (sel.length > 0) searchToHand(targets[sel[0]].id);
+      sendGameState(); renderAll();
+    });
+  });
+}
+// 전원소의 지배자 ②: 소환 시 지배자+지배룡 각 1장 서치 + 드로우
+function triggerJibaejaJeon2() {
+  if (!canUseEffect('전원소의 지배자', 2)) return;
+  if (!confirm('전원소의 지배자 ②\n덱에서 지배자 카드와 지배룡 카드를 각 1장씩 서치 + 드로우하겠습니까?')) return;
+  markEffectUsed('전원소의 지배자', 2);
+  jibaeMirakCostIfNeeded(() => {
+    const jaTargets = findAllInDeck(c => isJibaeCard(c.id) && isJibaejaMonster(c.id));
+    const ryongTargets = findAllInDeck(c => isJibaeryongMonster(c.id));
+    openCardPicker(jaTargets, '전원소의 지배자 ②: 지배자 카드 서치', 1, (sel1) => {
+      if (sel1.length > 0) searchToHand(jaTargets[sel1[0]].id);
+      openCardPicker(ryongTargets, '전원소의 지배자 ②: 지배룡 카드 서치', 1, (sel2) => {
+        if (sel2.length > 0) searchToHand(ryongTargets[sel2[0]].id);
+        if (confirm('1장 드로우하겠습니까?')) drawOne();
+        sendGameState(); renderAll();
+      });
+    });
+  });
+}
+
+// ── 지배자 ③ 공통 (전개단계, 지배룡 소환 + 패 버리기) ──────
+function activateJibaeja3(fieldIdx, cardId) {
+  if (!isMyTurn || currentPhase !== 'deploy') { notify('전개 단계에만 발동할 수 있습니다.'); return; }
+  if (!canUseEffect(cardId, 3)) { notify('이미 사용했습니다.'); return; }
+  const targets = findAllInDeck(c => isJibaeryongMonster(c.id));
+  if (targets.length === 0) { notify('덱에 지배룡 몬스터가 없습니다.'); return; }
+  jibaeMirakCostIfNeeded(() => {
+    markEffectUsed(cardId, 3);
+    openCardPicker(targets, `${CARDS[cardId]?.name} ③: 덱에서 지배룡 소환`, 1, (sel) => {
+      if (sel.length > 0) summonFromDeck(targets[sel[0]].id);
+      _forcedDiscardOne(`${CARDS[cardId]?.name} ③: 패 1장 버리기 (코스트)`, () => {
+        sendGameState(); renderAll();
+      });
+    });
+  });
+}
+
+// ── 지배룡 묘지 트리거 (패 이외에서 묘지) ────────────────
+// sendToGrave와 executeCombat에서 호출
+function onSentToGraveFromNonHand(cardId) {
+  if (!isJibaeryongMonster(cardId)) return;
+  if (!canUseEffect(cardId + '_grave1')) return;
+  if (!confirm(`${CARDS[cardId]?.name} ①\n패 이외에서 묘지로 보내졌습니다. 효과를 발동합니까?`)) return;
+  markEffectUsed(cardId + '_grave1');
+  jibaeMirakCostIfNeeded(() => {
+    switch(cardId) {
+      case '수원소의 지배룡':
+        // 묘지에서 다른 지배자/지배룡 서치
+        { const targets = G.myGrave.filter(c => isJibaeCard(c.id) && c.id !== '수원소의 지배룡');
+          if (targets.length === 0) { notify('묘지에 해당 카드가 없습니다.'); return; }
+          openCardPicker(targets, '수원소의 지배룡 ①: 묘지에서 지배자/지배룡 서치', 1, (sel) => {
+            if (sel.length > 0) {
+              const t = targets[sel[0]];
+              const gi = G.myGrave.findIndex(c => c.id === t.id);
+              if (gi >= 0) { G.myHand.push({...G.myGrave.splice(gi,1)[0], isPublic: true}); log(`수원소의 지배룡 ①: ${t.name} 묘지→공개패`, 'mine'); }
+            }
+            sendGameState(); renderAll();
+          }); }
+        break;
+      case '화원소의 지배룡':
+        // 상대 필드 카드 효과 무효 (턴 종료 시까지)
+        if (G.opField.length === 0 && !G.opFieldCard) { notify('상대 필드에 카드가 없습니다.'); return; }
+        openCardPicker([...G.opField, ...(G.opFieldCard?[G.opFieldCard]:[])],
+          '화원소의 지배룡 ①: 상대 필드 카드 효과 무효', 1, (sel) => {
+          if (sel.length > 0) {
+            const targets = [...G.opField, ...(G.opFieldCard?[G.opFieldCard]:[])];
+            const t = targets[sel[0]];
+            log(`화원소의 지배룡 ①: ${t.name} 효과 턴 종료 시까지 무효`, 'mine');
+            sendAction({ type: 'negateField', cardId: t.id, reason: '화원소의 지배룡 ①' });
+          }
+          sendGameState(); renderAll();
+        });
+        break;
+      case '전원소의 지배룡':
+        drawN(2); log('전원소의 지배룡 ①: 2장 드로우', 'mine');
+        sendGameState(); renderAll();
+        break;
+      case '풍원소의 지배룡':
+        // 덱에서 지배룡 2장 소환
+        { const targets = findAllInDeck(c => isJibaeryongMonster(c.id));
+          if (targets.length === 0) { notify('덱에 지배룡 몬스터가 없습니다.'); return; }
+          openCardPicker(targets, '풍원소의 지배룡 ①: 덱에서 지배룡 2장 소환', Math.min(2, targets.length), (sel) => {
+            const ids = sel.map(i => targets[i]?.id).filter(Boolean);
+            ids.forEach(id => summonFromDeck(id));
+            sendGameState(); renderAll();
+          }); }
+        break;
+    }
+  });
+}
+
+// ── 지배룡 ② (버려졌을 때 드로우) ────────────────────────
+function onJibaeryongDiscarded(cardId) {
+  if (!isJibaeryongMonster(cardId)) return;
+  if (!canUseEffect(cardId + '_discard2')) return;
+  if (!confirm(`${CARDS[cardId]?.name} ②\n버려졌습니다. 1장 드로우합니까?`)) return;
+  markEffectUsed(cardId + '_discard2');
+  jibaeMirakCostIfNeeded(() => { drawOne(); sendGameState(); renderAll(); });
+}
+
+// ── 지배룡 ③ (필드에서 묘지로 → 지배자 버리고 드로우) ────
+function activateJibaeryong3(fieldIdx, cardId) {
+  if (!isMyTurn) { notify('자신 턴에만 발동할 수 있습니다.'); return; }
+  if (!canUseEffect(cardId, 3)) { notify('이미 사용했습니다.'); return; }
+  const jibaejasInHand = G.myHand.filter(c => isJibaeCard(c.id));
+  if (jibaejasInHand.length === 0) { notify('패에 지배자 카드가 없습니다.'); return; }
+  jibaeMirakCostIfNeeded(() => {
+    markEffectUsed(cardId, 3);
+    // 필드에서 묘지로
+    const fi = G.myField.findIndex(c => c.id === cardId);
+    if (fi >= 0) { G.myGrave.push(G.myField.splice(fi, 1)[0]); }
+    openCardPicker(jibaejasInHand, `${CARDS[cardId]?.name} ③: 패의 지배자 카드 버리기 (코스트)`, 1, (sel) => {
+      if (sel.length > 0) {
+        const hi = G.myHand.findIndex(c => c.id === jibaejasInHand[sel[0]].id);
+        if (hi >= 0) {
+          const discarded = G.myHand.splice(hi, 1)[0];
+          G.myGrave.push(discarded);
+          log(`${CARDS[cardId]?.name} ③: ${discarded.name} 버림`, 'mine');
+          onJibaeryongDiscarded(discarded.id); // 지배룡 ② 체크
+        }
+      }
+      drawOne();
+      sendGameState(); renderAll();
+    });
+  });
+}
+
+// ── 사원소의 지배룡 효과 ─────────────────────────────────
+function activateSaWonsoJibaeryong1(fieldIdx) {
+  if (!isMyTurn || currentPhase !== 'deploy') { notify('전개 단계에만 발동할 수 있습니다.'); return; }
+  if (!canUseEffect('사원소의 지배룡', 1)) { notify('이미 사용했습니다.'); return; }
+  jibaeMirakCostIfNeeded(() => {
+    const targets = findAllInDeck(c => isJibaejaMonster(c.id));
+    if (targets.length === 0) { notify('덱에 지배자 몬스터가 없습니다.'); return; }
+    markEffectUsed('사원소의 지배룡', 1);
+    openCardPicker(targets, '사원소의 지배룡 ①: 덱에서 지배자 2장 서치', Math.min(2, targets.length), (sel) => {
+      const ids = sel.map(i => targets[i]?.id).filter(Boolean);
+      ids.forEach(id => searchToHand(id));
+      // 원하는만큼 버리기 (선택)
+      _optionalMultiDiscard('사원소의 지배룡 ①: 패를 원하는만큼 버리기 (선택)', () => {
+        sendGameState(); renderAll();
+      });
+    });
+  });
+}
+function activateSaWonsoJibaeryong2(fieldIdx) {
+  if (!canUseEffect('사원소의 지배룡', 2)) { notify('이미 사용했습니다.'); return; }
+  // 공격 단계에만, 내 패 < 상대 패
+  if (currentPhase !== 'attack') { notify('공격 단계에만 발동할 수 있습니다.'); return; }
+  if (G.myHand.length >= G.opHand.length) { notify('내 패가 상대보다 적을 때만 발동할 수 있습니다.'); return; }
+  jibaeMirakCostIfNeeded(() => {
+    markEffectUsed('사원소의 지배룡', 2);
+    const diff = G.opHand.length - G.myHand.length;
+    const fi = G.myField.findIndex(c => c.id === '사원소의 지배룡');
+    if (fi >= 0) {
+      G.myField[fi].atk += diff;
+      log(`사원소의 지배룡 ②: ATK +${diff} → ${G.myField[fi].atk}`, 'mine');
+    }
+    sendGameState(); renderAll();
+  });
+}
+// 사원소의 지배룡 ③: 상대 효과 발동 시 유발 즉시 (패 5장 이하, 동일 체인 1번)
+function tryActivateSaWonsoJibaeryong3() {
+  if (G.myHand.length > 5) return;
+  if (!G.myField.some(c => c.id === '사원소의 지배룡')) return;
+  if (!canUseEffect('사원소의 지배룡', 3)) return;
+  if (!confirm('사원소의 지배룡 ③\n상대 효과 무효 + 내 패 2장 버리겠습니까?')) return;
+  markEffectUsed('사원소의 지배룡', 3);
+  log('사원소의 지배룡 ③: 효과 무효!', 'mine');
+  sendAction({ type: 'negate', reason: '사원소의 지배룡 ③' });
+  // 패 2장 버리기
+  _forcedDiscardOne('사원소의 지배룡 ③: 패 1장 버리기 (1/2)', () => {
+    _forcedDiscardOne('사원소의 지배룡 ③: 패 1장 버리기 (2/2)', () => {
+      sendGameState(); renderAll();
+    });
+  });
+}
+
+// ── 사원소의 지배자 효과 ─────────────────────────────────
+function activateSaWonsoJibaeja1(fieldIdx) {
+  if (!isMyTurn || currentPhase !== 'deploy') { notify('전개 단계에만 발동할 수 있습니다.'); return; }
+  if (!canUseEffect('사원소의 지배자', 1)) { notify('이미 사용했습니다.'); return; }
+  jibaeMirakCostIfNeeded(() => {
+    const targets = findAllInDeck(c => isJibaeryongMonster(c.id));
+    if (targets.length === 0) { notify('덱에 지배룡 몬스터가 없습니다.'); return; }
+    markEffectUsed('사원소의 지배자', 1);
+    openCardPicker(targets, '사원소의 지배자 ①: 덱에서 지배룡 2장 서치', Math.min(2, targets.length), (sel) => {
+      const ids = sel.map(i => targets[i]?.id).filter(Boolean);
+      ids.forEach(id => searchToHand(id));
+      _optionalMultiDiscard('사원소의 지배자 ①: 패를 원하는만큼 버리기 (선택)', () => {
+        sendGameState(); renderAll();
+      });
+    });
+  });
+}
+function activateSaWonsoJibaeja2(fieldIdx) {
+  if (!canUseEffect('사원소의 지배자', 2)) { notify('이미 사용했습니다.'); return; }
+  jibaeMirakCostIfNeeded(() => {
+    markEffectUsed('사원소의 지배자', 2);
+    const fi = G.myField.findIndex(c => c.id === '사원소의 지배자');
+    if (fi >= 0) {
+      G.myExile.push(G.myField.splice(fi, 1)[0]);
+      log('사원소의 지배자 ②: 엔드 단계까지 제외', 'mine');
+      // 엔드 단계에 복귀 플래그
+      G.saWonsoJibaejaReturning = true;
+    }
+    // 묘지/제외에서 지배자 + 지배룡 각 1장 소환
+    const jaTargets = [...G.myGrave, ...G.myExile].filter(c => isJibaejaMonster(c.id) && c.id !== '사원소의 지배자');
+    const ryongTargets = [...G.myGrave, ...G.myExile].filter(c => isJibaeryongMonster(c.id));
+    openCardPicker(jaTargets, '사원소의 지배자 ②: 묘지/제외 지배자 소환 (선택)', 1, (sel1) => {
+      if (sel1.length > 0) {
+        const t = jaTargets[sel1[0]];
+        _removeFromGraveOrExile(t.id);
+        const card = CARDS[t.id];
+        G.myField.push({ id: t.id, name: card.name, atk: card.atk||0, atkBase: card.atk||0 });
+        onSummon(t.id, 'grave');
+      }
+      openCardPicker(ryongTargets, '사원소의 지배자 ②: 묘지/제외 지배룡 소환 (선택)', 1, (sel2) => {
+        if (sel2.length > 0) {
+          const t = ryongTargets[sel2[0]];
+          _removeFromGraveOrExile(t.id);
+          const card = CARDS[t.id];
+          G.myField.push({ id: t.id, name: card.name, atk: card.atk||0, atkBase: card.atk||0 });
+          onSummon(t.id, 'grave');
+        }
+        sendGameState(); renderAll();
+      });
+    });
+  });
+}
+// 사원소의 지배자 ③: 자신/상대 전개단계, 패 5장 이하 시 유발 즉시
+function tryActivateSaWonsoJibaeja3() {
+  if (G.myHand.length > 5) return;
+  if (!G.myField.some(c => c.id === '사원소의 지배자')) return;
+  if (!canUseEffect('사원소의 지배자', 3)) return;
+  if (G.opField.length === 0 && !G.opFieldCard) return;
+  if (!confirm('사원소의 지배자 ③\n상대 필드 카드 1장 묘지 + 내 패 1장 버리겠습니까?')) return;
+  markEffectUsed('사원소의 지배자', 3);
+  openCardPicker([...G.opField, ...(G.opFieldCard?[G.opFieldCard]:[])], '사원소의 지배자 ③: 상대 필드 카드 묘지로', 1, (sel) => {
+    if (sel.length > 0) {
+      const targets = [...G.opField, ...(G.opFieldCard?[G.opFieldCard]:[])];
+      const t = targets[sel[0]];
+      const oi = G.opField.findIndex(c => c.id === t.id);
+      if (oi >= 0) { G.opGrave.push(G.opField.splice(oi, 1)[0]); sendAction({ type: 'opFieldRemove', cardId: t.id, to: 'grave' }); }
+      log(`사원소의 지배자 ③: ${t.name} 묘지로`, 'mine');
+    }
+    _forcedDiscardOne('사원소의 지배자 ③: 패 1장 버리기 (코스트)', () => {
+      sendGameState(); renderAll();
+    });
+  });
+}
+
+// ── 사원소의 기적 ─────────────────────────────────────────
+function activateSaWonsoMirak(handIdx) {
+  if (saWonsoMirakUsed) { notify('사원소의 기적은 게임 중 1번밖에 발동할 수 없습니다.'); return; }
+  if (G.myHand[handIdx]?.id !== '사원소의 기적') return;
+  openCardPicker(
+    [{ id: 'jibaeja', name: '지배자 4종 묘지로 (이 턴 지배자 효과 발동마다 패 1장 버리기)' },
+     { id: 'jibaeryong', name: '지배룡 4종 묘지로 (이 턴 지배룡 효과 발동마다 패 1장 버리기)' }],
+    '사원소의 기적: 효과 선택',
+    1,
+    (sel) => {
+      if (sel.length === 0) return;
+      const choice = sel[0] === 0 ? 'jibaeja' : 'jibaeryong';
+      const filter = choice === 'jibaeja' ? isJibaejaMonster : isJibaeryongMonster;
+      const deckTargets = findAllInDeck(c => filter(c.id));
+      const uniqueNames = [...new Map(deckTargets.map(c => [c.id, c])).values()];
+      if (uniqueNames.length < 4) { notify('덱에 카드명이 다른 4종이 없습니다.'); return; }
+      openCardPicker(uniqueNames, `사원소의 기적: 덱에서 4종 선택해서 묘지로`, 4, (sel2) => {
+        if (sel2.length < 4) { notify('4장을 선택해야 합니다.'); return; }
+        const ids = sel2.map(i => uniqueNames[i]?.id).filter(Boolean);
+        const uniqueIdCheck = new Set(ids);
+        if (uniqueIdCheck.size < 4) { notify('카드명이 다른 4종을 선택해야 합니다.'); return; }
+        ids.forEach(id => {
+          removeFromDeck(id);
+          G.myGrave.push({ id, name: CARDS[id].name });
+          onSentToGraveFromNonHand(id);
+        });
+        saWonsoMirakUsed = true;
+        saWonsoMirakActive = true;
+        saWonsoMirakType = choice;
+        G.myHand.splice(handIdx, 1);
+        G.myGrave.push({ id: '사원소의 기적', name: '사원소의 기적' });
+        log(`사원소의 기적: ${choice === 'jibaeja' ? '지배자' : '지배룡'} 4종 묘지로! 이 턴 효과 발동마다 패 1장 버리기`, 'mine');
+        sendGameState(); renderAll();
+      }, true);
+    }
+  );
+}
+
+// ── 지배의 사슬 ──────────────────────────────────────────
+let jibaeSaslTurnDiscardCount = 0; // 이 턴에 버려진 패 수 추적
+function onHandDiscarded_jibaeSasl() {
+  jibaeSaslTurnDiscardCount++;
+  // 패에 지배의 사슬이 있으면 자동 트리거 확인
+  const idx = G.myHand.findIndex(c => c.id === '지배의 사슬');
+  if (idx < 0) return;
+  if (!canUseEffect('지배의 사슬', 1)) return;
+  if (!confirm('지배의 사슬 ①\n패가 버려졌습니다. 이 턴에 버려진 패의 매수까지 드로우하겠습니까?')) return;
+  markEffectUsed('지배의 사슬', 1);
+  drawN(jibaeSaslTurnDiscardCount);
+  log(`지배의 사슬 ①: ${jibaeSaslTurnDiscardCount}장 드로우`, 'mine');
+  sendGameState(); renderAll();
+}
+// 지배의 사슬 ②: 상대 턴, 묘지 제외 → 제외된 카드 8장까지 덱으로 + 드로우
+function activateJibaeSasl2() {
+  if (isMyTurn) { notify('상대 턴에만 발동할 수 있습니다.'); return; }
+  const graveIdx = G.myGrave.findIndex(c => c.id === '지배의 사슬');
+  if (graveIdx < 0) { notify('묘지에 지배의 사슬이 없습니다.'); return; }
+  if (!canUseEffect('지배의 사슬', 2)) { notify('이미 사용했습니다.'); return; }
+  if (G.myExile.length === 0) { notify('제외된 카드가 없습니다.'); return; }
+  G.myExile.push(G.myGrave.splice(graveIdx, 1)[0]);
+  markEffectUsed('지배의 사슬', 2);
+  const maxReturn = Math.min(8, G.myExile.length);
+  openCardPicker(G.myExile, `지배의 사슬 ②: 제외 카드 최대 8장 덱으로`, maxReturn, (sel) => {
+    const ids = sel.map(i => G.myExile[i]?.id).filter(Boolean);
+    ids.sort((a,b)=>b-a); // 뒤에서부터 제거
+    sel.sort((a,b)=>b-a).forEach(i => {
+      G.myDeck.push(G.myExile.splice(i,1)[0]);
+    });
+    G.myDeck = shuffle(G.myDeck);
+    log(`지배의 사슬 ②: 제외 ${sel.length}장 덱으로 복귀 + 드로우`, 'mine');
+    drawOne();
+    sendGameState(); renderAll();
+  });
+}
+
+// ── 지배룡과 지배자 ───────────────────────────────────────
+function activateJibaeryongJibaeja1(handIdx) {
+  if (currentPhase !== 'attack') { notify('공격 단계에만 발동할 수 있습니다.'); return; }
+  if (!canUseEffect('지배룡과 지배자', 1)) { notify('이미 사용했습니다.'); return; }
+  const handCount = G.myHand.length;
+  markEffectUsed('지배룡과 지배자', 1);
+  G.myHand.splice(handIdx, 1);
+  G.myGrave.push({ id: '지배룡과 지배자', name: '지배룡과 지배자' });
+  log(`지배룡과 지배자 ①: 패 ${handCount}장 기준 효과 적용`, 'mine');
+  // 패 수에 따라 효과 적용 (여러 조건 동시 적용)
+  if (handCount <= 5 && G.myField.length > 0) {
+    openCardPicker(G.myField, '지배룡과 지배자: 몬스터 1장 ATK+2', 1, (sel) => {
+      if (sel.length > 0) { G.myField[sel[0]].atk += 2; log(`ATK+2: ${G.myField[sel[0]].name}`, 'mine'); }
+      if (handCount <= 4) { G.myField.forEach(c => { c.atk += 1; }); log('전원 ATK+1', 'mine'); }
+      if (handCount <= 3 && G.opField.length > 0) {
+        openCardPicker(G.opField, '지배룡과 지배자: 상대 몬스터 ATK-3', 1, (sel2) => {
+          if (sel2.length > 0) { G.opField[sel2[0]].atk -= 3; log(`상대 ${G.opField[sel2[0]].name} ATK-3`, 'mine'); sendAction({type:'opAtkChange', fieldIdx: sel2[0], delta: -3}); }
+          if (handCount <= 2) { G.attackPhaseProtected = true; log('이번 공격 단계: 내 몬스터 보호', 'mine'); }
+          sendGameState(); renderAll();
+        });
+      } else {
+        if (handCount <= 2) { G.attackPhaseProtected = true; log('이번 공격 단계: 내 몬스터 보호', 'mine'); }
+        sendGameState(); renderAll();
+      }
+    });
+  } else {
+    sendGameState(); renderAll();
+  }
+}
+// 지배룡과 지배자 ②: 묘지 제외 → 드로우
+function activateJibaeryongJibaeja2() {
+  const graveIdx = G.myGrave.findIndex(c => c.id === '지배룡과 지배자');
+  if (graveIdx < 0) { notify('묘지에 지배룡과 지배자가 없습니다.'); return; }
+  if (!canUseEffect('지배룡과 지배자', 2)) { notify('이미 사용했습니다.'); return; }
+  markEffectUsed('지배룡과 지배자', 2);
+  G.myExile.push(G.myGrave.splice(graveIdx, 1)[0]);
+  drawOne();
+  log('지배룡과 지배자 ②: 드로우', 'mine');
+  sendGameState(); renderAll();
+}
+
+// ── 사원소 소환 처리 ──────────────────────────────────────
+function summonSaWonsoJibaeryong() {
+  if (!canSummonSaWonsoJibaeryong()) { notify('필드/묘지에 카드명이 다른 지배룡 4종이 필요합니다.'); return; }
+  // 제외할 지배룡 4종 선택
+  const candidates = [...new Map(
+    [...G.myField, ...G.myGrave].filter(c => isJibaeryongMonster(c.id)).map(c => [c.id, c])
+  ).values()];
+  openCardPicker(candidates, '사원소의 지배룡: 제외할 지배룡 4종 선택', 4, (sel) => {
+    if (sel.length < 4) { notify('4종을 선택해야 합니다.'); return; }
+    const ids = sel.map(i => candidates[i]?.id).filter(Boolean);
+    if (new Set(ids).size < 4) { notify('카드명이 다른 4종을 선택해야 합니다.'); return; }
+    ids.forEach(id => {
+      _removeFromFieldOrGrave(id);
+      G.myExile.push({ id, name: CARDS[id].name });
+    });
+    // 패/묘지에서 소환
+    const inHand = G.myHand.findIndex(c => c.id === '사원소의 지배룡');
+    const inGrave = G.myGrave.findIndex(c => c.id === '사원소의 지배룡');
+    if (inHand >= 0) summonFromHand(inHand);
+    else if (inGrave >= 0) summonFromGrave('사원소의 지배룡');
+    else notify('패/묘지에 사원소의 지배룡이 없습니다.');
+    sendGameState(); renderAll();
+  }, true);
+}
+function summonSaWonsoJibaeja() {
+  if (!canSummonSaWonsoJibaeja()) { notify('필드/묘지에 카드명이 다른 지배자 4종이 필요합니다.'); return; }
+  const candidates = [...new Map(
+    [...G.myField, ...G.myGrave].filter(c => isJibaejaMonster(c.id)).map(c => [c.id, c])
+  ).values()];
+  openCardPicker(candidates, '사원소의 지배자: 제외할 지배자 4종 선택', 4, (sel) => {
+    if (sel.length < 4) { notify('4종을 선택해야 합니다.'); return; }
+    const ids = sel.map(i => candidates[i]?.id).filter(Boolean);
+    if (new Set(ids).size < 4) { notify('카드명이 다른 4종을 선택해야 합니다.'); return; }
+    ids.forEach(id => {
+      _removeFromFieldOrGrave(id);
+      G.myExile.push({ id, name: CARDS[id].name });
+    });
+    const inHand = G.myHand.findIndex(c => c.id === '사원소의 지배자');
+    const inGrave = G.myGrave.findIndex(c => c.id === '사원소의 지배자');
+    if (inHand >= 0) summonFromHand(inHand);
+    else if (inGrave >= 0) summonFromGrave('사원소의 지배자');
+    else notify('패/묘지에 사원소의 지배자가 없습니다.');
+    sendGameState(); renderAll();
+  }, true);
+}
+
+// ── 헬퍼 유틸 ─────────────────────────────────────────────
+function _removeFromGraveOrExile(cardId) {
+  let idx = G.myGrave.findIndex(c => c.id === cardId);
+  if (idx >= 0) { G.myGrave.splice(idx, 1); return; }
+  idx = G.myExile.findIndex(c => c.id === cardId);
+  if (idx >= 0) G.myExile.splice(idx, 1);
+}
+function _removeFromFieldOrGrave(cardId) {
+  let idx = G.myField.findIndex(c => c.id === cardId);
+  if (idx >= 0) { G.myField.splice(idx, 1); return; }
+  idx = G.myGrave.findIndex(c => c.id === cardId);
+  if (idx >= 0) G.myGrave.splice(idx, 1);
+}
+// 원하는만큼 버리기 (선택적 다중 버리기)
+function _optionalMultiDiscard(title, callback) {
+  if (G.myHand.length === 0) { callback(); return; }
+  if (!confirm(`${title}\n패를 버리겠습니까? (취소하면 버리지 않음)`)) { callback(); return; }
+  openCardPicker(G.myHand, title, G.myHand.length, (sel) => {
+    const ids = sel.map(i => G.myHand[i]?.id).filter(Boolean);
+    sel.sort((a,b)=>b-a).forEach(i => {
+      if (G.myHand[i]) {
+        const c = G.myHand.splice(i, 1)[0];
+        G.myGrave.push(c);
+        onJibaeryongDiscarded(c.id);
+        onHandDiscarded_jibaeSasl();
+      }
+    });
+    callback();
+  });
+}
+
+// 엔드 단계: 사원소의 지배자 ② 복귀, 기적 해제
+function resetJibaeEffects() {
+  if (G.saWonsoJibaejaReturning) {
+    const ei = G.myExile.findIndex(c => c.id === '사원소의 지배자');
+    if (ei >= 0) {
+      const c = G.myExile.splice(ei, 1)[0];
+      G.myField.push({ id: c.id, name: c.name, atk: CARDS[c.id]?.atk||5, atkBase: CARDS[c.id]?.atk||5 });
+      log('사원소의 지배자 ②: 엔드 단계에 필드로 복귀', 'mine');
+    }
+    G.saWonsoJibaejaReturning = false;
+  }
+  saWonsoMirakActive = false;
+  jibaeSaslTurnDiscardCount = 0;
+  G.attackPhaseProtected = false;
+  G.goldenAppleActive = false;
+  G.exileBanActive = false; // 신성한 수호자 이 턴 한정
+}
+
+// sendToGrave 후킹: 지배룡 ① 트리거
+const _origSendToGrave = sendToGrave;
+sendToGrave = function(cardId, from = 'field') {
+  _origSendToGrave(cardId, from);
+  if (from !== 'hand') onSentToGraveFromNonHand(cardId);
+};
 function activateCard(handIdx) {
   const c = G.myHand[handIdx];
   if (!c) return;
@@ -4402,16 +5189,8 @@ function activateCard(handIdx) {
       return;
 
     case '서치 봉인의 항아리':
-      // ① 덱으로 되돌리고 드로우
-      openCardPicker(
-        [{ id: '서치 봉인의 항아리', name: '서치 봉인의 항아리' }],
-        '서치 봉인의 항아리: ① 덱으로 되돌리고 드로우 / ② 버려서 서치 봉인',
-        1,
-        () => {},
-        false
-      );
-      // 직접 confirm으로 선택
-      const choice = confirm('서치 봉인의 항아리\n\n확인 = ① 덱으로 되돌리고 1장 드로우\n취소 = ② 패에서 버려서 이 턴 서치 봉인');
+      // ① 덱으로 되돌리고 드로우  ② 버려서 서치 봉인
+      { const choice = confirm('서치 봉인의 항아리\n\n확인 = ① 덱으로 되돌리고 1장 드로우\n취소 = ② 패에서 버려서 이 턴 서치 봉인');
       if (choice) {
         // ① 덱으로
         G.myHand.splice(handIdx, 1);
@@ -4427,7 +5206,7 @@ function activateCard(handIdx) {
         sendAction({ type: 'searchBan', reason: '서치 봉인의 항아리' });
       }
       sendGameState(); renderAll();
-      return;
+      return; }
 
     case '유혹의 황금사과':
       G.myHand.splice(handIdx, 1);
