@@ -1984,6 +1984,8 @@ let pickerCurrentCards = [];
 let activeChainState = null; // Firebase chain state mirror
 let lastResolvedChainAt = 0;
 let pendingTriggerEffects = [];
+let usedKeyFetchInChain = {};
+let attackedFieldIndices = new Set();
 
 // ─────────────────────────────────────────────
 // UTILS
@@ -2224,6 +2226,10 @@ function beginChain(effect) {
 
 function openChainResponse() {
   if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
+  if (usedKeyFetchInChain[myRole]) {
+    notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
+    return;
+  }
   const options = G.myKeyDeck.map(c => ({ id: c.id, name: c.name }));
   if (options.length === 0) {
     notify('키 카드 덱에 발동 가능한 카드가 없습니다.');
@@ -2255,11 +2261,16 @@ function passChainPriority() {
 
 function addChainLink(effect) {
   if (!activeChainState || !activeChainState.active || !roomRef) return;
+  if (effect.type === 'keyFetch' && usedKeyFetchInChain[myRole]) {
+    notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
+    return;
+  }
   const next = { ...activeChainState };
   next.links = [...(next.links || []), { ...effect, by: myRole }];
   next.priority = myRole === 'host' ? 'guest' : 'host';
   next.passCount = 0;
   activeChainState = next;
+  if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
   roomRef.child('chainState').set(next);
   log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
 }
@@ -2301,6 +2312,7 @@ function activateQuickEffect(effect) {
 function resolveChain(chainState) {
   const links = [...(chainState.links || [])];
   const resolvedAt = Date.now();
+  usedKeyFetchInChain = {};
   if (roomRef) {
     roomRef.child('chainState').set({ active: false, links: [], priority: null, passCount: 0, resolvedLinks: links, resolvedAt });
   } else {
@@ -2337,14 +2349,15 @@ function executeChainLocally(links) {
   });
   sendGameState();
   renderAll();
+  usedKeyFetchInChain = {};
 }
 
 function resolveKeyFetch(cardId) {
   const idx = G.myKeyDeck.findIndex(c => c.id === cardId);
   if (idx < 0) return;
   const c = G.myKeyDeck.splice(idx, 1)[0];
-  G.myHand.push({ id: c.id, name: c.name, isPublic: false });
-  log(`체인 처리: 키 카드 가져오기 → ${c.name}`, 'mine');
+  G.myHand.push({ id: c.id, name: c.name, isPublic: true });
+  log(`체인 처리: 키 카드 가져오기 → ${c.name} (공개패)`, 'mine');
 }
 
 function resolvePenguinVillage1() {
@@ -2515,15 +2528,17 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                 break;
               default:
                 if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => summonFromHand(handIdx));
+                  addBtn('효과 소환 전용', 'btn-secondary', () => notify('통상 소환은 없습니다. 카드 효과로만 소환할 수 있습니다.'));
             }
           } else {
             if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
-              addBtn('소환', 'btn-primary', () => summonFromHand(handIdx));
+              addBtn('효과 소환 전용', 'btn-secondary', () => notify('통상 소환은 없습니다. 카드 효과로만 소환할 수 있습니다.'));
             if (['normal','magic','field'].includes(card.cardType) && isMyTurn)
               addBtn('발동', 'btn-primary', () => activateCard(handIdx));
-            if (['magic','trap'].includes(card.cardType) && canActAnytime)
-              addBtn(`${card.cardType === 'trap' ? '함정' : '마법'} 발동`, 'btn-secondary', () => activateCard(handIdx));
+            if (card.cardType === 'magic' && canActAnytime)
+              addBtn('마법 발동', 'btn-secondary', () => activateCard(handIdx));
+            if (card.cardType === 'trap' && !isMyTurn && canActAnytime)
+              addBtn('함정 발동', 'btn-secondary', () => activateCard(handIdx));
           }
           addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
         }
@@ -2674,6 +2689,12 @@ function drawCards(n) {
 
 function endDeploy() {
   if (!isMyTurn || currentPhase !== 'deploy') return;
+  if (G.turn === 1 && myRole === 'host') {
+    advancePhase('end');
+    log('선공 1턴은 공격 단계를 건너뜁니다.', 'system');
+    sendAction({ type: 'phaseEnd', phase: 'deploy_skip_attack' });
+    return;
+  }
   advancePhase('attack');
   log(`전개 단계 종료`, 'mine');
   sendAction({ type: 'phaseEnd', phase: 'deploy' });
@@ -2689,6 +2710,7 @@ function endAttack() {
 function endTurn() {
   if (!isMyTurn || currentPhase !== 'end') return;
   resetTurnEffects(); // penguin_engine.js — ATK 버프 원복, effectUsed 초기화
+  attackedFieldIndices.clear();
   G.turn++;
   isMyTurn = false;
   advancePhase('draw');
@@ -2699,35 +2721,17 @@ function endTurn() {
 }
 
 function summonMonster(handIdx) {
-  if (!isMyTurn || currentPhase !== 'deploy') {
-    notify('전개 단계에만 소환할 수 있습니다.'); return;
-  }
-  if (G.myField.length >= 5 + (G.myExtraSlots || 0)) {
-    notify('몬스터 존이 가득 찼습니다.'); return;
-  }
-  const c = G.myHand[handIdx];
-  const card = CARDS[c.id];
-  if (!card || card.cardType !== 'monster') { notify('몬스터 카드가 아닙니다.'); return; }
-
-  // 펭귄 몬스터면 효과 엔진으로
-  if (card.theme === '펭귄' || c.id.includes('펭귄')) {
-    const handled = activatePenguinEffect(c.id, handIdx, -1);
-    if (handled) return;
-  }
-
-  // 일반 소환
-  G.myHand.splice(handIdx, 1);
-  G.myField.push({ id: c.id, name: card.name, atk: card.atk || 0 });
-  selectedCardIdx = -1;
-  log(`소환: ${card.name} (ATK ${card.atk})`, 'mine');
-  sendAction({ type: 'summon', cardId: c.id });
-  renderAll();
+  notify('통상 소환은 없습니다. 카드 효과로만 소환할 수 있습니다.');
 }
 
 function activateCard(handIdx) {
   const c = G.myHand[handIdx];
   const card = CARDS[c.id];
   if (!card) return;
+  if (card.cardType === 'trap' && isMyTurn) {
+    notify('함정은 상대 턴에만 발동할 수 있습니다.');
+    return;
+  }
 
   // 펭귄 카드면 효과 엔진으로
   if (card.theme === '펭귄' || c.id.includes('펭귄')) {
@@ -2767,6 +2771,7 @@ function manualDiscard(handIdx) {
 
 function executeCombat(atkIdx, defIdx) {
   if (!isMyTurn || currentPhase !== 'attack') { notify('공격 단계가 아닙니다.'); return; }
+  if (attackedFieldIndices.has(atkIdx)) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
   const attacker = G.myField[atkIdx];
   const defender = G.opField[defIdx];
   if (!attacker || !defender) return;
@@ -2802,16 +2807,19 @@ function executeCombat(atkIdx, defIdx) {
     }
   }
   sendAction({ type: 'combat', atkIdx, defIdx, atkCard: attacker, defCard: defender });
+  attackedFieldIndices.add(atkIdx);
   sendGameState(); renderAll();
 }
 
 function directAttack(atkIdx) {
   if (!isMyTurn || currentPhase !== 'attack') return;
+  if (attackedFieldIndices.has(atkIdx)) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
   if (G.opField.length > 0) { notify('상대 필드에 몬스터가 있습니다. 직접 공격 불가.'); return; }
   const attacker = G.myField[atkIdx];
   log(`직접 공격: ${attacker.name}(${attacker.atk}) — 상대는 패를 ${attacker.atk}장 버려야 합니다.`, 'mine');
   notify(`직접 공격! 상대 패 ${attacker.atk}장 손실`);
   sendAction({ type: 'directAttack', atkIdx, card: attacker });
+  attackedFieldIndices.add(atkIdx);
 }
 
 function forceDiscard(n, opponentPicks = false) {
@@ -3261,6 +3269,7 @@ function handleOpponentAction(action) {
       break;
     case 'endTurn':
       isMyTurn = true;
+      attackedFieldIndices.clear();
       advancePhase('draw');
       log(`상대 턴 종료 — 내 턴`, 'system');
       notify('내 턴입니다!');
@@ -3292,14 +3301,9 @@ function handleOpponentCombat(action) {
     // Opponent wins — my monster goes to grave, I lose diff cards
     const myIdx = G.myField.findIndex(c => c.id === defCard.id);
     if (myIdx >= 0) { G.myGrave.push(G.myField.splice(myIdx, 1)[0]); }
-    // Attacker (opponent) picks my cards
-    // Simplified: I discard randomly
-    for (let i = 0; i < diff && G.myHand.length > 0; i++) {
-      // Opponent would pick; simulate by discarding from end
-      G.myGrave.push(G.myHand.pop());
-    }
+    // 상대 공격 피해: 공개패는 상대가 고르고, 일반패는 무작위
+    forceDiscard(diff, true);
     log(`내 ${defCard.name} 묘지. 패 ${diff}장 잃음`, 'opponent');
-    checkWinCondition();
   } else if (diff < 0) {
     // I win — opponent's monster goes to grave
     const opIdx = G.opField.findIndex(c => c.id === atkCard.id);
@@ -3336,6 +3340,7 @@ function enterGame() {
   G.myExtraSlots = 0;
   G.opExtraSlots = 0;
   G.penguinHeroAtkBuff = false;
+  attackedFieldIndices.clear();
 
   // 덱 초기화 (penguin_engine.js의 PENGUIN_MAIN_DECK 사용)
   initDecks();
