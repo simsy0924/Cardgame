@@ -2262,25 +2262,17 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                   addBtn('① 공개하기', 'btn-primary', () => activatePenguinCard(handIdx, 1));
                 break;
               case '꼬마 펭귄':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('① 패에서 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
                 break;
               case '펭귄 부부':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 addBtn('② 드로우2 + 버리기', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
                 break;
               case '현자 펭귄':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 if (isMyTurn)
                   addBtn('① 드로우+버리기', 'btn-secondary', () => activatePenguinCard(handIdx, 1));
                 if (isMyTurn && currentPhase === 'deploy')
                   addBtn('② 서치', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
                 break;
               case '수문장 펭귄':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 break;
               case '펭귄!돌격!':
                 if (isMyTurn && currentPhase === 'deploy')
@@ -2290,8 +2282,6 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                 addBtn('① 펭귄 용사 소환 + 상대 패 공개', 'btn-primary', () => activatePenguinCard(handIdx, 1));
                 break;
               case '펭귄 용사':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 if (!isMyTurn)
                   addBtn('② 패로 + 마법 회수 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
                 break;
@@ -2304,23 +2294,16 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                   addBtn('② 묘지 제외 → 소환 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
                 break;
               case '펭귄의 전설':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 if (!isMyTurn)
                   addBtn('② 패로 + 묘지 소환 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
                 break;
               case '펭귄 마법사':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 addBtn('① 보여주기 → 서치 → 덱으로', 'btn-secondary', () => activatePenguinCard(handIdx, 1));
                 break;
               default:
-                if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => summonFromHand(handIdx));
+                break;
             }
           } else {
-            if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
-              addBtn('소환', 'btn-primary', () => summonFromHand(handIdx));
             if (['normal','magic','field'].includes(card.cardType) && isMyTurn)
               addBtn('발동', 'btn-primary', () => activateCard(handIdx));
             if (['magic','trap'].includes(card.cardType) && canActAnytime)
@@ -2460,6 +2443,7 @@ function endAttack() {
 function endTurn() {
   if (!isMyTurn || currentPhase !== 'end') return;
   resetTurnEffects(); // penguin_engine.js — ATK 버프 원복, effectUsed 초기화
+  G.myField.forEach(mon => { mon.hasAttacked = false; });
   G.turn++;
   isMyTurn = false;
   advancePhase('draw');
@@ -2541,9 +2525,11 @@ function executeCombat(atkIdx, defIdx) {
   const attacker = G.myField[atkIdx];
   const defender = G.opField[defIdx];
   if (!attacker || !defender) return;
+  if (attacker.hasAttacked) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
 
   const diff = attacker.atk - defender.atk;
   log(`전투: ${attacker.name}(${attacker.atk}) vs ${defender.name}(${defender.atk})`, 'mine');
+  attacker.hasAttacked = true;
 
   if (diff > 0) {
     // 내 몬스터 승리 — 상대 묘지, 상대 패 diff장 손실 (내가 공격자니까 상대 공개패 우선 선택)
@@ -2580,9 +2566,13 @@ function directAttack(atkIdx) {
   if (!isMyTurn || currentPhase !== 'attack') return;
   if (G.opField.length > 0) { notify('상대 필드에 몬스터가 있습니다. 직접 공격 불가.'); return; }
   const attacker = G.myField[atkIdx];
+  if (!attacker) return;
+  if (attacker.hasAttacked) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
+  attacker.hasAttacked = true;
   log(`직접 공격: ${attacker.name}(${attacker.atk}) — 상대는 패를 ${attacker.atk}장 버려야 합니다.`, 'mine');
   notify(`직접 공격! 상대 패 ${attacker.atk}장 손실`);
   sendAction({ type: 'directAttack', atkIdx, card: attacker });
+  sendGameState();
 }
 
 function forceDiscard(n, opponentPicks = false) {
@@ -2882,7 +2872,21 @@ function joinRoom() {
     roomCode = code;
     myRole = 'guest';
     roomRef = db.ref(`rooms/${roomCode}`);
-    roomRef.child('guest').set(myName).then(() => {
+    roomRef.transaction((room) => {
+      if (!room) return;
+      if (room.status && room.status !== 'waiting') return;
+      if (room.guest && room.guest !== myName) return;
+      return { ...room, guest: myName };
+    }).then((result) => {
+      if (!result.committed || !result.snapshot?.val()) {
+        statusEl.textContent = '참가 실패: 없는 방이거나 이미 인원이 찼습니다.';
+        return;
+      }
+      const room = result.snapshot.val();
+      if (room.guest !== myName) {
+        statusEl.textContent = '참가 실패: 이미 다른 플레이어가 입장했습니다.';
+        return;
+      }
       statusEl.textContent = '참가 완료! 호스트의 시작을 기다리는 중...';
       document.getElementById('hdrRoomCode').textContent = roomCode;
       listenRoom();
@@ -3009,6 +3013,7 @@ function handleOpponentAction(action) {
     case 'endTurn':
       isMyTurn = true;
       advancePhase('draw');
+      G.myField.forEach(mon => { mon.hasAttacked = false; });
       log(`상대 턴 종료 — 내 턴`, 'system');
       notify('내 턴입니다!');
       renderPhase();
@@ -3037,7 +3042,7 @@ function handleOpponentCombat(action) {
 
   if (diff > 0) {
     // Opponent wins — my monster goes to grave, I lose diff cards
-    const myIdx = G.myField.findIndex(c => c.id === defCard.id);
+    const myIdx = Number.isInteger(action.defIdx) ? action.defIdx : G.myField.findIndex(c => c.id === defCard.id);
     if (myIdx >= 0) { G.myGrave.push(G.myField.splice(myIdx, 1)[0]); }
     // Attacker (opponent) picks my cards
     // Simplified: I discard randomly
@@ -3049,13 +3054,13 @@ function handleOpponentCombat(action) {
     checkWinCondition();
   } else if (diff < 0) {
     // I win — opponent's monster goes to grave
-    const opIdx = G.opField.findIndex(c => c.id === atkCard.id);
+    const opIdx = Number.isInteger(action.atkIdx) ? action.atkIdx : G.opField.findIndex(c => c.id === atkCard.id);
     if (opIdx >= 0) { G.opGrave.push(G.opField.splice(opIdx, 1)[0]); }
     log(`상대 ${atkCard.name} 묘지`, 'mine');
   } else {
     if (atkCard.atk !== 0) {
-      const myIdx = G.myField.findIndex(c => c.id === defCard.id);
-      const opIdx = G.opField.findIndex(c => c.id === atkCard.id);
+      const myIdx = Number.isInteger(action.defIdx) ? action.defIdx : G.myField.findIndex(c => c.id === defCard.id);
+      const opIdx = Number.isInteger(action.atkIdx) ? action.atkIdx : G.opField.findIndex(c => c.id === atkCard.id);
       if (myIdx >= 0) G.myGrave.push(G.myField.splice(myIdx, 1)[0]);
       if (opIdx >= 0) G.opGrave.push(G.opField.splice(opIdx, 1)[0]);
     }
