@@ -1615,6 +1615,9 @@ function activatePenguinBubu1FromField(fieldIdx) {
 }
 // 펭귄 부부 ②
 function activatePenguinBubu2(handIdx) {
+  activateIgnitionEffect({ type: 'ignitionPenguinBubu2', label: '펭귄 부부 ②' });
+}
+function resolvePenguinBubu2() {
   if (!canUseEffect('펭귄 부부', 2)) { notify('이미 사용했습니다.'); return; }
   markEffectUsed('펭귄 부부', 2); drawN(2);
   openCardPicker(G.myHand, '펭귄 부부 ②: 패 1장 버리기', 1, (sel) => {
@@ -1626,6 +1629,9 @@ function activatePenguinBubu2(handIdx) {
 }
 // 현자 펭귄 ①
 function activateSagePenguin1() {
+  activateIgnitionEffect({ type: 'ignitionSagePenguin1', label: '현자 펭귄 ①' });
+}
+function resolveSagePenguin1() {
   if (!isPenguinVillageRevealed()) { notify('펭귄 마을이 공개 상태가 아닙니다.'); return; }
   if (!canUseEffect('현자 펭귄', 1)) { notify('이미 사용했습니다.'); return; }
   markEffectUsed('현자 펭귄', 1); drawOne();
@@ -1636,6 +1642,9 @@ function activateSagePenguin1() {
 }
 // 현자 펭귄 ②
 function activateSagePenguin2() {
+  activateIgnitionEffect({ type: 'ignitionSagePenguin2', label: '현자 펭귄 ②' });
+}
+function resolveSagePenguin2() {
   if (!canUseEffect('현자 펭귄', 2)) { notify('이미 사용했습니다.'); return; }
   const targets = findAllInDeck(c => isPenguinCard(c.id));
   if (targets.length === 0) { notify('덱에 펭귄 카드가 없습니다.'); return; }
@@ -1644,6 +1653,9 @@ function activateSagePenguin2() {
 }
 // 수문장 펭귄 ①
 function activateSummonerPenguin1(fieldIdx) {
+  activateIgnitionEffect({ type: 'ignitionSummonerPenguin1', label: '수문장 펭귄 ①', fieldIdx });
+}
+function resolveSummonerPenguin1(fieldIdx) {
   if (!isPenguinVillageRevealed()) { notify('펭귄 마을이 공개 상태가 아닙니다.'); return; }
   if (!canUseEffect('수문장 펭귄', 1)) { notify('이미 사용했습니다.'); return; }
   markEffectUsed('수문장 펭귄', 1);
@@ -1680,6 +1692,9 @@ function checkPenguinVillageReplace(discardCount) {
 }
 // 펭귄!돌격! ①
 function activatePenguinCharge1(handIdx) {
+  activateIgnitionEffect({ type: 'ignitionPenguinCharge1', label: '펭귄!돌격! ①', handIdx });
+}
+function resolvePenguinCharge1(handIdx) {
   const targets = findAllInDeck(c => isPenguinMonster(c.id));
   if (targets.length === 0) { notify('덱에 펭귄 몬스터가 없습니다.'); return; }
   G.myHand.splice(handIdx, 1); G.myGrave.push({ id: '펭귄!돌격!', name: '펭귄!돌격!' });
@@ -1687,6 +1702,9 @@ function activatePenguinCharge1(handIdx) {
 }
 // 펭귄!돌격! ②
 function activatePenguinCharge2() {
+  activateIgnitionEffect({ type: 'ignitionPenguinCharge2', label: '펭귄!돌격! ②' });
+}
+function resolvePenguinCharge2() {
   const graveIdx = G.myGrave.findIndex(c => c.id === '펭귄!돌격!');
   if (graveIdx < 0) { notify('묘지에 없습니다.'); return; }
   const handPenguins = G.myHand.filter(c => isPenguinMonster(c.id));
@@ -1699,6 +1717,9 @@ function activatePenguinCharge2() {
 }
 // 펭귄의 영광 ①
 function activatePenguinGlory1(handIdx) {
+  activateIgnitionEffect({ type: 'ignitionPenguinGlory1', label: '펭귄의 영광 ①', handIdx });
+}
+function resolvePenguinGlory1(handIdx) {
   const heroInHand = G.myHand.findIndex(c => c.id === '펭귄 용사');
   const heroInKey = G.myKeyDeck ? G.myKeyDeck.findIndex(c => c.id === '펭귄 용사') : -1;
   G.myHand.splice(handIdx, 1); G.myGrave.push({ id: '펭귄의 영광', name: '펭귄의 영광' });
@@ -1714,6 +1735,9 @@ function activatePenguinGlory1(handIdx) {
 }
 // 펭귄의 영광 ②
 function activatePenguinGlory2() {
+  activateIgnitionEffect({ type: 'ignitionPenguinGlory2', label: '펭귄의 영광 ②' });
+}
+function resolvePenguinGlory2() {
   const graveIdx = G.myGrave.findIndex(c => c.id === '펭귄의 영광' || c.id === '펭귄이여 영원하라');
   if (graveIdx < 0) { notify('묘지에 없습니다.'); return; }
   G.myExile.push(G.myGrave.splice(graveIdx, 1)[0]); drawOne(); sendGameState(); renderAll();
@@ -1791,6 +1815,9 @@ function resolvePenguinStrike1() {
 }
 // 펭귄이여 영원하라 ①
 function activatePenguinForever1(handIdx) {
+  activateIgnitionEffect({ type: 'ignitionPenguinForever1', label: '펭귄이여 영원하라 ①', handIdx });
+}
+function resolvePenguinForever1() {
   if (!canUseEffect('펭귄이여 영원하라', 1)) { notify('이미 사용했습니다.'); return; }
   openCardPicker(G.myField, '펭귄이여 영원하라 ①: 내 필드 카드 1장 패로', 1, (mySel) => {
     if (mySel.length > 0) { const mon = G.myField.splice(mySel[0],1)[0]; G.myHand.push({id:mon.id,name:mon.name,isPublic:true}); log(`내 ${mon.name} 패로`,'mine'); }
@@ -1855,8 +1882,12 @@ function resolvePenguinLegend2() {
 }
 // 펭귄 마법사 ①
 function activatePenguinWizard1(handIdx) {
+  activateIgnitionEffect({ type: 'ignitionPenguinWizard1', label: '펭귄 마법사 ①', handIdx });
+}
+function resolvePenguinWizard1() {
   if (!canUseEffect('펭귄 마법사', 1, 2)) { notify('이미 2번 사용했습니다.'); return; }
-  if (G.myHand[handIdx]?.isPublic) { notify('일반 패에서만 발동 가능합니다.'); return; }
+  const handIdx = G.myHand.findIndex(c => c.id === '펭귄 마법사' && !c.isPublic);
+  if (handIdx < 0 || G.myHand[handIdx]?.isPublic) { notify('일반 패의 펭귄 마법사가 필요합니다.'); return; }
   markEffectUsed('펭귄 마법사', 1);
   const targets = findAllInDeck(c => isPenguinCard(c.id));
   if (targets.length === 0) { notify('덱에 펭귄 카드가 없습니다.'); return; }
@@ -1885,6 +1916,9 @@ function resolvePenguinWizard2() {
 }
 // 펭귄 마법사 ③
 function triggerPenguinWizard3() {
+  activateIgnitionEffect({ type: 'ignitionPenguinWizard3', label: '펭귄 마법사 ③' });
+}
+function resolvePenguinWizard3() {
   if (!canUseEffect('펭귄 마법사', 3, 2)) { notify('이미 2번 사용했습니다.'); return; }
   const targets = [...G.myExile.filter(c => CARDS[c.id]?.cardType==='monster'), ...G.opExile.filter(c => CARDS[c.id]?.cardType==='monster')];
   if (targets.length === 0) { notify('제외된 몬스터가 없습니다.'); return; }
@@ -1904,16 +1938,16 @@ function activatePenguinCard(handIdx, effectNum) {
   switch(c.id) {
     case '펭귄 마을': if (effectNum===1) activatePenguinVillage1(handIdx); break;
     case '꼬마 펭귄': summonFromHand(handIdx); break;
-    case '펭귄 부부': if (effectNum===2) activatePenguinBubu2(handIdx); else summonFromHand(handIdx); break;
-    case '현자 펭귄': summonFromHand(handIdx); break;
-    case '수문장 펭귄': summonFromHand(handIdx); break;
+    case '펭귄 부부': if (effectNum===2) activatePenguinBubu2(handIdx); else notify('펭귄 부부는 자체 소환 효과가 없습니다.'); break;
+    case '현자 펭귄': notify('현자 펭귄은 자체 소환 효과가 없습니다.'); break;
+    case '수문장 펭귄': notify('수문장 펭귄은 자체 소환 효과가 없습니다.'); break;
     case '펭귄!돌격!': if (effectNum===1) activatePenguinCharge1(handIdx); break;
     case '펭귄의 영광': if (effectNum===1) activatePenguinGlory1(handIdx); else activatePenguinGlory2(); break;
-    case '펭귄 용사': summonFromHand(handIdx); break;
+    case '펭귄 용사': notify('펭귄 용사는 카드 효과로만 소환할 수 있습니다.'); break;
     case '펭귄의 일격': if (effectNum===1) activatePenguinStrike1(); break;
     case '펭귄이여 영원하라': if (effectNum===1) activatePenguinForever1(handIdx); else activatePenguinForever2(); break;
-    case '펭귄의 전설': summonFromHand(handIdx); break;
-    case '펭귄 마법사': if (effectNum===1) activatePenguinWizard1(handIdx); else summonFromHand(handIdx); break;
+    case '펭귄의 전설': notify('펭귄의 전설은 카드 효과로만 소환할 수 있습니다.'); break;
+    case '펭귄 마법사': if (effectNum===1) activatePenguinWizard1(handIdx); else notify('펭귄 마법사는 자체 소환 효과가 없습니다.'); break;
     default: G.myHand.splice(handIdx,1); G.myGrave.push({id:c.id,name:c.name}); log(`발동: ${c.name}`,'mine'); sendGameState(); renderAll();
   }
 }
@@ -2367,6 +2401,18 @@ function activateQuickEffect(effect) {
   beginChain(effect);
 }
 
+function activateIgnitionEffect(effect) {
+  if (activeChainState && activeChainState.active) {
+    if (activeChainState.priority !== myRole) {
+      notify('현재 체인 우선권이 없습니다.');
+      return;
+    }
+    addChainLink(effect);
+    return;
+  }
+  beginChain(effect);
+}
+
 function resolveChain(chainState) {
   const links = [...(chainState.links || [])];
   const resolvedAt = Date.now();
@@ -2403,6 +2449,28 @@ function executeChainLocally(links) {
       resolvePenguinStrike1();
     } else if (link.type === 'quickPenguinForever2') {
       resolvePenguinForever2();
+    } else if (link.type === 'ignitionPenguinBubu2') {
+      resolvePenguinBubu2();
+    } else if (link.type === 'ignitionSagePenguin1') {
+      resolveSagePenguin1();
+    } else if (link.type === 'ignitionSagePenguin2') {
+      resolveSagePenguin2();
+    } else if (link.type === 'ignitionSummonerPenguin1') {
+      resolveSummonerPenguin1(link.fieldIdx);
+    } else if (link.type === 'ignitionPenguinCharge1') {
+      resolvePenguinCharge1(link.handIdx);
+    } else if (link.type === 'ignitionPenguinCharge2') {
+      resolvePenguinCharge2();
+    } else if (link.type === 'ignitionPenguinGlory1') {
+      resolvePenguinGlory1(link.handIdx);
+    } else if (link.type === 'ignitionPenguinGlory2') {
+      resolvePenguinGlory2();
+    } else if (link.type === 'ignitionPenguinForever1') {
+      resolvePenguinForever1();
+    } else if (link.type === 'ignitionPenguinWizard1') {
+      resolvePenguinWizard1();
+    } else if (link.type === 'ignitionPenguinWizard3') {
+      resolvePenguinWizard3();
     }
   });
   sendGameState();
@@ -2544,17 +2612,11 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                   addBtn('① 패에서 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
                 break;
               case '펭귄 부부':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 addBtn('② 드로우2 + 버리기', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
                 break;
               case '현자 펭귄':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 break;
               case '수문장 펭귄':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 break;
               case '펭귄!돌격!':
                 if (isMyTurn && currentPhase === 'deploy')
@@ -2564,8 +2626,6 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                 addBtn('① 펭귄 용사 소환 + 상대 패 공개', 'btn-primary', () => activatePenguinCard(handIdx, 1));
                 break;
               case '펭귄 용사':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 break;
               case '펭귄의 일격':
                 addBtn('① 패 1장 버리고 효과 무효', 'btn-primary', () => activatePenguinCard(handIdx, 1));
@@ -2576,12 +2636,8 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                   addBtn('② 묘지 제외 → 소환 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
                 break;
               case '펭귄의 전설':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 break;
               case '펭귄 마법사':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('소환', 'btn-primary', () => activatePenguinCard(handIdx, 0));
                 addBtn('① 보여주기 → 서치 → 덱으로', 'btn-secondary', () => activatePenguinCard(handIdx, 1));
                 break;
               default:
@@ -2598,7 +2654,6 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
             if (card.cardType === 'trap' && !isMyTurn && canActAnytime)
               addBtn('함정 발동', 'btn-secondary', () => activateCard(handIdx));
           }
-          addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
         }
 
         if (fieldIdx >= 0) {
@@ -2817,18 +2872,6 @@ function activateCard(handIdx) {
   }
   selectedCardIdx = -1;
   renderAll();
-}
-
-function manualDiscard(handIdx) {
-  const c = G.myHand[handIdx];
-  const card = CARDS[c.id];
-  G.myHand.splice(handIdx, 1);
-  G.myGrave.push({ id: c.id, name: c.name });
-  selectedCardIdx = -1;
-  log(`패를 버림: ${c.name}`, 'mine');
-  sendAction({ type: 'discard', cardId: c.id });
-  renderAll();
-  checkWinCondition();
 }
 
 function executeCombat(atkIdx, defIdx) {
@@ -3101,6 +3144,7 @@ document.querySelectorAll('.modal-overlay').forEach(el => {
 // FIREBASE / MULTIPLAYER
 // ─────────────────────────────────────────────
 let firebaseLoaded = false;
+let isJoiningRoom = false;
 
 function loadFirebase(callback) {
   if (firebaseLoaded) { callback(); return; }
@@ -3181,9 +3225,11 @@ function createRoom() {
 }
 
 function joinRoom() {
+  if (isJoiningRoom) return;
+  isJoiningRoom = true;
   myName = document.getElementById('playerName').value.trim() || '플레이어2';
   const code = document.getElementById('joinCode').value.trim().toUpperCase();
-  if (code.length !== 4) { alert('4자리 코드를 입력하세요.'); return; }
+  if (code.length !== 4) { isJoiningRoom = false; alert('4자리 코드를 입력하세요.'); return; }
   const statusEl = document.getElementById('joinStatus');
   statusEl.textContent = '연결 중...';
   statusEl.classList.remove('hidden');
@@ -3193,6 +3239,7 @@ function joinRoom() {
     myRole = 'guest';
     statusEl.textContent = 'DEMO 모드로 참가';
     enterGame();
+    isJoiningRoom = false;
     return;
   }
 
@@ -3201,6 +3248,7 @@ function joinRoom() {
       initFirebase();
     } catch (e) {
       statusEl.textContent = e.message;
+      isJoiningRoom = false;
       return;
     }
     roomCode = code;
@@ -3210,7 +3258,12 @@ function joinRoom() {
       statusEl.textContent = '참가 완료! 호스트의 시작을 기다리는 중...';
       document.getElementById('hdrRoomCode').textContent = roomCode;
       listenRoom();
-    }).catch(e => { statusEl.textContent = '오류: ' + e.message; });
+      roomRef.child('status').once('value').then(statusSnap => {
+        if (statusSnap.val() === 'playing' && document.getElementById('lobby').style.display !== 'none') {
+          goToDeckBuilder();
+        }
+      }).finally(() => { isJoiningRoom = false; });
+    }).catch(e => { statusEl.textContent = '오류: ' + e.message; isJoiningRoom = false; });
   });
 }
 
