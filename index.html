@@ -1631,10 +1631,15 @@ function resolvePenguinBubu1() {
   markEffectUsed('펭귄 부부', 1);
   G.myField.forEach(c => { if (c.id === '펭귄 부부') c.bubuTriggerReady = false; });
   const targets = findAllInDeck(c => isPenguinCard(c.id));
-  if (targets.length === 0) return;
-  openCardPicker(targets, `펭귄 부부 ①: 펭귄 카드 최대 2장 서치`, Math.min(2, targets.length), (sel) => {
-    sel.forEach(i => searchToHand(targets[i].id));
-    // ★ 코스트(패 버리기)는 강제 — 취소 없음, 반드시 1장 선택
+  if (targets.length === 0) { notify('덱에 펭귄 카드가 없습니다.'); return; }
+  const maxPick = Math.min(2, targets.length);
+  openCardPicker(targets, `펭귄 부부 ①: 펭귄 카드 최대 ${maxPick}장 서치 (1장 선택 후 확인, 또는 2장 선택)`, maxPick, (sel) => {
+    if (sel.length === 0) return;
+    // ★ targets 스냅샷 기준으로 선택된 cardId 목록 먼저 추출 (덱 변경 전)
+    const selectedIds = sel.map(i => targets[i]?.id).filter(Boolean);
+    // 중복 방지: 같은 id가 여러 번 선택됐을 경우 처리
+    selectedIds.forEach(id => searchToHand(id));
+    // ★ 코스트(패 버리기)는 강제
     _forcedDiscardOne('펭귄 부부 ①: 패 1장 버리기 (코스트, 필수)', () => {
       sendGameState(); renderAll();
     });
@@ -2496,14 +2501,20 @@ function renderChainActions() {
   const btnPass = document.getElementById('btnChainPass');
   const btnKeyFetch = document.getElementById('btnKeyFetch');
   if (!btnRespond || !btnPass) return;
-  const myPriority = activeChainState && activeChainState.active && activeChainState.priority === myRole;
+
+  // 체인이 활성 상태이고 내 우선권일 때만 응답/패스 버튼 표시
+  const chainActive = !!(activeChainState && activeChainState.active);
+  const myPriority = chainActive && activeChainState.priority === myRole;
+
   btnRespond.classList.toggle('hidden', !myPriority);
   btnPass.classList.toggle('hidden', !myPriority);
+
   if (btnKeyFetch) {
     const noKeyCard = !G.myKeyDeck || G.myKeyDeck.length === 0;
     const inDraw = currentPhase === 'draw';
-    const cannotRespond = activeChainState && activeChainState.active && !myPriority;
-    btnKeyFetch.disabled = noKeyCard || inDraw || cannotRespond;
+    // 체인 활성 중인데 내 우선권이 아닐 때만 비활성화
+    const opponentPriority = chainActive && !myPriority;
+    btnKeyFetch.disabled = noKeyCard || inDraw || opponentPriority;
   }
 }
 
@@ -2716,6 +2727,8 @@ function resolveChain(chainState) {
   const links = [...(chainState.links || [])];
   const resolvedAt = Date.now();
   usedKeyFetchInChain = {};
+  activeChainState = null; // ★ 즉시 초기화 → 버튼 정상화
+  renderChainActions();
   if (roomRef) {
     roomRef.child('chainState').set({ active: false, links: [], priority: null, passCount: 0, resolvedLinks: links, resolvedAt });
   } else {
@@ -3210,15 +3223,29 @@ function listenChainState() {
   roomRef.child('chainState').on('value', snap => {
     const wasActive = !!(activeChainState && activeChainState.active);
     const data = snap.val();
-    activeChainState = data;
+
+    // 체인이 끝났으면 null로 명시 초기화
+    if (!data || !data.active) {
+      if (activeChainState && activeChainState.active) {
+        activeChainState = null;
+      } else {
+        activeChainState = data; // resolved 데이터 유지 (resolvedLinks 참조용)
+      }
+    } else {
+      activeChainState = data;
+    }
+
     renderChainActions();
+
     if (!data) return;
     if (wasActive && !data.active && pendingTriggerEffects.length > 0) {
       setTimeout(flushTriggeredEffects, 0);
     }
     if (!data.active && data.resolvedLinks && data.resolvedAt && data.resolvedAt !== lastResolvedChainAt) {
       lastResolvedChainAt = data.resolvedAt;
+      activeChainState = null; // 처리 후 확실히 null
       executeChainLocally([...data.resolvedLinks].reverse());
+      renderChainActions();
       return;
     }
     syncClockRunState(getPriorityOwner());
