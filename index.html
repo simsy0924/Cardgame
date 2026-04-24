@@ -1670,6 +1670,8 @@ function resolvePenguinBubu2() {
 }
 // 현자 펭귄 ①
 function activateSagePenguin1() {
+  if (!isPenguinVillageRevealed()) { notify('펭귄 마을이 공개 상태가 아닙니다.'); return; }
+  if (!canUseEffect('현자 펭귄', 1)) { notify('이미 사용했습니다.'); return; }
   activateIgnitionEffect({ type: 'ignitionSagePenguin1', label: '현자 펭귄 ①' });
 }
 function resolveSagePenguin1() {
@@ -1694,6 +1696,8 @@ function resolveSagePenguin2() {
 }
 // 수문장 펭귄 ①
 function activateSummonerPenguin1(fieldIdx) {
+  if (!isPenguinVillageRevealed()) { notify('펭귄 마을이 공개 상태가 아닙니다.'); return; }
+  if (!canUseEffect('수문장 펭귄', 1)) { notify('이미 사용했습니다.'); return; }
   const source = G.myField[fieldIdx];
   if (!source || source.id !== '수문장 펭귄') { notify('수문장 펭귄이 필드에 없습니다.'); return; }
   activateIgnitionEffect({
@@ -2239,8 +2243,36 @@ function log(msg, type = '') {
   el.textContent = msg;
   const container = document.getElementById('logEntries');
   container.prepend(el);
-  // Keep last 50 logs
   while (container.children.length > 50) container.lastChild.remove();
+
+  // 내 행동 로그(mine)는 상대한테도 전송
+  // system 로그 중 일부도 전송 (턴 종료, 전투 결과 등)
+  if ((type === 'mine' || type === 'system') && roomRef) {
+    const ts = Date.now();
+    roomRef.child('lastLog').set({ msg, type, ts });
+  }
+}
+
+// 상대 로그 수신 리스너
+let lastLogTs = 0;
+function listenOpponentLog() {
+  if (!roomRef) return;
+  roomRef.child('lastLog').on('value', snap => {
+    const data = snap.val();
+    if (!data || data.ts <= lastLogTs) return;
+    lastLogTs = data.ts;
+
+    // 이미 handleOpponentAction이 처리하는 주요 액션은 중복 출력 방지
+    // → lastAction의 ts와 비교해서 같은 시점이면 스킵
+    // 대신 펭귄 효과 내부 동작(서치, 소환 등)은 새로 표시
+    const displayType = data.type === 'system' ? 'system' : 'opponent';
+    const el = document.createElement('div');
+    el.className = `log-entry ${displayType}`;
+    el.textContent = data.type === 'system' ? data.msg : '[상대] ' + data.msg;
+    const container = document.getElementById('logEntries');
+    container.prepend(el);
+    while (container.children.length > 50) container.lastChild.remove();
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -2833,47 +2865,108 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
           const canActAnytime = currentPhase !== 'draw';
 
           if (isPenguin) {
+            // 자주 쓰는 조건 미리 계산
+            const villageRevealed = isPenguinVillageRevealed();
+            const hasDeckPenguin = findAllInDeck(c => isPenguinMonster(c.id)).length > 0;
+            const hasOpMonster = G.opField.length > 0;
+            const hasMyMonster = G.myField.length > 0;
+            const hasDeckPenguinCard = findAllInDeck(c => isPenguinCard(c.id)).length > 0;
+            const hasGraveCharge = G.myGrave.some(c => c.id === '펭귄!돌격!');
+            const hasGraveGlory = G.myGrave.some(c => c.id === '펭귄의 영광' || c.id === '펭귄이여 영원하라');
+            const hasGraveKkoma = G.myGrave.some(c => c.id === '꼬마 펭귄');
+
             switch(cardId) {
               case '펭귄 마을':
-                if (isMyTurn && currentPhase === 'deploy')
+                if (isMyTurn && currentPhase === 'deploy' && !G.myHand[handIdx]?.isPublic)
                   addBtn('① 공개하기', 'btn-primary', () => activatePenguinCard(handIdx, 1));
                 break;
+
               case '꼬마 펭귄':
                 if (isMyTurn && currentPhase === 'deploy')
                   addBtn('① 패에서 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
                 break;
+
               case '펭귄 부부':
-                addBtn('② 드로우2 + 버리기', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
+                // ② 보여주기: 패에서 발동 — 조건 없음 (단 1턴 1번)
+                if (canUseEffect('펭귄 부부', 2))
+                  addBtn('② 보여주기 → 드로우2 + 버리기', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
                 break;
+
               case '현자 펭귄':
+                // 현자 펭귄은 패에서 소환 불가 (특수 소환만 가능)
+                // ① ② 는 필드에서만
                 break;
+
               case '수문장 펭귄':
+                // 수문장 펭귄도 패에서 소환 불가
                 break;
+
               case '펭귄!돌격!':
-                if (isMyTurn && currentPhase === 'deploy')
+                if (isMyTurn && currentPhase === 'deploy' && hasDeckPenguin)
                   addBtn('① 덱에서 펭귄 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                else if (isMyTurn && currentPhase === 'deploy' && !hasDeckPenguin)
+                  addBtn('① 덱에 펭귄 몬스터 없음', 'btn-secondary', () => notify('덱에 펭귄 몬스터가 없습니다.'));
                 break;
+
               case '펭귄의 영광':
-                addBtn('① 펭귄 용사 소환 + 상대 패 공개', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                // ①: 패에서 펭귄 용사 소환 — 항상 발동 가능 (패/키카드 덱에 용사 있으면)
+                {
+                  const heroAvail = G.myHand.some(c => c.id === '펭귄 용사') ||
+                                    (G.myKeyDeck && G.myKeyDeck.some(c => c.id === '펭귄 용사'));
+                  if (heroAvail)
+                    addBtn('① 펭귄 용사 소환 + 상대 패 공개', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                  else
+                    addBtn('① 펭귄 용사 없음', 'btn-secondary', () => notify('패 또는 키카드 덱에 펭귄 용사가 없습니다.'));
+                }
                 break;
+
               case '펭귄 용사':
+                // 소환 조건: 상대 필드에 몬스터가 있을 때만 (키카드 덱에서 패로 가져올 때 이미 체크됨)
+                // 패에 있으면 이미 조건 충족된 것이므로 소환 버튼은 영광으로만
                 break;
+
               case '펭귄의 일격':
-                addBtn('① 패 1장 버리고 효과 무효', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                // ①: 상대 몬스터 효과 무효 — 상대 효과 발동 시, 자신 필드에 펭귄 몬스터 필요
+                {
+                  const hasPenguinField = G.myField.some(c => isPenguinMonster(c.id));
+                  if (hasPenguinField && canUseEffect('펭귄의 일격', 1))
+                    addBtn('① 패 1장 버리고 효과 무효', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                  else if (!hasPenguinField)
+                    addBtn('① 필드에 펭귄 몬스터 필요', 'btn-secondary', () => notify('자신 필드에 펭귄 몬스터가 필요합니다.'));
+                }
                 break;
+
               case '펭귄이여 영원하라':
-                addBtn('① 필드 카드 교환 + 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
-                if (!isMyTurn)
-                  addBtn('② 묘지 제외 → 소환 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
+                // ①: 서로 필드 카드 1장씩 패로 — 내 필드(몬스터 또는 필드 마법)에 카드 필요
+                { const myHasAnyField = G.myField.length > 0 || G.myFieldCard != null;
+                  if (canActAnytime && myHasAnyField)
+                    addBtn('① 필드 카드 교환 + 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                  else if (!myHasAnyField)
+                    addBtn('① 발동 불가 (내 필드에 카드 없음)', 'btn-secondary', () => notify('내 필드에 카드가 있어야 합니다.'));
+                }
+                // ②: 상대 턴, 묘지에 이 카드 있어야 함 — 패에 있을 때는 ② 없음 (묘지에서만)
                 break;
+
               case '펭귄의 전설':
+                // 패에 있을 경우: 자신 필드에 몬스터가 있을 때만 패에 넣을 수 있으므로
+                // 이미 패에 있는 상태 → ②만 표시
+                if (!isMyTurn)
+                  addBtn('② 패로 + 묘지 소환 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
                 break;
+
               case '펭귄 마법사':
-                addBtn('① 보여주기 → 서치 → 덱으로', 'btn-secondary', () => activatePenguinCard(handIdx, 1));
+                // ①: 일반 패(비공개)일 때만
+                if (!G.myHand[handIdx]?.isPublic && canUseEffect('펭귄 마법사', 1, 2) && hasDeckPenguinCard)
+                  addBtn('① 보여주기 → 서치 → 덱으로', 'btn-secondary', () => activatePenguinCard(handIdx, 1));
+                else if (G.myHand[handIdx]?.isPublic)
+                  addBtn('① 공개패에서는 발동 불가', 'btn-secondary', () => notify('일반 패(비공개)에서만 발동할 수 있습니다.'));
+                else if (!hasDeckPenguinCard)
+                  addBtn('① 덱에 펭귄 카드 없음', 'btn-secondary', () => notify('덱에 펭귄 카드가 없습니다.'));
                 break;
+
               default:
                 if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
-                  addBtn('효과 소환 전용', 'btn-secondary', () => notify('통상 소환은 없습니다. 카드 효과로만 소환할 수 있습니다.'));
+                  addBtn('효과 소환 전용', 'btn-secondary', () => notify('통상 소환은 없습니다.'));
             }
           } else {
             if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
@@ -2889,6 +2982,7 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
 
         if (fieldIdx >= 0) {
           const mon = G.myField[fieldIdx];
+          const villageRevealed = isPenguinVillageRevealed();
           if (mon) {
             switch(mon.id) {
               case '펭귄 부부':
@@ -2896,32 +2990,60 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                   addBtn('① 소환 유발 효과', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 1));
                 break;
               case '현자 펭귄':
-                if (isMyTurn)
-                  addBtn('① 드로우+버리기', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 1));
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('② 서치', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 2));
+                // ①: 내 턴 + 펭귄 마을 공개 상태 필요
+                if (isMyTurn && villageRevealed && canUseEffect('현자 펭귄', 1))
+                  addBtn('① 드로우+버리기 [마을 공개 중]', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 1));
+                else if (isMyTurn && !villageRevealed)
+                  addBtn('① 발동 불가 (펭귄 마을 미공개)', 'btn-secondary', () => notify('패에 펭귄 마을이 공개 상태여야 합니다.'));
+                // ②: 전개 단계, 덱에 펭귄 카드 필요
+                if (isMyTurn && currentPhase === 'deploy' && canUseEffect('현자 펭귄', 2)) {
+                  const hasDeckCard = findAllInDeck(c => isPenguinCard(c.id)).length > 0;
+                  if (hasDeckCard)
+                    addBtn('② 서치', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 2));
+                  else
+                    addBtn('② 발동 불가 (덱에 펭귄 카드 없음)', 'btn-secondary', () => notify('덱에 펭귄 카드가 없습니다.'));
+                }
                 break;
               case '수문장 펭귄':
-                if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('① 공격력+1 + 서로 패 버리기', 'btn-primary', () => activatePenguinFieldEffect(fieldIdx, 1));
+                // ①: 펭귄 마을 공개 상태 필요, 전개 단계
+                if (isMyTurn && currentPhase === 'deploy' && villageRevealed && canUseEffect('수문장 펭귄', 1))
+                  addBtn('① 공격력+1 + 서로 패 버리기 [마을 공개 중]', 'btn-primary', () => activatePenguinFieldEffect(fieldIdx, 1));
+                else if (isMyTurn && currentPhase === 'deploy' && !villageRevealed)
+                  addBtn('① 펭귄 마을 공개 필요', 'btn-secondary', () => notify('패에 펭귄 마을이 공개 상태여야 합니다.'));
                 break;
               case '펭귄 용사':
-                if (!isMyTurn)
+                if (!isMyTurn && canUseEffect('펭귄 용사', 2))
                   addBtn('② 패로 + 마법 회수', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 2));
                 break;
               case '펭귄의 전설':
-                if (!isMyTurn)
+                if (!isMyTurn && canUseEffect('펭귄의 전설', 2))
                   addBtn('② 패로 + 묘지 소환', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 2));
                 break;
               case '펭귄 마법사':
-                addBtn('③ 제외 몬스터 소환', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 3));
+                // ③은 펭귄 마을 효과로 묘지로 보내졌을 때 자동 트리거 — 수동 발동 불가
+                addBtn('③ 자동 트리거 효과 (수동 발동 불가)', 'btn-secondary', () => notify('펭귄 마법사 ③은 펭귄 마을 효과로 묘지로 보내졌을 때 자동 발동합니다.'));
                 break;
             }
           }
         }
 
         if (handIdx === -2) {
-          addBtn('묘지 효과 발동', 'btn-secondary', () => activateGraveEffect(cardId));
+          // 묘지에서 열린 경우 — 조건 체크 후 버튼 표시
+          switch(cardId) {
+            case '펭귄!돌격!':
+              { const hp = G.myHand.filter(c => isPenguinMonster(c.id));
+                if (hp.length > 0)
+                  addBtn('② 패에서 펭귄 소환 (묘지 제외)', 'btn-secondary', () => activateGraveEffect(cardId));
+                else
+                  addBtn('② 패에 펭귄 몬스터 없음', 'btn-secondary', () => notify('패에 펭귄 몬스터가 없습니다.')); }
+              break;
+            case '펭귄의 영광':
+            case '펭귄이여 영원하라':
+              addBtn('② 묘지 제외 → 드로우', 'btn-secondary', () => activateGraveEffect(cardId));
+              break;
+            default:
+              addBtn('묘지 효과 발동', 'btn-secondary', () => activateGraveEffect(cardId));
+          }
         }
       }
     } catch(e) {
@@ -3778,6 +3900,7 @@ function enterGame() {
   timeoutHandled = false;
   lastSyncedClockRunner = null;
   lastHandledActionTs = 0;
+  lastLogTs = 0;
   gameActionListenerActive = false;
   gameClock = { host: 500, guest: 500, runningFor: 'host', lastUpdated: Date.now() };
   G.myExtraSlots = 0;
@@ -3789,6 +3912,7 @@ function enterGame() {
   listenChainState();
   listenClockState();
   listenGameActions();
+  listenOpponentLog();
   startClockTicker();
 
   if (!roomRef) {
