@@ -5584,35 +5584,39 @@ if (DEMO_MODE) {
   document.getElementById('createStatus').textContent = 'DEMO 모드 활성화';
 }
 
-// ★ 계정 시스템 초기화 — SDK를 동적으로 로드한 뒤 initAuth 실행
+// ★ 계정 시스템 초기화 — 필요한 SDK 3개를 순서대로 로드
 (function startAccountSystem() {
-  const AUTH_SDK = 'https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js';
-  const FS_SDK   = 'https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js';
+  const SDKS = [
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js',
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js',
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js',
+  ];
 
-  function loadScript(src, cb) {
-    if (document.querySelector('script[src="' + src + '"]')) { cb(); return; }
+  function loadNext(idx, done) {
+    if (idx >= SDKS.length) { done(); return; }
+    const src = SDKS[idx];
+    if (document.querySelector('script[src="' + src + '"]')) {
+      loadNext(idx + 1, done); return;
+    }
     const s = document.createElement('script');
     s.src = src; s.async = false;
-    s.onload = cb;
+    s.onload  = () => loadNext(idx + 1, done);
     s.onerror = () => console.warn('Account SDK 로드 실패:', src);
     document.head.appendChild(s);
   }
 
-  // firebase-app-compat이 이미 로드된 상태(loadFirebase가 먼저 불릴 수 있음)
-  // → 순서 보장을 위해 window load 이후 실행
   function run() {
-    loadScript(AUTH_SDK, () => {
-      loadScript(FS_SDK, () => {
-        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-        initAuth();
-      });
+    loadNext(0, () => {
+      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+      initAuth();
     });
   }
 
+  // 페이지가 완전히 로드된 후 실행 (다른 스크립트와 충돌 방지)
   if (document.readyState === 'complete') {
-    run();
+    setTimeout(run, 100);
   } else {
-    window.addEventListener('load', run);
+    window.addEventListener('load', () => setTimeout(run, 100));
   }
 })();
 
