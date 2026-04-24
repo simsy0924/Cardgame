@@ -2463,6 +2463,7 @@ function beginChain(effect) {
   activeChainState = chainState;
   if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
   roomRef.child('chainState').set(chainState);
+  syncClockRunState(chainState.priority);
   log(`체인 1: ${effect.label} 발동`, 'mine');
 }
 
@@ -2498,6 +2499,7 @@ function passChainPriority() {
     return;
   }
   roomRef.child('chainState').set(next);
+  syncClockRunState(next.priority);
   log('체인 패스', 'system');
 }
 
@@ -2514,6 +2516,7 @@ function addChainLink(effect) {
   activeChainState = next;
   if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
   roomRef.child('chainState').set(next);
+  syncClockRunState(next.priority);
   log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
 }
 
@@ -2932,6 +2935,7 @@ function listenChainState() {
       executeChainLocally([...data.resolvedLinks].reverse());
       return;
     }
+    syncClockRunState(getPriorityOwner());
     if (!data.active) return;
     if (data.priority === myRole) {
       notify(`체인 우선권: ${data.links?.length || 0}체인. 응답 또는 패스를 선택하세요.`);
