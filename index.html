@@ -1985,7 +1985,7 @@ let activeChainState = null; // Firebase chain state mirror
 let lastResolvedChainAt = 0;
 let pendingTriggerEffects = [];
 let usedKeyFetchInChain = {};
-let attackedFieldIndices = new Set();
+let attackedMonstersThisTurn = new Set();
 
 // ─────────────────────────────────────────────
 // UTILS
@@ -2710,7 +2710,7 @@ function endAttack() {
 function endTurn() {
   if (!isMyTurn || currentPhase !== 'end') return;
   resetTurnEffects(); // penguin_engine.js — ATK 버프 원복, effectUsed 초기화
-  attackedFieldIndices.clear();
+  attackedMonstersThisTurn.clear();
   G.turn++;
   isMyTurn = false;
   advancePhase('draw');
@@ -2771,10 +2771,10 @@ function manualDiscard(handIdx) {
 
 function executeCombat(atkIdx, defIdx) {
   if (!isMyTurn || currentPhase !== 'attack') { notify('공격 단계가 아닙니다.'); return; }
-  if (attackedFieldIndices.has(atkIdx)) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
   const attacker = G.myField[atkIdx];
   const defender = G.opField[defIdx];
   if (!attacker || !defender) return;
+  if (attackedMonstersThisTurn.has(attacker)) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
 
   const diff = attacker.atk - defender.atk;
   log(`전투: ${attacker.name}(${attacker.atk}) vs ${defender.name}(${defender.atk})`, 'mine');
@@ -2807,19 +2807,20 @@ function executeCombat(atkIdx, defIdx) {
     }
   }
   sendAction({ type: 'combat', atkIdx, defIdx, atkCard: attacker, defCard: defender });
-  attackedFieldIndices.add(atkIdx);
+  attackedMonstersThisTurn.add(attacker);
   sendGameState(); renderAll();
 }
 
 function directAttack(atkIdx) {
   if (!isMyTurn || currentPhase !== 'attack') return;
-  if (attackedFieldIndices.has(atkIdx)) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
-  if (G.opField.length > 0) { notify('상대 필드에 몬스터가 있습니다. 직접 공격 불가.'); return; }
   const attacker = G.myField[atkIdx];
+  if (!attacker) return;
+  if (attackedMonstersThisTurn.has(attacker)) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
+  if (G.opField.length > 0) { notify('상대 필드에 몬스터가 있습니다. 직접 공격 불가.'); return; }
   log(`직접 공격: ${attacker.name}(${attacker.atk}) — 상대는 패를 ${attacker.atk}장 버려야 합니다.`, 'mine');
   notify(`직접 공격! 상대 패 ${attacker.atk}장 손실`);
   sendAction({ type: 'directAttack', atkIdx, card: attacker });
-  attackedFieldIndices.add(atkIdx);
+  attackedMonstersThisTurn.add(attacker);
 }
 
 function forceDiscard(n, opponentPicks = false) {
@@ -3269,7 +3270,7 @@ function handleOpponentAction(action) {
       break;
     case 'endTurn':
       isMyTurn = true;
-      attackedFieldIndices.clear();
+      attackedMonstersThisTurn.clear();
       advancePhase('draw');
       log(`상대 턴 종료 — 내 턴`, 'system');
       notify('내 턴입니다!');
@@ -3340,7 +3341,7 @@ function enterGame() {
   G.myExtraSlots = 0;
   G.opExtraSlots = 0;
   G.penguinHeroAtkBuff = false;
-  attackedFieldIndices.clear();
+  attackedMonstersThisTurn.clear();
 
   // 덱 초기화 (penguin_engine.js의 PENGUIN_MAIN_DECK 사용)
   initDecks();
