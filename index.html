@@ -2669,29 +2669,14 @@ function executeChainLocally(links) {
 // ★ 강제 패 버리기 — 반드시 1장 선택해야 함, 취소 불가
 function _forcedDiscardOne(title, callback) {
   if (G.myHand.length === 0) { callback(); return; }
-  // 취소 버튼을 숨기고, 카드 탭하는 순간 바로 확정 (maxPick=1이면 자동 확정)
-  // 선택을 안 하면 모달이 닫히지 않음 — 반드시 골라야 함
-  const _originalConfirm = window._pickerAllowClose;
-  window._pickerAllowClose = false; // 닫기 버튼 비활성화 신호
-
-  // 모달 열기 전에 닫기 버튼 숨기기
-  const modal = document.getElementById('cardPickerModal');
-  const cancelBtn = modal ? modal.querySelector('.btn-secondary') : null;
-  if (cancelBtn) cancelBtn.style.display = 'none';
-
   openCardPicker(G.myHand, title, 1, (sel) => {
-    // 복원
-    if (cancelBtn) cancelBtn.style.display = '';
-    window._pickerAllowClose = true;
-
-    // sel은 무조건 1장 — maxPick=1이면 탭하는 순간 바로 확정되어 여기 도달
     if (sel.length > 0) {
       const c = G.myHand.splice(sel[0], 1)[0];
       G.myGrave.push(c);
       log(`버림(코스트): ${c.name}`, 'mine');
     }
     callback();
-  });
+  }, true); // forced=true: 반드시 선택, 취소 불가
 }
 
 function resolveKeyFetch(cardId) {
@@ -2757,11 +2742,16 @@ function onMyFieldClick(i) {
 }
 
 function onOpFieldClick(i) {
-  if (selectedFieldIdx < 0) return;
-  // Combat: myField[selectedFieldIdx] attacks opField[i]
-  executeCombat(selectedFieldIdx, i);
-  selectedFieldIdx = -1;
-  document.querySelectorAll('.zone-slot.attack-target').forEach(el => el.classList.remove('attack-target'));
+  if (selectedFieldIdx >= 0) {
+    // 공격 모드: 전투 실행
+    executeCombat(selectedFieldIdx, i);
+    selectedFieldIdx = -1;
+    document.querySelectorAll('.zone-slot.attack-target').forEach(el => el.classList.remove('attack-target'));
+  } else {
+    // 일반 모드: 카드 상세 보기
+    const mon = G.opField[i];
+    if (mon) openCardDetail(mon.id, -1, true);
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -2935,15 +2925,16 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
 // ─────────────────────────────────────────────
 function sendGameState() {
   if (!roomRef) return;
-  // 내 상태를 Firebase에 올리기
   const myState = {
-    hand: G.myHand,
+    // 패: id, name, isPublic 모두 저장
+    hand: G.myHand.map(c => ({ id: c.id, name: c.name, isPublic: c.isPublic || false })),
     field: G.myField,
     grave: G.myGrave,
     exile: G.myExile,
     fieldCard: G.myFieldCard,
-    keyDeckCount: G.myKeyDeck.length,
+    keyDeck: G.myKeyDeck.map(c => ({ id: c.id, name: c.name })),
     deckCount: G.myDeck ? G.myDeck.length : 0,
+    ts: Date.now(), // 타임스탬프 (재접속 판별용)
   };
   const path = myRole === 'host' ? 'hostState' : 'guestState';
   roomRef.child(path).set(myState);
@@ -2955,15 +2946,41 @@ function listenOpponentState() {
   roomRef.child(opPath).on('value', snap => {
     const data = snap.val();
     if (!data) return;
-    // 상대 상태 업데이트 (패는 isPublic 여부만 반영)
-    G.opHand = (data.hand || []).map(c => ({ id: c.id, name: c.name, isPublic: c.isPublic || false }));
-    G.opField = data.field || [];
-    G.opGrave = data.grave || [];
-    G.opExile = data.exile || [];
+    // 상대 패: 공개/비공개 상태 정확히 반영
+    G.opHand = (data.hand || []).map(c => ({
+      id: c.isPublic ? c.id : 'unknown',
+      name: c.isPublic ? c.name : '?',
+      isPublic: c.isPublic || false,
+      _hiddenName: c.name, // 실제 이름 (비공개지만 참조용)
+    }));
+    G.opField = (data.field || []);
+    G.opGrave = (data.grave || []);
+    G.opExile = (data.exile || []);
     G.opFieldCard = data.fieldCard || null;
-    const opKeyDeckCount = data.keyDeckCount || 0;
-    G.opKeyDeck = Array.from({ length: opKeyDeckCount }, () => ({ id: 'unknown', name: '?' }));
+    G.opKeyDeck = (data.keyDeck || []).map(c => ({ id: 'unknown', name: '키카드' }));
     G.opDeckCount = data.deckCount || 0;
+    renderAll();
+  });
+}
+
+// 재접속 시 내 상태 복원
+function restoreMyState() {
+  if (!roomRef) return;
+  const myPath = myRole === 'host' ? 'hostState' : 'guestState';
+  roomRef.child(myPath).once('value').then(snap => {
+    const data = snap.val();
+    if (!data || !data.ts) return; // 저장된 상태 없으면 스킵
+    // 패 복원 (공개 상태 포함)
+    if (data.hand && data.hand.length > 0) {
+      G.myHand = data.hand.map(c => ({ id: c.id, name: c.name, isPublic: c.isPublic || false }));
+    }
+    if (data.field) G.myField = data.field;
+    if (data.grave) G.myGrave = data.grave;
+    if (data.exile) G.myExile = data.exile;
+    if (data.fieldCard) G.myFieldCard = data.fieldCard;
+    if (data.keyDeck) G.myKeyDeck = data.keyDeck;
+    log('이전 상태 복원 완료', 'system');
+    notify('재접속: 이전 게임 상태를 복원했습니다.');
     renderAll();
   });
 }
@@ -3258,26 +3275,27 @@ function advancePhase(phase) {
 // ─────────────────────────────────────────────
 
 // 외부에서 호출하는 함수
-function openCardPicker(cards, title, maxPick, callback) {
-  // 빈 배열이면 바로 빈 결과로 콜백
-  if (!cards || cards.length === 0) {
-    callback([]);
-    return;
-  }
-  // 큐에 추가
-  pickerQueue.push({ cards: [...cards], title, maxPick: Math.min(maxPick, cards.length), callback });
+function openCardPicker(cards, title, maxPick, callback, forced = false) {
+  if (!cards || cards.length === 0) { callback([]); return; }
+  pickerQueue.push({ cards: [...cards], title, maxPick: Math.min(maxPick, cards.length), callback, forced });
   if (!pickerRunning) runNextPicker();
 }
 
 function runNextPicker() {
   if (pickerQueue.length === 0) { pickerRunning = false; return; }
   pickerRunning = true;
-  const { cards, title, maxPick } = pickerQueue[0];
+  const { cards, title, maxPick, forced } = pickerQueue[0];
   pickerSelected = [];
   pickerCurrentCards = cards;
 
   document.getElementById('pickerTitle').textContent = title;
-  document.getElementById('pickerDesc').textContent = maxPick === 0 ? '선택 없이 확인 가능' : `최대 ${maxPick}장 선택`;
+  document.getElementById('pickerDesc').textContent = forced
+    ? `⚠️ 반드시 ${maxPick}장 선택 (취소 불가)`
+    : maxPick === 0 ? '선택 없이 확인 가능' : `최대 ${maxPick}장 선택`;
+
+  // 강제 모드일 때 닫기 버튼 숨기기
+  const cancelBtn = document.querySelector('#cardPickerModal .btn-secondary');
+  if (cancelBtn) cancelBtn.style.display = forced ? 'none' : '';
 
   const grid = document.getElementById('pickerGrid');
   grid.innerHTML = '';
@@ -3303,14 +3321,25 @@ function runNextPicker() {
 }
 
 function confirmPick() {
+  if (pickerQueue.length === 0) { pickerRunning = false; closeModal('cardPickerModal'); return; }
+  const { callback, forced, maxPick } = pickerQueue[0];
+
+  // 강제 모드: 아무것도 선택 안 하면 닫히지 않음
+  if (forced && pickerSelected.length === 0) {
+    notify('반드시 카드를 선택해야 합니다!');
+    return;
+  }
+
   closeModal('cardPickerModal');
-  if (pickerQueue.length === 0) { pickerRunning = false; return; }
-  const { callback } = pickerQueue.shift();
+  pickerQueue.shift();
   const selected = [...pickerSelected];
   pickerSelected = [];
-  // 콜백 실행 후 다음 picker
+
+  // 닫기 버튼 복원
+  const cancelBtn = document.querySelector('#cardPickerModal .btn-secondary');
+  if (cancelBtn) cancelBtn.style.display = '';
+
   try { callback(selected); } catch(e) { console.error('picker 콜백 오류:', e); notify('효과 처리 오류: ' + e.message); }
-  // 큐에 다음 항목 있으면 실행
   if (pickerQueue.length > 0) setTimeout(runNextPicker, 150);
   else pickerRunning = false;
 }
@@ -3732,6 +3761,29 @@ function enterGame() {
   listenChainState();
   listenClockState();
   startClockTicker();
+
+  // 재접속 감지: Firebase에 이미 내 상태가 있으면 복원
+  if (roomRef) {
+    const myPath = myRole === 'host' ? 'hostState' : 'guestState';
+    roomRef.child(myPath).once('value').then(snap => {
+      const data = snap.val();
+      // ts가 있고 패가 있으면 이전 게임 상태 복원
+      if (data && data.ts && data.hand && data.hand.length > 0) {
+        G.myHand = data.hand.map(c => ({ id: c.id, name: c.name, isPublic: c.isPublic || false }));
+        if (data.field) G.myField = data.field;
+        if (data.grave) G.myGrave = data.grave;
+        if (data.exile) G.myExile = data.exile;
+        if (data.fieldCard) G.myFieldCard = data.fieldCard;
+        if (data.keyDeck) G.myKeyDeck = data.keyDeck;
+        log('이전 게임 상태 복원!', 'system');
+        notify('재접속: 이전 상태를 복원했습니다.');
+        renderAll();
+      } else {
+        // 새 게임: 내 초기 상태 업로드
+        sendGameState();
+      }
+    });
+  }
 
   log('게임 시작!', 'system');
   renderAll();
