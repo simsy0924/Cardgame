@@ -2959,7 +2959,8 @@ function sendGameState() {
     fieldCard: G.myFieldCard,
     keyDeck: G.myKeyDeck.map(c => ({ id: c.id, name: c.name })),
     deckCount: G.myDeck ? G.myDeck.length : 0,
-    ts: Date.now(), // 타임스탬프 (재접속 판별용)
+    deckList: window._confirmedDeck || null, // 재접속 시 덱 복원용
+    ts: Date.now(),
   };
   const path = myRole === 'host' ? 'hostState' : 'guestState';
   roomRef.child(path).set(myState);
@@ -3801,16 +3802,24 @@ function enterGame() {
   roomRef.child(myPath).once('value').then(snap => {
     const data = snap.val();
     if (data && data.ts && data.hand && data.hand.length > 0) {
-      // ★ 재접속: Firebase 상태 복원 (새 패 뽑지 않음)
+      // ★ 재접속: Firebase 상태 복원 (새 패 뽑지 않음, initDecks 호출 안 함)
       G.myHand = data.hand.map(c => ({ id: c.id, name: c.name, isPublic: c.isPublic || false }));
       G.myField = data.field || [];
       G.myGrave = data.grave || [];
       G.myExile = data.exile || [];
       G.myFieldCard = data.fieldCard || null;
       G.myKeyDeck = (data.keyDeck || []).map(c => ({ id: c.id, name: c.name }));
-      // 덱은 복원 불가 (셔플 상태 미저장) → 묘지+기존 장수로 재구성
-      initDecks();
-      // 페이즈/턴은 Firebase 방 상태에서 복원
+
+      // 덱은 저장된 deckList로 재구성 (없으면 기본 펭귄 덱)
+      const deckList = data.deckList || window._confirmedDeck || null;
+      if (deckList) {
+        G.myDeck = shuffle(deckList.map(id => ({ id, name: CARDS[id]?.name || id })));
+      } else {
+        G.myDeck = []; // 덱 소진 시 묘지로 복구됨
+      }
+      G.myDeckCount = G.myDeck.length;
+
+      // 페이즈/턴 복원
       roomRef.child('roomPhase').once('value').then(phSnap => {
         const ph = phSnap.val();
         if (ph) {
