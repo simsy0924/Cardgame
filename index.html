@@ -866,7 +866,27 @@
     .card-back { width: 58px; height: 80px; }
     .card-name { font-size: .48rem; }
   }
+
+  /* ── ACCOUNT BLOCK ── */
+  #accountBlock .profile-row {
+    display: flex;
+    align-items: center;
+    gap: .8rem;
+  }
+  #accountBlock .profile-meta {
+    flex: 1;
+    min-width: 0;
+  }
+  #accountBlock .profile-currency {
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: 1rem;
+    color: #f0c040;
+    white-space: nowrap;
+  }
 </style>
+<!-- Firebase Auth + Firestore (compat) — Auth 초기화용 -->
+<script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
@@ -875,6 +895,34 @@
   <div class="title-block">
     <h1>CARD<br>GAME</h1>
     <p>패가 목숨 · 핸드 배틀 TCG</p>
+  </div>
+
+  <!-- ── 계정 블록 ── -->
+  <div class="lobby-card" id="accountBlock">
+    <h2>계정</h2>
+    <!-- 로그인 전 -->
+    <div id="loginArea">
+      <button class="btn btn-primary" id="googleLoginBtn" onclick="signInWithGoogle()">
+        Google로 로그인
+      </button>
+      <p style="font-size:.78rem;color:var(--text-dim);text-align:center;margin-top:.3rem">
+        로그인하면 전적·재화·랭킹이 기록됩니다
+      </p>
+    </div>
+    <!-- 로그인 후 -->
+    <div id="profileArea" style="display:none">
+      <div class="profile-row">
+        <img id="profileAvatar" src="" width="36" height="36"
+             style="border-radius:50%;border:1px solid var(--border);flex-shrink:0" alt="">
+        <div class="profile-meta">
+          <div id="profileName" style="font-family:'Black Han Sans',sans-serif;font-size:.95rem;color:var(--accent)"></div>
+          <div id="profileStats" style="font-size:.72rem;color:var(--text-dim);margin-top:.15rem"></div>
+        </div>
+        <div id="profileCurrency" class="profile-currency"></div>
+      </div>
+      <button class="btn btn-secondary" onclick="signOutUser()"
+              style="margin-top:.5rem;font-size:.8rem;padding:.4rem">로그아웃</button>
+    </div>
   </div>
 
   <div class="lobby-card">
@@ -2124,6 +2172,201 @@ const firebaseConfig = {
   messagingSenderId: "179779519297",
   appId: "1:179779519297:web:634cdc2de3c866e09e57c0"
 };
+
+// ─────────────────────────────────────────────
+// ACCOUNT SYSTEM
+// ─────────────────────────────────────────────
+/** @type {firebase.firestore.Firestore|null} */
+let fsdb = null;
+/** @type {firebase.User|null} */
+let currentUser = null;
+/** 현재 유저의 Firestore 프로필 캐시 */
+let userProfile = null;
+/** 게임 중 결과 중복 기록 방지 */
+let gameResultRecorded = false;
+
+// ── Auth 초기화 (페이지 로드 시 호출) ─────────────────────────
+function initAuth() {
+  if (!window.firebase) return;
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+
+  // Firestore 초기화
+  fsdb = firebase.firestore();
+
+  firebase.auth().onAuthStateChanged(async (user) => {
+    currentUser = user;
+    if (user) {
+      await ensureUserDoc(user);
+      userProfile = await getUserProfile(user.uid);
+      renderProfileUI(user);
+      // 닉네임 자동 채움 (비어있을 때만)
+      const nameInput = document.getElementById('playerName');
+      if (nameInput && !nameInput.value.trim()) {
+        nameInput.value = userProfile?.nickname || user.displayName || '';
+      }
+    } else {
+      userProfile = null;
+      renderLoggedOutUI();
+    }
+  });
+}
+
+// ── Google 로그인 ─────────────────────────────────────────────
+function signInWithGoogle() {
+  if (!window.firebase || !firebase.auth) {
+    notify('Firebase 로딩 중... 잠시 후 다시 시도하세요.'); return;
+  }
+  const provider = new firebase.auth.GoogleAuthProvider();
+  firebase.auth().signInWithPopup(provider).catch(e => {
+    console.error('로그인 실패:', e);
+    notify('로그인 실패: ' + e.message);
+  });
+}
+
+// ── 로그아웃 ──────────────────────────────────────────────────
+function signOutUser() {
+  if (!firebase.auth) return;
+  firebase.auth().signOut().then(() => notify('로그아웃 완료'));
+}
+
+// ── Firestore 유저 문서 보장 (최초 로그인 시 생성) ───────────
+async function ensureUserDoc(user) {
+  if (!fsdb) return;
+  const ref = fsdb.collection('users').doc(user.uid);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    await ref.set({
+      uid:           user.uid,
+      nickname:      user.displayName || '플레이어',
+      email:         user.email       || '',
+      photoURL:      user.photoURL    || '',
+      currency:      0,          // 재화
+      totalWins:     0,
+      totalLosses:   0,
+      totalGames:    0,
+      rank:          1000,       // ELO 초기값
+      ownedItems:    [],         // 보유 아이템 ID 목록
+      equippedSleeve:'default',
+      equippedBoard: 'default',
+      unlockedCards: [],         // 구매한 추가 카드
+      createdAt:     firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt:     firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+}
+
+// ── 유저 프로필 읽기 ─────────────────────────────────────────
+async function getUserProfile(uid) {
+  if (!fsdb) return null;
+  try {
+    const snap = await fsdb.collection('users').doc(uid).get();
+    return snap.exists ? snap.data() : null;
+  } catch(e) {
+    console.error('프로필 읽기 실패:', e);
+    return null;
+  }
+}
+
+// ── 승패 및 재화 기록 ────────────────────────────────────────
+// win: true = 승리, false = 패배
+async function recordGameResult(win) {
+  if (!currentUser || !fsdb) return;  // 비로그인 시 스킵
+  if (gameResultRecorded) return;      // 중복 방지
+  gameResultRecorded = true;
+
+  const CURRENCY_WIN  = 30;
+  const CURRENCY_LOSE = 10;
+  const RANK_WIN      = 25;
+  const RANK_LOSE     = 20;
+  const earned = win ? CURRENCY_WIN : CURRENCY_LOSE;
+
+  try {
+    const userRef = fsdb.collection('users').doc(currentUser.uid);
+
+    // 트랜잭션으로 rank가 0 아래로 안 내려가게 처리
+    await fsdb.runTransaction(async (tx) => {
+      const doc = await tx.get(userRef);
+      if (!doc.exists) return;
+      const data = doc.data();
+      const newRank = Math.max(0, (data.rank || 1000) + (win ? RANK_WIN : -RANK_LOSE));
+      tx.update(userRef, {
+        currency:    firebase.firestore.FieldValue.increment(earned),
+        totalWins:   firebase.firestore.FieldValue.increment(win ? 1 : 0),
+        totalLosses: firebase.firestore.FieldValue.increment(win ? 0 : 1),
+        totalGames:  firebase.firestore.FieldValue.increment(1),
+        rank:        newRank,
+        updatedAt:   firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    // 게임 기록 서브컬렉션
+    await fsdb
+      .collection('users').doc(currentUser.uid)
+      .collection('gameHistory')
+      .add({
+        result:   win ? 'win' : 'loss',
+        currency: earned,
+        roomCode: roomCode || 'unknown',
+        playedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+
+    // 캐시 갱신
+    userProfile = await getUserProfile(currentUser.uid);
+    notify(`${win ? '🏆 승리' : '💀 패배'}! 재화 +${earned}  (합계: ${userProfile?.currency ?? '?'})`);
+  } catch (e) {
+    console.error('결과 기록 실패:', e);
+    notify('결과 기록 중 오류: ' + e.message);
+  }
+}
+
+// ── 랭킹 조회 (top 10) ───────────────────────────────────────
+async function fetchRanking() {
+  if (!fsdb) { notify('로그인 후 랭킹을 볼 수 있습니다.'); return []; }
+  try {
+    const snap = await fsdb.collection('users')
+      .orderBy('rank', 'desc')
+      .limit(10)
+      .get();
+    return snap.docs.map(d => d.data());
+  } catch(e) {
+    console.error('랭킹 조회 실패:', e);
+    return [];
+  }
+}
+
+// ── 프로필 UI 렌더 ────────────────────────────────────────────
+function renderProfileUI(user) {
+  const loginArea   = document.getElementById('loginArea');
+  const profileArea = document.getElementById('profileArea');
+  if (!loginArea || !profileArea) return;
+
+  loginArea.style.display   = 'none';
+  profileArea.style.display = '';
+
+  const avatar = document.getElementById('profileAvatar');
+  if (avatar) avatar.src = user.photoURL || '';
+
+  const nameEl = document.getElementById('profileName');
+  if (nameEl) nameEl.textContent = userProfile?.nickname || user.displayName || '';
+
+  const statsEl = document.getElementById('profileStats');
+  if (statsEl && userProfile) {
+    const w = userProfile.totalWins   || 0;
+    const l = userProfile.totalLosses || 0;
+    const r = userProfile.rank        || 1000;
+    statsEl.textContent = `${w}승 ${l}패  ·  랭크 ${r}`;
+  }
+
+  const currEl = document.getElementById('profileCurrency');
+  if (currEl) currEl.textContent = `💰 ${userProfile?.currency ?? 0}`;
+}
+
+function renderLoggedOutUI() {
+  const loginArea   = document.getElementById('loginArea');
+  const profileArea = document.getElementById('profileArea');
+  if (loginArea)   loginArea.style.display   = '';
+  if (profileArea) profileArea.style.display = 'none';
+}
 
 // ─────────────────────────────────────────────
 // LOCAL DEMO MODE (Firebase 없이 같은 화면에서 테스트)
@@ -3627,19 +3870,21 @@ function checkWinCondition() {
 }
 
 function showGameOver(win) {
-  const el = document.getElementById('gameover');
+  const el    = document.getElementById('gameover');
   const title = document.getElementById('gameoverTitle');
-  const msg = document.getElementById('gameoverMsg');
+  const msg   = document.getElementById('gameoverMsg');
   el.classList.add('show');
   if (win) {
     title.textContent = '승리!';
-    title.className = 'gameover-title win';
-    msg.textContent = '상대의 패를 모두 털었습니다.';
+    title.className   = 'gameover-title win';
+    msg.textContent   = '상대의 패를 모두 털었습니다.';
   } else {
     title.textContent = '패배...';
-    title.className = 'gameover-title lose';
-    msg.textContent = '패가 0장이 되었습니다.';
+    title.className   = 'gameover-title lose';
+    msg.textContent   = '패가 0장이 되었습니다.';
   }
+  // ★ 계정 연동: 결과 기록 (비로그인이면 자동 스킵)
+  recordGameResult(win);
 }
 
 function concede() {
@@ -4491,6 +4736,7 @@ function checkBothDecksReady(overlay) {
 }
 
 function enterGameWithDeck() {
+  gameResultRecorded = false; // 새 게임마다 초기화
   enterGame();
 }
 
@@ -5323,6 +5569,176 @@ document.getElementById('playerName').focus();
 if (DEMO_MODE) {
   document.getElementById('createStatus').textContent = 'DEMO 모드 활성화';
 }
+
+// ★ 계정 시스템 초기화 (Auth + Firestore SDK가 <head>에서 이미 로드됨)
+(function startAccountSystem() {
+  if (window.firebase && firebase.auth) {
+    initAuth();
+  } else {
+    window.addEventListener('load', () => {
+      if (window.firebase && firebase.auth) initAuth();
+    });
+  }
+})();
+
+// ─────────────────────────────────────────────
+// ⚠️  ADMIN CHEAT PANEL  (완성 후 이 블록 전체 삭제)
+// 삭제 방법: "ADMIN CHEAT PANEL" ~ "END OF ADMIN CHEAT PANEL" 사이 전체 제거
+// ─────────────────────────────────────────────
+(function mountAdminPanel() {
+  // ★ 비밀번호 변경 시 여기만 수정
+  const ADMIN_PW = 'reset-cardgame-2025';
+
+  function injectBtn() {
+    if (document.getElementById('adminPanelBtn')) return;
+    const btn = document.createElement('button');
+    btn.id = 'adminPanelBtn';
+    btn.textContent = '🔧 관리자';
+    btn.style.cssText =
+      'position:fixed;bottom:12px;right:12px;z-index:9000;' +
+      'background:#1c1c2e;color:#c8a96e;border:1px solid #2a2a45;' +
+      'border-radius:6px;padding:6px 12px;font-size:12px;' +
+      'font-family:"Black Han Sans",sans-serif;cursor:pointer;' +
+      'letter-spacing:.05em;opacity:.7;transition:opacity .2s;';
+    btn.onmouseenter = () => { btn.style.opacity = '1'; };
+    btn.onmouseleave = () => { btn.style.opacity = '.7'; };
+    btn.onclick = openAdminPanel;
+    document.body.appendChild(btn);
+  }
+
+  function openAdminPanel() {
+    const pw = prompt('관리자 비밀번호를 입력하세요:');
+    if (pw !== ADMIN_PW) { alert('비밀번호가 틀렸습니다.'); return; }
+
+    const existing = document.getElementById('adminOverlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'adminOverlay';
+    overlay.style.cssText =
+      'position:fixed;inset:0;background:#000c;' +
+      'display:flex;align-items:center;justify-content:center;z-index:9001;';
+
+    overlay.innerHTML =
+      '<div style="background:#13131e;border:1px solid #2a2a45;border-radius:12px;' +
+      'padding:1.5rem;width:min(400px,90vw);display:flex;flex-direction:column;gap:.8rem;">' +
+
+        '<div style="font-family:\'Black Han Sans\',sans-serif;color:#c8a96e;' +
+        'font-size:1rem;letter-spacing:.1em;border-bottom:1px solid #2a2a45;' +
+        'padding-bottom:.6rem;">⚠️ 관리자 데이터 초기화</div>' +
+
+        '<div style="font-size:.78rem;color:#888;line-height:1.6;">' +
+        '현재 로그인된 계정의 데이터를 초기화합니다.<br>' +
+        '로그인 안 된 상태에서는 동작하지 않습니다.</div>' +
+
+        '<div id="adminCurrentUser" style="font-size:.8rem;color:#c8a96e;' +
+        'background:#1c1c2e;border-radius:6px;padding:.5rem .8rem;"></div>' +
+
+        '<div style="display:flex;flex-direction:column;gap:.5rem;">' +
+          '<button id="adminResetCurrency" style="width:100%;padding:.6rem;border:1px solid #4a8c5c;' +
+          'background:#1a2a1a;color:#6ab87c;border-radius:6px;cursor:pointer;' +
+          'font-family:\'Black Han Sans\',sans-serif;font-size:.85rem;">' +
+          '💰 재화만 초기화 (→ 0)</button>' +
+
+          '<button id="adminResetStats" style="width:100%;padding:.6rem;border:1px solid #3a5f8a;' +
+          'background:#0e1a28;color:#6090c0;border-radius:6px;cursor:pointer;' +
+          'font-family:\'Black Han Sans\',sans-serif;font-size:.85rem;">' +
+          '📊 전적만 초기화 (승/패/게임수 → 0, 랭크 → 1000)</button>' +
+
+          '<button id="adminResetAll" style="width:100%;padding:.6rem;border:1px solid #c84848;' +
+          'background:#2a1010;color:#e87070;border-radius:6px;cursor:pointer;' +
+          'font-family:\'Black Han Sans\',sans-serif;font-size:.85rem;font-weight:bold;">' +
+          '🗑️ 전체 초기화 (재화+전적+아이템+랭크)</button>' +
+
+          '<button id="adminAddCurrency" style="width:100%;padding:.6rem;border:1px solid #c8a96e;' +
+          'background:#1a1000;color:#c8a96e;border-radius:6px;cursor:pointer;' +
+          'font-family:\'Black Han Sans\',sans-serif;font-size:.85rem;">' +
+          '➕ 재화 1000 추가 (테스트용)</button>' +
+        '</div>' +
+
+        '<div id="adminResultMsg" style="font-size:.8rem;color:#888;min-height:1.5rem;text-align:center;"></div>' +
+
+        '<button id="adminCloseBtn" style="width:100%;padding:.5rem;border:1px solid #2a2a45;' +
+        'background:transparent;color:#888;border-radius:6px;cursor:pointer;' +
+        'font-family:\'Black Han Sans\',sans-serif;font-size:.85rem;">닫기</button>' +
+      '</div>';
+
+    document.body.appendChild(overlay);
+
+    // 현재 유저 정보 표시
+    const userEl = document.getElementById('adminCurrentUser');
+    if (currentUser && userProfile) {
+      userEl.textContent =
+        '\uD83D\uDC64 ' + (userProfile.nickname || currentUser.displayName) +
+        '  \u00B7  \uD83D\uDCB0 ' + userProfile.currency +
+        '  \u00B7  \uB79C\uD06C ' + userProfile.rank;
+    } else {
+      userEl.textContent = '\u26A0\uFE0F \uB85C\uADF8\uC778\uB418\uC5B4 \uC788\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uBA3C\uC800 \uB85C\uADF8\uC778\uD558\uC138\uC694.';
+    }
+
+    const resultEl = document.getElementById('adminResultMsg');
+
+    async function doReset(payload, label) {
+      if (!currentUser || !fsdb) {
+        resultEl.textContent = '\u274C \uB85C\uADF8\uC778 \uD544\uC694';
+        resultEl.style.color = '#e87070';
+        return;
+      }
+      if (!confirm(label + '\n\n\uC815\uB9D0 \uCD08\uAE30\uD654\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C?')) return;
+      resultEl.textContent = '\uCC98\uB9AC \uC911...';
+      resultEl.style.color = '#c8a96e';
+      try {
+        await fsdb.collection('users').doc(currentUser.uid).update(payload);
+        userProfile = await getUserProfile(currentUser.uid);
+        renderProfileUI(currentUser);
+        userEl.textContent =
+          '\uD83D\uDC64 ' + (userProfile.nickname) +
+          '  \u00B7  \uD83D\uDCB0 ' + userProfile.currency +
+          '  \u00B7  \uB79C\uD06C ' + userProfile.rank;
+        resultEl.textContent = '\u2705 ' + label + ' \uC644\uB8CC';
+        resultEl.style.color = '#6ab87c';
+      } catch(e) {
+        resultEl.textContent = '\u274C \uC2E4\uD328: ' + e.message;
+        resultEl.style.color = '#e87070';
+        console.error('\uAD00\uB9AC\uC790 \uCD08\uAE30\uD654 \uC2E4\uD328:', e);
+      }
+    }
+
+    document.getElementById('adminResetCurrency').onclick = () =>
+      doReset({ currency: 0 }, '\uC7AC\uD654 \uCD08\uAE30\uD654');
+
+    document.getElementById('adminResetStats').onclick = () =>
+      doReset({
+        totalWins: 0, totalLosses: 0, totalGames: 0, rank: 1000,
+      }, '\uC804\uC801 \uCD08\uAE30\uD654');
+
+    document.getElementById('adminResetAll').onclick = () =>
+      doReset({
+        currency: 0, totalWins: 0, totalLosses: 0, totalGames: 0,
+        rank: 1000, ownedItems: [], unlockedCards: [],
+        equippedSleeve: 'default', equippedBoard: 'default',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      }, '\uC804\uCCB4 \uCD08\uAE30\uD654');
+
+    document.getElementById('adminAddCurrency').onclick = () =>
+      doReset({
+        currency: firebase.firestore.FieldValue.increment(1000),
+      }, '\uC7AC\uD654 +1000 \uCD94\uAC00');
+
+    document.getElementById('adminCloseBtn').onclick = () => overlay.remove();
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectBtn);
+  } else {
+    injectBtn();
+  }
+})();
+// ─────────────────────────────────────────────
+// ⚠️  END OF ADMIN CHEAT PANEL
+// ─────────────────────────────────────────────
 </script>
+
 </body>
 </html>
