@@ -1653,11 +1653,22 @@ function resolveSagePenguin2() {
 }
 // 수문장 펭귄 ①
 function activateSummonerPenguin1(fieldIdx) {
-  activateIgnitionEffect({ type: 'ignitionSummonerPenguin1', label: '수문장 펭귄 ①', fieldIdx });
+  const source = G.myField[fieldIdx];
+  if (!source || source.id !== '수문장 펭귄') { notify('수문장 펭귄이 필드에 없습니다.'); return; }
+  activateIgnitionEffect({
+    type: 'ignitionSummonerPenguin1',
+    label: '수문장 펭귄 ①',
+    sourceInstanceId: ensureCardInstanceId(source)
+  });
 }
-function resolveSummonerPenguin1(fieldIdx) {
+function resolveSummonerPenguin1(sourceInstanceId) {
   if (!isPenguinVillageRevealed()) { notify('펭귄 마을이 공개 상태가 아닙니다.'); return; }
   if (!canUseEffect('수문장 펭귄', 1)) { notify('이미 사용했습니다.'); return; }
+  const fieldIdx = findCardIndexByInstanceId(G.myField, sourceInstanceId);
+  if (fieldIdx < 0 || G.myField[fieldIdx]?.id !== '수문장 펭귄') {
+    notify('수문장 펭귄 ①: 발동한 카드가 유효하지 않습니다.');
+    return;
+  }
   markEffectUsed('수문장 펭귄', 1);
   G.myField[fieldIdx].atk += 1; log(`수문장 펭귄 ATK +1 → ${G.myField[fieldIdx].atk}`, 'mine');
   openCardPicker(G.myHand, '수문장 펭귄 ①: 자신 패 1장 버리기', 1, (sel) => {
@@ -1692,11 +1703,22 @@ function checkPenguinVillageReplace(discardCount) {
 }
 // 펭귄!돌격! ①
 function activatePenguinCharge1(handIdx) {
-  activateIgnitionEffect({ type: 'ignitionPenguinCharge1', label: '펭귄!돌격! ①', handIdx });
+  const source = G.myHand[handIdx];
+  if (!source || source.id !== '펭귄!돌격!') { notify('패의 펭귄!돌격! 카드가 필요합니다.'); return; }
+  activateIgnitionEffect({
+    type: 'ignitionPenguinCharge1',
+    label: '펭귄!돌격! ①',
+    sourceInstanceId: ensureCardInstanceId(source)
+  });
 }
-function resolvePenguinCharge1(handIdx) {
+function resolvePenguinCharge1(sourceInstanceId) {
   const targets = findAllInDeck(c => isPenguinMonster(c.id));
   if (targets.length === 0) { notify('덱에 펭귄 몬스터가 없습니다.'); return; }
+  const handIdx = findCardIndexByInstanceId(G.myHand, sourceInstanceId);
+  if (handIdx < 0 || G.myHand[handIdx]?.id !== '펭귄!돌격!') {
+    notify('펭귄!돌격! ①: 발동한 카드가 유효하지 않습니다.');
+    return;
+  }
   G.myHand.splice(handIdx, 1); G.myGrave.push({ id: '펭귄!돌격!', name: '펭귄!돌격!' });
   openCardPicker(targets, '펭귄!돌격! ①: 덱에서 펭귄 몬스터 소환', 1, (sel) => { if (sel.length > 0) summonFromDeck(targets[sel[0]].id); renderAll(); });
 }
@@ -1717,9 +1739,20 @@ function resolvePenguinCharge2() {
 }
 // 펭귄의 영광 ①
 function activatePenguinGlory1(handIdx) {
-  activateIgnitionEffect({ type: 'ignitionPenguinGlory1', label: '펭귄의 영광 ①', handIdx });
+  const source = G.myHand[handIdx];
+  if (!source || source.id !== '펭귄의 영광') { notify('패의 펭귄의 영광 카드가 필요합니다.'); return; }
+  activateIgnitionEffect({
+    type: 'ignitionPenguinGlory1',
+    label: '펭귄의 영광 ①',
+    sourceInstanceId: ensureCardInstanceId(source)
+  });
 }
-function resolvePenguinGlory1(handIdx) {
+function resolvePenguinGlory1(sourceInstanceId) {
+  const handIdx = findCardIndexByInstanceId(G.myHand, sourceInstanceId);
+  if (handIdx < 0 || G.myHand[handIdx]?.id !== '펭귄의 영광') {
+    notify('펭귄의 영광 ①: 발동한 카드가 유효하지 않습니다.');
+    return;
+  }
   const heroInHand = G.myHand.findIndex(c => c.id === '펭귄 용사');
   const heroInKey = G.myKeyDeck ? G.myKeyDeck.findIndex(c => c.id === '펭귄 용사') : -1;
   G.myHand.splice(handIdx, 1); G.myGrave.push({ id: '펭귄의 영광', name: '펭귄의 영광' });
@@ -2413,6 +2446,20 @@ function activateIgnitionEffect(effect) {
   beginChain(effect);
 }
 
+function ensureCardInstanceId(card) {
+  if (!card) return null;
+  if (!card._iid) {
+    ensureCardInstanceId._seq = (ensureCardInstanceId._seq || 0) + 1;
+    card._iid = `cid_${Date.now()}_${ensureCardInstanceId._seq}`;
+  }
+  return card._iid;
+}
+
+function findCardIndexByInstanceId(zone, instanceId) {
+  if (!Array.isArray(zone) || !instanceId) return -1;
+  return zone.findIndex(c => c && c._iid === instanceId);
+}
+
 function resolveChain(chainState) {
   const links = [...(chainState.links || [])];
   const resolvedAt = Date.now();
@@ -2456,13 +2503,13 @@ function executeChainLocally(links) {
     } else if (link.type === 'ignitionSagePenguin2') {
       resolveSagePenguin2();
     } else if (link.type === 'ignitionSummonerPenguin1') {
-      resolveSummonerPenguin1(link.fieldIdx);
+      resolveSummonerPenguin1(link.sourceInstanceId);
     } else if (link.type === 'ignitionPenguinCharge1') {
-      resolvePenguinCharge1(link.handIdx);
+      resolvePenguinCharge1(link.sourceInstanceId);
     } else if (link.type === 'ignitionPenguinCharge2') {
       resolvePenguinCharge2();
     } else if (link.type === 'ignitionPenguinGlory1') {
-      resolvePenguinGlory1(link.handIdx);
+      resolvePenguinGlory1(link.sourceInstanceId);
     } else if (link.type === 'ignitionPenguinGlory2') {
       resolvePenguinGlory2();
     } else if (link.type === 'ignitionPenguinForever1') {
