@@ -1581,6 +1581,9 @@ function triggerKkomaPenguin(from) {
 // 펭귄 부부 ①
 function triggerPenguinBubu(from) {
   if (from !== 'deck' || !canUseEffect('펭귄 부부', 1)) return;
+  enqueueTriggeredEffect({ type: 'triggerPenguinBubu1', label: '펭귄 부부 ①' });
+}
+function resolvePenguinBubu1() {
   markEffectUsed('펭귄 부부', 1);
   const targets = findAllInDeck(c => isPenguinCard(c.id));
   if (targets.length === 0) return;
@@ -1699,7 +1702,11 @@ function activatePenguinGlory2() {
 }
 // 펭귄 용사 ① 트리거
 function triggerPenguinHero(from) {
-  if (!canUseEffect('펭귄 용사', 1)) return; markEffectUsed('펭귄 용사', 1);
+  if (!canUseEffect('펭귄 용사', 1)) return;
+  enqueueTriggeredEffect({ type: 'triggerPenguinHero1', label: '펭귄 용사 ①' });
+}
+function resolvePenguinHero1() {
+  markEffectUsed('펭귄 용사', 1);
   const targets = findAllInDeck(c => isPenguinCard(c.id));
   openCardPicker(targets, '펭귄 용사 ①: 덱에서 펭귄 카드 서치', 1, (sel) => {
     if (sel.length > 0) searchToHand(targets[sel[0]].id);
@@ -1717,6 +1724,9 @@ function triggerPenguinHero(from) {
 }
 // 펭귄 용사 ②
 function activatePenguinHero2() {
+  activateQuickEffect({ type: 'quickPenguinHero2', label: '펭귄 용사 ②' });
+}
+function resolvePenguinHero2() {
   if (!canUseEffect('펭귄 용사', 2)) { notify('이미 사용했습니다.'); return; }
   markEffectUsed('펭귄 용사', 2);
   const fIdx = G.myField.findIndex(c => c.id === '펭귄 용사');
@@ -1735,12 +1745,21 @@ function activatePenguinHero2() {
 }
 // 펭귄 용사 ③
 function autoTriggerHeroGrave() {
-  notify('펭귄 용사 ③ 발동!'); summonFromGrave('펭귄 용사');
-  G.myField.forEach(c => { if (isPenguinMonster(c.id)) { c.atk += 1; } });
-  G.penguinHeroAtkBuff = true; sendGameState(); renderAll();
+  enqueueTriggeredEffect({ type: 'triggerPenguinHero3', label: '펭귄 용사 ③' });
+}
+function resolvePenguinHero3() {
+  notify('펭귄 용사 ③ 발동!');
+  summonFromGrave('펭귄 용사');
+  G.myField.forEach(c => { if (isPenguinMonster(c.id)) c.atk += 1; });
+  G.penguinHeroAtkBuff = true;
+  sendGameState();
+  renderAll();
 }
 // 펭귄의 일격 ①
 function activatePenguinStrike1() {
+  activateQuickEffect({ type: 'quickPenguinStrike1', label: '펭귄의 일격 ①' });
+}
+function resolvePenguinStrike1() {
   if (!canUseEffect('펭귄의 일격', 1)) { notify('이미 사용했습니다.'); return; }
   if (!G.myField.some(c => isPenguinMonster(c.id))) { notify('필드에 펭귄 몬스터가 없습니다.'); return; }
   openCardPicker(G.myHand, '펭귄의 일격 ①: 패 1장 버리고 효과 무효', 1, (sel) => {
@@ -1772,6 +1791,9 @@ function activatePenguinForever1(handIdx) {
 }
 // 펭귄이여 영원하라 ②
 function activatePenguinForever2() {
+  activateQuickEffect({ type: 'quickPenguinForever2', label: '펭귄이여 영원하라 ②' });
+}
+function resolvePenguinForever2() {
   const gIdx = G.myGrave.findIndex(c => c.id === '펭귄이여 영원하라');
   if (gIdx < 0) { notify('묘지에 없습니다.'); return; }
   const hp = G.myHand.filter(c => isPenguinMonster(c.id));
@@ -1784,12 +1806,19 @@ function activatePenguinForever2() {
 }
 // 펭귄의 전설 ①
 function triggerPenguinLegend(from) {
-  if (!canUseEffect('펭귄의 전설', 1)) return; markEffectUsed('펭귄의 전설', 1);
+  if (!canUseEffect('펭귄의 전설', 1)) return;
+  enqueueTriggeredEffect({ type: 'triggerPenguinLegend1', label: '펭귄의 전설 ①' });
+}
+function resolvePenguinLegend1() {
+  markEffectUsed('펭귄의 전설', 1);
   const gp = G.myGrave.filter(c => c.id === '꼬마 펭귄');
   for (let i = 0; i < Math.min(2, gp.length); i++) summonFromGrave('꼬마 펭귄');
 }
 // 펭귄의 전설 ②
 function activatePenguinLegend2() {
+  activateQuickEffect({ type: 'quickPenguinLegend2', label: '펭귄의 전설 ②' });
+}
+function resolvePenguinLegend2() {
   if (!canUseEffect('펭귄의 전설', 2)) { notify('이미 사용했습니다.'); return; }
   markEffectUsed('펭귄의 전설', 2);
   const fIdx = G.myField.findIndex(c => c.id === '펭귄의 전설');
@@ -1823,6 +1852,9 @@ function activatePenguinWizard1(handIdx) {
 // 펭귄 마법사 ②
 function triggerPenguinWizard(from) {
   if (!canUseEffect('펭귄 마법사', 2, 2) || G.opField.length === 0) return;
+  enqueueTriggeredEffect({ type: 'triggerPenguinWizard2', label: '펭귄 마법사 ②' });
+}
+function resolvePenguinWizard2() {
   markEffectUsed('펭귄 마법사', 2);
   const maxD = Math.min(3, G.myHand.length); if (maxD === 0) return;
   openCardPicker(G.myHand, `펭귄 마법사 ②: 패 최대 3장 버리고 상대 몬스터 제외`, maxD, (sel) => {
@@ -1885,6 +1917,11 @@ function activateGraveEffect(cardId) {
   }
 }
 
+// 레거시 호출부 호환 (상세 모달 라우터에서 실제 처리)
+function activatePenguinEffect() {
+  return false;
+}
+
 // ─────────────────────────────────────────────
 // Firebase Setup
 // ─────────────────────────────────────────────
@@ -1945,6 +1982,7 @@ let pickerSelected = [];
 let pickerCurrentCards = [];
 let activeChainState = null; // Firebase chain state mirror
 let lastResolvedChainAt = 0;
+let pendingTriggerEffects = [];
 
 // ─────────────────────────────────────────────
 // UTILS
@@ -2178,6 +2216,7 @@ function beginChain(effect) {
     passCount: 0,
     links: [{ ...effect, by: myRole }],
   };
+  activeChainState = chainState;
   roomRef.child('chainState').set(chainState);
   log(`체인 1: ${effect.label} 발동`, 'mine');
 }
@@ -2219,8 +2258,43 @@ function addChainLink(effect) {
   next.links = [...(next.links || []), { ...effect, by: myRole }];
   next.priority = myRole === 'host' ? 'guest' : 'host';
   next.passCount = 0;
+  activeChainState = next;
   roomRef.child('chainState').set(next);
   log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
+}
+
+function enqueueTriggeredEffect(effect) {
+  pendingTriggerEffects.push(effect);
+  setTimeout(flushTriggeredEffects, 0);
+}
+
+function flushTriggeredEffects() {
+  if (pendingTriggerEffects.length === 0) return;
+  if (activeChainState && activeChainState.active) return;
+
+  const queued = [...pendingTriggerEffects];
+  pendingTriggerEffects = [];
+
+  if (!roomRef) {
+    const links = queued.map(e => ({ ...e, by: myRole }));
+    executeChainLocally(links.reverse());
+    return;
+  }
+
+  beginChain(queued[0]);
+  queued.slice(1).forEach(e => addChainLink(e));
+}
+
+function activateQuickEffect(effect) {
+  if (activeChainState && activeChainState.active) {
+    if (activeChainState.priority !== myRole) {
+      notify('현재 체인 우선권이 없습니다.');
+      return;
+    }
+    addChainLink(effect);
+    return;
+  }
+  beginChain(effect);
 }
 
 function resolveChain(chainState) {
@@ -2240,6 +2314,24 @@ function executeChainLocally(links) {
       resolveKeyFetch(link.cardId);
     } else if (link.type === 'penguinVillage1') {
       resolvePenguinVillage1();
+    } else if (link.type === 'triggerPenguinBubu1') {
+      resolvePenguinBubu1();
+    } else if (link.type === 'triggerPenguinHero1') {
+      resolvePenguinHero1();
+    } else if (link.type === 'triggerPenguinLegend1') {
+      resolvePenguinLegend1();
+    } else if (link.type === 'triggerPenguinWizard2') {
+      resolvePenguinWizard2();
+    } else if (link.type === 'triggerPenguinHero3') {
+      resolvePenguinHero3();
+    } else if (link.type === 'quickPenguinHero2') {
+      resolvePenguinHero2();
+    } else if (link.type === 'quickPenguinLegend2') {
+      resolvePenguinLegend2();
+    } else if (link.type === 'quickPenguinStrike1') {
+      resolvePenguinStrike1();
+    } else if (link.type === 'quickPenguinForever2') {
+      resolvePenguinForever2();
     }
   });
   sendGameState();
