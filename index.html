@@ -1865,6 +1865,8 @@ function resolvePenguinHero2() {
 }
 // 펭귄 용사 ③
 function autoTriggerHeroGrave() {
+  // ★ 임의효과: 발동 여부 물어보기
+  if (!confirm('펭귄 용사 ③\n묘지에서 다시 소환하고 펭귄 공격력을 1씩 올립니까?')) return;
   enqueueTriggeredEffect({ type: 'triggerPenguinHero3', label: '펭귄 용사 ③' });
 }
 function resolvePenguinHero3() {
@@ -1882,8 +1884,7 @@ function activatePenguinStrike1() {
 function resolvePenguinStrike1() {
   if (!canUseEffect('펭귄의 일격', 1)) { notify('이미 사용했습니다.'); return; }
   if (!G.myField.some(c => isPenguinMonster(c.id))) { notify('필드에 펭귄 몬스터가 없습니다.'); return; }
-  openCardPicker(G.myHand, '펭귄의 일격 ①: 패 1장 버리고 효과 무효', 1, (sel) => {
-    if (sel.length > 0) { G.myGrave.push(G.myHand.splice(sel[0], 1)[0]); }
+  _forcedDiscardOne('펭귄의 일격 ①: 패 1장 버리기 (코스트, 필수)', () => {
     markEffectUsed('펭귄의 일격', 1);
     const sIdx = G.myHand.findIndex(c => c.id === '펭귄의 일격');
     if (sIdx >= 0) G.myGrave.push(G.myHand.splice(sIdx, 1)[0]);
@@ -2118,7 +2119,7 @@ let activeChainState = null; // Firebase chain state mirror
 let lastResolvedChainAt = 0;
 let pendingTriggerEffects = [];
 let usedKeyFetchInChain = {};
-let attackedMonstersThisTurn = new Set();
+let attackedMonstersThisTurn = new Set(); // 공격한 몬스터 id 저장
 let gameClock = { host: 500, guest: 500, runningFor: null, lastUpdated: Date.now() };
 let clockTicker = null;
 let timeoutHandled = false;
@@ -2948,10 +2949,9 @@ function listenOpponentState() {
     if (!data) return;
     // 상대 패: 공개/비공개 상태 정확히 반영
     G.opHand = (data.hand || []).map(c => ({
-      id: c.isPublic ? c.id : 'unknown',
-      name: c.isPublic ? c.name : '?',
+      id: c.id,          // id는 항상 보존 (처리에 필요)
+      name: c.isPublic ? c.name : '?',  // 이름만 숨김
       isPublic: c.isPublic || false,
-      _hiddenName: c.name, // 실제 이름 (비공개지만 참조용)
     }));
     G.opField = (data.field || []);
     G.opGrave = (data.grave || []);
@@ -3029,10 +3029,11 @@ function listenClockState() {
 // ─────────────────────────────────────────────
 function doDrawPhase() {
   if (!isMyTurn || currentPhase !== 'draw') return;
-  drawOne(); // penguin_engine.js의 drawOne 사용
+  drawOne();
   advancePhase('deploy');
   log('드로우 단계 완료', 'mine');
   sendAction({ type: 'phaseChange', phase: 'deploy' });
+  if (roomRef) roomRef.child('roomPhase').set({ activePlayer: myRole, phase: 'deploy' });
 }
 
 function drawCards(n) {
@@ -3059,11 +3060,13 @@ function endDeploy() {
     advancePhase('end');
     log('선공 1턴은 공격 단계를 건너뜁니다.', 'system');
     sendAction({ type: 'phaseEnd', phase: 'deploy_skip_attack' });
+    if (roomRef) roomRef.child('roomPhase').set({ activePlayer: myRole, phase: 'end' });
     return;
   }
   advancePhase('attack');
   log(`전개 단계 종료`, 'mine');
   sendAction({ type: 'phaseEnd', phase: 'deploy' });
+  if (roomRef) roomRef.child('roomPhase').set({ activePlayer: myRole, phase: 'attack' });
 }
 
 function endAttack() {
@@ -3071,6 +3074,7 @@ function endAttack() {
   advancePhase('end');
   log(`공격 단계 종료`, 'mine');
   sendAction({ type: 'phaseEnd', phase: 'attack' });
+  if (roomRef) roomRef.child('roomPhase').set({ activePlayer: myRole, phase: 'end' });
 }
 
 function endTurn() {
@@ -3131,7 +3135,7 @@ function executeCombat(atkIdx, defIdx) {
   const attacker = G.myField[atkIdx];
   const defender = G.opField[defIdx];
   if (!attacker || !defender) return;
-  if (attackedMonstersThisTurn.has(attacker)) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
+  if (attackedMonstersThisTurn.has(attacker.id)) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
 
   const diff = attacker.atk - defender.atk;
   log(`전투: ${attacker.name}(${attacker.atk}) vs ${defender.name}(${defender.atk})`, 'mine');
@@ -3149,6 +3153,8 @@ function executeCombat(atkIdx, defIdx) {
     G.myField.splice(atkIdx, 1);
     G.myGrave.push(attacker);
     log(`${attacker.name} 묘지. 내 패 ${Math.abs(diff)}장 버리기`, 'mine');
+    // 묘지 트리거 (펭귄 용사 ③ 등)
+    onSentToGrave(attacker.id);
     // 펭귄 마을 ② 체크 먼저
     const replaced = checkPenguinVillageReplace(Math.abs(diff));
     if (!replaced) forceDiscard(Math.abs(diff), true); // 상대가 고름
@@ -3161,10 +3167,11 @@ function executeCombat(atkIdx, defIdx) {
       G.myGrave.push(attacker);
       G.opGrave.push(defender);
       log(`공격력 동일 — 양쪽 묘지`, 'system');
+      onSentToGrave(attacker.id);
     }
   }
   sendAction({ type: 'combat', atkIdx, defIdx, atkCard: attacker, defCard: defender });
-  attackedMonstersThisTurn.add(attacker);
+  attackedMonstersThisTurn.add(attacker.id);
   sendGameState(); renderAll();
 }
 
@@ -3172,12 +3179,12 @@ function directAttack(atkIdx) {
   if (!isMyTurn || currentPhase !== 'attack') return;
   const attacker = G.myField[atkIdx];
   if (!attacker) return;
-  if (attackedMonstersThisTurn.has(attacker)) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
+  if (attackedMonstersThisTurn.has(attacker.id)) { notify('이 몬스터는 이번 턴에 이미 공격했습니다.'); return; }
   if (G.opField.length > 0) { notify('상대 필드에 몬스터가 있습니다. 직접 공격 불가.'); return; }
   log(`직접 공격: ${attacker.name}(${attacker.atk}) — 상대는 패를 ${attacker.atk}장 버려야 합니다.`, 'mine');
   notify(`직접 공격! 상대 패 ${attacker.atk}장 손실`);
   sendAction({ type: 'directAttack', atkIdx, card: attacker });
-  attackedMonstersThisTurn.add(attacker);
+  attackedMonstersThisTurn.add(attacker.id);
 }
 
 function forceDiscard(n, opponentPicks = false) {
@@ -3185,23 +3192,30 @@ function forceDiscard(n, opponentPicks = false) {
   const actualN = Math.min(n, G.myHand.length);
 
   if (opponentPicks) {
-    // 상대가 내 패를 고름 — 공개패는 상대가 고르고 일반패는 무작위
+    // 상대가 내 패를 고름
+    // 공개패: 상대가 볼 수 있으므로 상대가 고른 것으로 처리 (가장 위협적인 것 우선)
+    // 비공개패: 무작위
     const publicCards = G.myHand.filter(c => c.isPublic);
-    const privateCards = G.myHand.filter(c => !c.isPublic);
-    let discarded = 0;
-
-    // 공개패 먼저 버리기 (상대가 고른 것처럼 시뮬레이션)
+    let remaining = actualN;
     const toDiscard = [];
-    publicCards.forEach(c => { if (discarded < actualN) { toDiscard.push(c); discarded++; } });
-    // 나머지는 무작위
-    while (discarded < actualN && privateCards.length > 0) {
+
+    // 공개패 먼저 (상대 시점에서 가장 유리한 선택)
+    publicCards.slice(0, remaining).forEach(c => { toDiscard.push(c); remaining--; });
+    // 비공개패 무작위
+    const privateCards = G.myHand.filter(c => !c.isPublic);
+    while (remaining > 0 && privateCards.length > 0) {
       const idx = Math.floor(Math.random() * privateCards.length);
       toDiscard.push(privateCards.splice(idx, 1)[0]);
-      discarded++;
+      remaining--;
     }
+
+    const names = toDiscard.map(c => c.name).join(', ');
+    log(`상대가 선택: ${names}`, 'mine');
+    notify(`상대 효과: ${names} 버림`);
+
     toDiscard.forEach(c => {
       const hi = G.myHand.findIndex(h => h.id === c.id && h.isPublic === c.isPublic);
-      if (hi >= 0) { G.myGrave.push(G.myHand.splice(hi, 1)[0]); log(`패 버림(상대 선택): ${c.name}`, 'mine'); }
+      if (hi >= 0) G.myGrave.push(G.myHand.splice(hi, 1)[0]);
     });
     sendGameState(); renderAll(); checkWinCondition();
   } else {
@@ -3585,11 +3599,9 @@ function sendAction(action) {
 function handleOpponentAction(action) {
   switch (action.type) {
     case 'draw':
-      // Opponent drew cards
-      for (let i = 0; i < (action.count || 1); i++) {
-        G.opHand.push({ id: action.cardId || 'unknown', name: '?', isPublic: false });
-      }
-      renderOpHand(); renderCounts();
+      // listenOpponentState가 실시간으로 처리 — 여기서 중복 처리 안 함
+      // log만 남김
+      log('상대 드로우', 'opponent');
       break;
     case 'summon':
       const sc = CARDS[action.cardId] || {};
@@ -3661,10 +3673,9 @@ function handleOpponentAction(action) {
       isMyTurn = true;
       attackedMonstersThisTurn.clear();
       advancePhase('draw');
-      log(`상대 턴 종료 — 내 턴`, 'system');
-      notify('내 턴입니다!');
+      log(`상대 턴 종료 — 내 턴 (드로우 단계)`, 'system');
+      notify('내 턴! 드로우 버튼을 눌러 드로우하세요.');
       renderPhase();
-      // Auto-draw
       break;
     case 'phaseEnd':
       // Opponent ended a phase
