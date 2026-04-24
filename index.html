@@ -948,6 +948,7 @@
         <span class="hand-count" id="opHandCount">0</span>
         <span class="spacer"></span>
         <div class="graveyard-info">
+          <span class="zone-info">키덱 <span id="opKeyDeckCount">0</span></span>
           <span class="zone-info" onclick="showZone('opGrave')">묘지 <span id="opGraveCount">0</span></span>
           <span class="zone-info" onclick="showZone('opExile')">제외 <span id="opExileCount">0</span></span>
         </div>
@@ -969,6 +970,8 @@
         <button class="btn-sm" id="btnEndDeploy" onclick="endDeploy()">전개 종료</button>
         <button class="btn-sm" id="btnEndAttack" onclick="endAttack()">공격 종료</button>
         <button class="btn-sm" id="btnEndTurn" onclick="endTurn()">턴 종료</button>
+        <button class="btn-sm hidden" id="btnChainRespond" onclick="openChainResponse()">체인 응답</button>
+        <button class="btn-sm hidden" id="btnChainPass" onclick="passChainPriority()">체인 패스</button>
         <button class="btn-sm" onclick="concede()" style="color:var(--danger);border-color:var(--danger)">항복</button>
       </div>
       <div class="field-zone">
@@ -987,6 +990,7 @@
         <span class="hand-count" id="myHandCount">0</span>
         <span class="spacer"></span>
         <div class="graveyard-info">
+          <span class="zone-info" onclick="showZone('myKeyDeck')">키덱 <span id="myKeyDeckCount">0</span></span>
           <span class="zone-info" onclick="showZone('myGrave')">묘지 <span id="myGraveCount">0</span></span>
           <span class="zone-info" onclick="showZone('myExile')">제외 <span id="myExileCount">0</span></span>
         </div>
@@ -1564,8 +1568,8 @@ function resetTurnEffects() {
 // 펭귄 마을 ①
 function activatePenguinVillage1(handIdx) {
   if (!canUseEffect('펭귄 마을', 1)) { notify('이미 사용했습니다.'); return; }
-  G.myHand[handIdx].isPublic = true; markEffectUsed('펭귄 마을', 1);
-  log('펭귄 마을 ①: 공개!', 'mine'); notify('펭귄 마을 공개!'); sendGameState(); renderAll();
+  beginChain({ type: 'penguinVillage1', label: '펭귄 마을 ①' });
+  notify('체인 1: 펭귄 마을 ① 발동. 상대 응답을 기다립니다.');
 }
 // 꼬마 펭귄 ②
 function triggerKkomaPenguin(from) {
@@ -1939,6 +1943,8 @@ let pickerQueue = [];   // {cards, title, maxPick, callback} 대기열
 let pickerRunning = false;
 let pickerSelected = [];
 let pickerCurrentCards = [];
+let activeChainState = null; // Firebase chain state mirror
+let lastResolvedChainAt = 0;
 
 // ─────────────────────────────────────────────
 // UTILS
@@ -2118,6 +2124,8 @@ function renderOpField() {
 function renderCounts() {
   document.getElementById('myHandCount').textContent = G.myHand.length;
   document.getElementById('opHandCount').textContent = G.opHand.length;
+  document.getElementById('myKeyDeckCount').textContent = G.myKeyDeck.length;
+  document.getElementById('opKeyDeckCount').textContent = G.opKeyDeck.length;
   document.getElementById('myGraveCount').textContent = G.myGrave.length;
   document.getElementById('opGraveCount').textContent = G.opGrave.length;
   document.getElementById('myExileCount').textContent = G.myExile.length;
@@ -2146,6 +2154,112 @@ function renderPhase() {
   const turnLabel = document.getElementById('turnLabel');
   turnLabel.textContent = mine ? '내 턴' : '상대 턴';
   turnLabel.className = 'turn-label ' + (mine ? 'turn-mine' : 'turn-opponent');
+  renderChainActions();
+}
+
+function renderChainActions() {
+  const btnRespond = document.getElementById('btnChainRespond');
+  const btnPass = document.getElementById('btnChainPass');
+  if (!btnRespond || !btnPass) return;
+  const myPriority = activeChainState && activeChainState.active && activeChainState.priority === myRole;
+  btnRespond.classList.toggle('hidden', !myPriority);
+  btnPass.classList.toggle('hidden', !myPriority);
+}
+
+function beginChain(effect) {
+  if (!roomRef) {
+    executeChainLocally([{ ...effect, by: myRole }]);
+    return;
+  }
+  const chainState = {
+    active: true,
+    startedBy: myRole,
+    priority: myRole === 'host' ? 'guest' : 'host',
+    passCount: 0,
+    links: [{ ...effect, by: myRole }],
+  };
+  roomRef.child('chainState').set(chainState);
+  log(`체인 1: ${effect.label} 발동`, 'mine');
+}
+
+function openChainResponse() {
+  if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
+  const options = G.myKeyDeck.map(c => ({ id: c.id, name: c.name }));
+  if (options.length === 0) {
+    notify('키 카드 덱에 발동 가능한 카드가 없습니다.');
+    return;
+  }
+  openCardPicker(options, '체인 응답: 키 카드 가져오기 (유발 즉시)', 1, (sel) => {
+    if (sel.length === 0) return;
+    const picked = options[sel[0]];
+    addChainLink({
+      type: 'keyFetch',
+      label: `키 카드 가져오기 (${picked.name})`,
+      cardId: picked.id,
+    });
+  });
+}
+
+function passChainPriority() {
+  if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole || !roomRef) return;
+  const next = { ...activeChainState };
+  next.passCount = (next.passCount || 0) + 1;
+  next.priority = myRole === 'host' ? 'guest' : 'host';
+  if (next.passCount >= 2) {
+    resolveChain(next);
+    return;
+  }
+  roomRef.child('chainState').set(next);
+  log('체인 패스', 'system');
+}
+
+function addChainLink(effect) {
+  if (!activeChainState || !activeChainState.active || !roomRef) return;
+  const next = { ...activeChainState };
+  next.links = [...(next.links || []), { ...effect, by: myRole }];
+  next.priority = myRole === 'host' ? 'guest' : 'host';
+  next.passCount = 0;
+  roomRef.child('chainState').set(next);
+  log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
+}
+
+function resolveChain(chainState) {
+  const links = [...(chainState.links || [])];
+  const resolvedAt = Date.now();
+  if (roomRef) {
+    roomRef.child('chainState').set({ active: false, links: [], priority: null, passCount: 0, resolvedLinks: links, resolvedAt });
+  } else {
+    executeChainLocally(links.slice().reverse());
+  }
+}
+
+function executeChainLocally(links) {
+  links.forEach(link => {
+    if (link.by !== myRole) return;
+    if (link.type === 'keyFetch') {
+      resolveKeyFetch(link.cardId);
+    } else if (link.type === 'penguinVillage1') {
+      resolvePenguinVillage1();
+    }
+  });
+  sendGameState();
+  renderAll();
+}
+
+function resolveKeyFetch(cardId) {
+  const idx = G.myKeyDeck.findIndex(c => c.id === cardId);
+  if (idx < 0) return;
+  const c = G.myKeyDeck.splice(idx, 1)[0];
+  G.myHand.push({ id: c.id, name: c.name, isPublic: false });
+  log(`체인 처리: 키 카드 가져오기 → ${c.name}`, 'mine');
+}
+
+function resolvePenguinVillage1() {
+  const idx = G.myHand.findIndex(c => c.id === '펭귄 마을' && !c.isPublic);
+  if (idx < 0) return;
+  G.myHand[idx].isPublic = true;
+  markEffectUsed('펭귄 마을', 1);
+  log('체인 처리: 펭귄 마을 ① 공개', 'mine');
 }
 
 function renderFieldZones() {
@@ -2389,7 +2503,7 @@ function sendGameState() {
     grave: G.myGrave,
     exile: G.myExile,
     fieldCard: G.myFieldCard,
-    keyDeck: G.myKeyDeck,
+    keyDeckCount: G.myKeyDeck.length,
     deckCount: G.myDeck ? G.myDeck.length : 0,
   };
   const path = myRole === 'host' ? 'hostState' : 'guestState';
@@ -2408,9 +2522,29 @@ function listenOpponentState() {
     G.opGrave = data.grave || [];
     G.opExile = data.exile || [];
     G.opFieldCard = data.fieldCard || null;
-    G.opKeyDeck = data.keyDeck || [];
+    const opKeyDeckCount = data.keyDeckCount || 0;
+    G.opKeyDeck = Array.from({ length: opKeyDeckCount }, () => ({ id: 'unknown', name: '?' }));
     G.opDeckCount = data.deckCount || 0;
     renderAll();
+  });
+}
+
+function listenChainState() {
+  if (!roomRef) return;
+  roomRef.child('chainState').on('value', snap => {
+    const data = snap.val();
+    activeChainState = data;
+    renderChainActions();
+    if (!data) return;
+    if (!data.active && data.resolvedLinks && data.resolvedAt && data.resolvedAt !== lastResolvedChainAt) {
+      lastResolvedChainAt = data.resolvedAt;
+      executeChainLocally([...data.resolvedLinks].reverse());
+      return;
+    }
+    if (!data.active) return;
+    if (data.priority === myRole) {
+      notify(`체인 우선권: ${data.links?.length || 0}체인. 응답 또는 패스를 선택하세요.`);
+    }
   });
 }
 
@@ -2745,6 +2879,7 @@ function confirmPick() {
 // ─────────────────────────────────────────────
 function showZone(zoneKey) {
   const zoneMap = {
+    myKeyDeck: { label: '내 키 카드 덱', cards: G.myKeyDeck, canActivate: false },
     myGrave: { label: '내 묘지', cards: G.myGrave, canActivate: true },
     opGrave: { label: '상대 묘지', cards: G.opGrave, canActivate: false },
     myExile: { label: '내 제외 존', cards: G.myExile, canActivate: false },
@@ -2850,6 +2985,7 @@ function createRoom() {
       status: 'waiting',
       turn: 0,
       actions: null,
+      chainState: { active: false, links: [], priority: null, passCount: 0 },
     }).then(() => {
       document.getElementById('roomCodeText').textContent = roomCode;
       document.getElementById('roomCodeBlock').classList.remove('hidden');
@@ -3102,6 +3238,7 @@ function enterGame() {
   // Firebase 상태 동기화 시작
   sendGameState();
   listenOpponentState();
+  listenChainState();
 
   log('게임 시작!', 'system');
   renderAll();
@@ -3122,15 +3259,22 @@ function initDecks() {
   ];
   const keyDeck = ['펭귄 용사', '펭귄의 일격', '펭귄의 전설'];
 
-  G.myDeck = shuffle(penguinDeck.map(id => ({ id, name: CARDS[id]?.name || id })));
-  G.myKeyDeck = keyDeck.map(id => ({ id, name: CARDS[id]?.name || id }));
+  const baseDeck = window._confirmedDeck || penguinDeck;
+  const baseKeyDeck = window._confirmedKeyDeck || keyDeck;
+  G.myDeck = shuffle(baseDeck.map(id => ({ id, name: CARDS[id]?.name || id })));
+  G.myKeyDeck = baseKeyDeck.map(id => ({ id, name: CARDS[id]?.name || id }));
+  G.myHand = [];
+  G.myField = [];
+  G.myGrave = [];
+  G.myExile = [];
+  G.myFieldCard = null;
   G.myDeckCount = G.myDeck.length;
   G.opHand = [];
   G.opField = [];
   G.opGrave = [];
   G.opExile = [];
   G.opFieldCard = null;
-  G.opKeyDeck = keyDeck.map(id => ({ id, name: CARDS[id]?.name || id }));
+  G.opKeyDeck = Array.from({ length: baseKeyDeck.length }, () => ({ id: 'unknown', name: '?' }));
   G.opDeckCount = 40;
 }
 
@@ -3359,11 +3503,6 @@ function checkBothDecksReady() {
 }
 
 function enterGameWithDeck() {
-  // initDecks를 confirmDeck에서 설정한 덱으로 오버라이드
-  if (window._confirmedDeck) {
-    G.myDeck = shuffle(window._confirmedDeck.map(id => ({ id, name: CARDS[id]?.name || id })));
-    G.myKeyDeck = (window._confirmedKeyDeck || []).map(id => ({ id, name: CARDS[id]?.name || id }));
-  }
   enterGame();
 }
 
