@@ -1604,8 +1604,14 @@ function activatePenguinBubu1FromField(fieldIdx) {
   if (!mon || mon.id !== '펭귄 부부') return;
   if (mon.summonedFrom !== 'deck') { notify('덱에서 소환된 경우에만 발동할 수 있습니다.'); return; }
   if (!mon.bubuTriggerReady || !canUseEffect('펭귄 부부', 1)) { notify('발동 가능한 소환 유발 효과가 없습니다.'); return; }
+  if (activeChainState && activeChainState.active && activeChainState.priority !== myRole) {
+    notify('현재 체인 우선권이 없습니다.');
+    return;
+  }
   mon.bubuTriggerReady = false;
-  beginChain({ type: 'triggerPenguinBubu1', label: '펭귄 부부 ①' });
+  const effect = { type: 'triggerPenguinBubu1', label: '펭귄 부부 ①' };
+  if (activeChainState && activeChainState.active) addChainLink(effect);
+  else beginChain(effect);
 }
 // 펭귄 부부 ②
 function activatePenguinBubu2(handIdx) {
@@ -2271,6 +2277,7 @@ function beginChain(effect) {
     links: [{ ...effect, by: myRole }],
   };
   activeChainState = chainState;
+  if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
   roomRef.child('chainState').set(chainState);
   log(`체인 1: ${effect.label} 발동`, 'mine');
 }
