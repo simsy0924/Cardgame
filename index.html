@@ -2252,10 +2252,20 @@ function signInWithGoogle() {
 
 function _doGoogleSignIn() {
   const provider = new firebase.auth.GoogleAuthProvider();
-  // 모바일 호환성을 위해 리다이렉트 방식 사용
-  firebase.auth().signInWithRedirect(provider).catch(e => {
-    console.error('로그인 실패:', e);
-    notify('로그인 실패: ' + e.message);
+  // 팝업 시도 → 실패 시 리다이렉트 폴백
+  firebase.auth().signInWithPopup(provider).catch(e => {
+    console.error('팝업 실패, 리다이렉트로 전환:', e.code, e.message);
+    if (
+      e.code === 'auth/popup-blocked' ||
+      e.code === 'auth/popup-closed-by-user' ||
+      e.code === 'auth/cancelled-popup-request'
+    ) {
+      firebase.auth().signInWithRedirect(provider).catch(e2 => {
+        notify('로그인 실패: ' + e2.message);
+      });
+    } else {
+      notify('로그인 실패: ' + e.message);
+    }
   });
 }
 
@@ -4113,19 +4123,28 @@ let isJoiningRoom = false;
 
 function loadFirebase(callback) {
   if (firebaseLoaded) { callback(); return; }
+  // App + Database + Auth + Firestore 한 번에 순서대로 로드
   const scripts = [
     'https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js',
     'https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js',
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js',
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js',
   ];
 
   const loadScriptInOrder = (idx) => {
     if (idx >= scripts.length) {
       firebaseLoaded = true;
+      // 계정 시스템 초기화 (SDK 로드 완료 후 최초 1회)
+      if (!fsdb) initAuth();
       callback();
       return;
     }
+    const src = scripts[idx];
+    if (document.querySelector('script[src="' + src + '"]')) {
+      loadScriptInOrder(idx + 1); return;
+    }
     const s = document.createElement('script');
-    s.src = scripts[idx];
+    s.src = src;
     s.async = false;
     s.onload = () => loadScriptInOrder(idx + 1);
     s.onerror = () => notify('Firebase SDK 로드 실패. 네트워크 상태를 확인하세요.');
@@ -5636,41 +5655,11 @@ if (DEMO_MODE) {
   document.getElementById('createStatus').textContent = 'DEMO 모드 활성화';
 }
 
-// ★ 계정 시스템 초기화 — 필요한 SDK 3개를 순서대로 로드
-(function startAccountSystem() {
-  const SDKS = [
-    'https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js',
-    'https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js',
-    'https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js',
-  ];
-
-  function loadNext(idx, done) {
-    if (idx >= SDKS.length) { done(); return; }
-    const src = SDKS[idx];
-    if (document.querySelector('script[src="' + src + '"]')) {
-      loadNext(idx + 1, done); return;
-    }
-    const s = document.createElement('script');
-    s.src = src; s.async = false;
-    s.onload  = () => loadNext(idx + 1, done);
-    s.onerror = () => console.warn('Account SDK 로드 실패:', src);
-    document.head.appendChild(s);
-  }
-
-  function run() {
-    loadNext(0, () => {
-      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-      initAuth();
-    });
-  }
-
-  // 페이지가 완전히 로드된 후 실행 (다른 스크립트와 충돌 방지)
-  if (document.readyState === 'complete') {
-    setTimeout(run, 100);
-  } else {
-    window.addEventListener('load', () => setTimeout(run, 100));
-  }
-})();
+// ★ 계정 시스템은 loadFirebase() 안에서 SDK 로드 완료 후 자동 초기화됨
+// 페이지 로드 시 loadFirebase를 미리 호출해서 로그인 버튼 응답 속도 향상
+window.addEventListener('load', () => {
+  loadFirebase(() => {}); // 미리 로드만 해둠
+});
 
 // ─────────────────────────────────────────────
 // ⚠️  ADMIN CHEAT PANEL  (완성 후 이 블록 전체 삭제)
