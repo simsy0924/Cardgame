@@ -917,8 +917,21 @@
         </div>
         <div id="profileCurrency" class="profile-currency"></div>
       </div>
+      <!-- 닉네임 수정 -->
+      <div style="display:flex;gap:.4rem;margin-top:.5rem;">
+        <input id="nicknameInput" type="text" maxlength="12" placeholder="닉네임 변경"
+               style="flex:1;background:var(--surface2);border:1px solid var(--border);
+                      border-radius:6px;padding:.35rem .6rem;color:var(--text);
+                      font-size:.82rem;font-family:'Black Han Sans',sans-serif;">
+        <button onclick="saveNickname()"
+                style="padding:.35rem .7rem;border:1px solid var(--accent);background:transparent;
+                       color:var(--accent);border-radius:6px;cursor:pointer;
+                       font-family:'Black Han Sans',sans-serif;font-size:.78rem;white-space:nowrap;">
+          저장
+        </button>
+      </div>
       <button class="btn btn-secondary" onclick="signOutUser()"
-              style="margin-top:.5rem;font-size:.8rem;padding:.4rem">로그아웃</button>
+              style="margin-top:.4rem;font-size:.8rem;padding:.4rem">로그아웃</button>
     </div>
   </div>
 
@@ -2362,6 +2375,9 @@ function renderProfileUI(user) {
 
   const nameEl = document.getElementById('profileName');
   if (nameEl) nameEl.textContent = userProfile?.nickname || user.displayName || '';
+  // 닉네임 수정 입력란에 placeholder로 현재 닉네임 표시
+  const nickInput = document.getElementById('nicknameInput');
+  if (nickInput) nickInput.placeholder = userProfile?.nickname || user.displayName || '닉네임 변경';
 
   const statsEl = document.getElementById('profileStats');
   if (statsEl && userProfile) {
@@ -2380,6 +2396,33 @@ function renderLoggedOutUI() {
   const profileArea = document.getElementById('profileArea');
   if (loginArea)   loginArea.style.display   = '';
   if (profileArea) profileArea.style.display = 'none';
+}
+
+// ── 닉네임 저장 ──────────────────────────────────────────────
+async function saveNickname() {
+  if (!currentUser || !fsdb) { notify('로그인 필요'); return; }
+  const input = document.getElementById('nicknameInput');
+  const newNick = (input?.value || '').trim();
+  if (!newNick) { notify('닉네임을 입력하세요.'); return; }
+  if (newNick.length > 12) { notify('닉네임은 12자 이하로 입력하세요.'); return; }
+  try {
+    await fsdb.collection('users').doc(currentUser.uid).update({
+      nickname: newNick,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    userProfile = await getUserProfile(currentUser.uid);
+    // 프로필 UI 갱신
+    const nameEl = document.getElementById('profileName');
+    if (nameEl) nameEl.textContent = newNick;
+    // 닉네임 입력란도 동기화
+    const playerNameEl = document.getElementById('playerName');
+    if (playerNameEl) playerNameEl.value = newNick;
+    input.value = '';
+    notify('닉네임이 '' + newNick + ''으로 변경되었습니다.');
+  } catch(e) {
+    notify('닉네임 저장 실패: ' + e.message);
+    console.error(e);
+  }
 }
 
 // ─────────────────────────────────────────────
