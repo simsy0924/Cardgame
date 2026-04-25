@@ -912,7 +912,7 @@
 
   <div class="lobby-card">
     <h2>새 방 만들기</h2>
-    <button class="btn btn-primary" onclick="createRoom()">방 만들기</button>
+    <button id="createRoomBtn" class="btn btn-primary" onclick="createRoom()">방 만들기</button>
     <div id="createStatus" class="status-msg hidden"></div>
     <div id="roomCodeBlock" class="room-code-display hidden">
       <div class="code" id="roomCodeText">----</div>
@@ -924,7 +924,7 @@
   <div class="lobby-card">
     <h2>방 참가하기</h2>
     <input id="joinCode" type="text" placeholder="방 코드 4자리" maxlength="4" style="text-transform:uppercase;letter-spacing:.2em;font-size:1.2rem;text-align:center">
-    <button class="btn btn-secondary" onclick="joinRoom()">참가</button>
+    <button id="joinRoomBtn" class="btn btn-secondary" onclick="joinRoom()">참가</button>
     <div id="joinStatus" class="status-msg hidden"></div>
   </div>
 </div>
@@ -3861,10 +3861,19 @@ function initFirebase() {
 }
 
 function createRoom() {
+  const createBtn = document.getElementById('createRoomBtn');
+  if (createBtn && createBtn.disabled) return;
+  if (createBtn) createBtn.disabled = true;
+
   myName = document.getElementById('playerName').value.trim() || '플레이어1';
   const statusEl = document.getElementById('createStatus');
   statusEl.textContent = 'Firebase 연결 중...';
   statusEl.classList.remove('hidden');
+
+  function _resetCreateState(msg) {
+    if (createBtn) createBtn.disabled = false;
+    if (msg) statusEl.textContent = msg;
+  }
 
   if (DEMO_MODE) {
     roomCode = generateCode();
@@ -3876,11 +3885,16 @@ function createRoom() {
     return;
   }
 
+  const loadTimeout = setTimeout(() => {
+    _resetCreateState('연결 시간 초과. 다시 시도해주세요.');
+  }, 15000);
+
   loadFirebase(() => {
+    clearTimeout(loadTimeout);
     try {
       initFirebase();
     } catch (e) {
-      statusEl.textContent = e.message;
+      _resetCreateState('Firebase 오류: ' + e.message);
       return;
     }
     roomCode = generateCode();
@@ -3901,17 +3915,34 @@ function createRoom() {
       statusEl.textContent = '방 생성 완료! 상대를 기다리는 중...';
       document.getElementById('hdrRoomCode').textContent = roomCode;
       listenRoom();
-    }).catch(e => { statusEl.textContent = '오류: ' + e.message; });
+    }).catch(e => { _resetCreateState('오류: ' + e.message); });
   });
 }
 
 function joinRoom() {
   if (isJoiningRoom) return;
   isJoiningRoom = true;
+
+  // 버튼 비활성화 (중복 클릭 방지)
+  const joinBtn = document.getElementById('joinRoomBtn');
+  if (joinBtn) joinBtn.disabled = true;
+
+  function _resetJoinState(msg) {
+    isJoiningRoom = false;
+    if (joinBtn) joinBtn.disabled = false;
+    if (msg) { statusEl.textContent = msg; statusEl.classList.remove('hidden'); }
+  }
+
   myName = document.getElementById('playerName').value.trim() || '플레이어2';
   const code = document.getElementById('joinCode').value.trim().toUpperCase();
-  if (code.length !== 4) { isJoiningRoom = false; alert('4자리 코드를 입력하세요.'); return; }
   const statusEl = document.getElementById('joinStatus');
+
+  if (code.length !== 4) {
+    _resetJoinState('');
+    alert('4자리 코드를 입력하세요.');
+    return;
+  }
+
   statusEl.textContent = '연결 중...';
   statusEl.classList.remove('hidden');
 
@@ -3920,31 +3951,49 @@ function joinRoom() {
     myRole = 'guest';
     statusEl.textContent = 'DEMO 모드로 참가';
     enterGame();
-    isJoiningRoom = false;
+    _resetJoinState(null);
     return;
   }
 
+  // Firebase 로드 타임아웃 (15초)
+  const loadTimeout = setTimeout(() => {
+    _resetJoinState('연결 시간 초과. 다시 시도해주세요.');
+  }, 15000);
+
   loadFirebase(() => {
+    clearTimeout(loadTimeout);
     try {
       initFirebase();
     } catch (e) {
-      statusEl.textContent = e.message;
-      isJoiningRoom = false;
+      _resetJoinState('Firebase 오류: ' + e.message);
       return;
     }
+
     roomCode = code;
     myRole = 'guest';
     roomRef = db.ref(`rooms/${roomCode}`);
-    roomRef.child('guest').set(myName).then(() => {
-      statusEl.textContent = '참가 완료! 호스트의 시작을 기다리는 중...';
-      document.getElementById('hdrRoomCode').textContent = roomCode;
-      listenRoom();
-      roomRef.child('status').once('value').then(statusSnap => {
-        if (statusSnap.val() === 'playing' && document.getElementById('lobby').style.display !== 'none') {
+
+    // 방 존재 여부 먼저 확인
+    roomRef.child('host').once('value').then(hostSnap => {
+      if (!hostSnap.val()) {
+        _resetJoinState('존재하지 않는 방 코드입니다.');
+        roomRef = null;
+        return;
+      }
+      return roomRef.child('guest').set(myName).then(() => {
+        statusEl.textContent = '참가 완료! 호스트의 시작을 기다리는 중...';
+        document.getElementById('hdrRoomCode').textContent = roomCode;
+        listenRoom();
+        return roomRef.child('status').once('value');
+      }).then(statusSnap => {
+        if (statusSnap && statusSnap.val() === 'playing' && document.getElementById('lobby').style.display !== 'none') {
           goToDeckBuilder();
         }
-      }).finally(() => { isJoiningRoom = false; });
-    }).catch(e => { statusEl.textContent = '오류: ' + e.message; isJoiningRoom = false; });
+        _resetJoinState(null);
+      });
+    }).catch(e => {
+      _resetJoinState('오류: ' + e.message);
+    });
   });
 }
 
@@ -5556,16 +5605,16 @@ window.addEventListener('load', () => loadFirebase(() => {}));
     overlay.style.cssText = 'position:fixed;inset:0;background:#000c;display:flex;align-items:center;justify-content:center;z-index:9001;';
     overlay.innerHTML =
       '<div style="background:#13131e;border:1px solid #2a2a45;border-radius:12px;padding:1.5rem;width:min(400px,90vw);display:flex;flex-direction:column;gap:.8rem;">' +
-        '<div style="font-family:'Black Han Sans',sans-serif;color:#c8a96e;font-size:1rem;letter-spacing:.1em;border-bottom:1px solid #2a2a45;padding-bottom:.6rem;">⚠️ 관리자 데이터 초기화</div>' +
+        '<div style="font-family:Black Han Sans,sans-serif;color:#c8a96e;font-size:1rem;letter-spacing:.1em;border-bottom:1px solid #2a2a45;padding-bottom:.6rem;">⚠️ 관리자 데이터 초기화</div>' +
         '<div id="adminCurrentUser" style="font-size:.8rem;color:#c8a96e;background:#1c1c2e;border-radius:6px;padding:.5rem .8rem;"></div>' +
         '<div style="display:flex;flex-direction:column;gap:.5rem;">' +
-          '<button id="adminResetCurrency" style="width:100%;padding:.6rem;border:1px solid #4a8c5c;background:#1a2a1a;color:#6ab87c;border-radius:6px;cursor:pointer;font-family:'Black Han Sans',sans-serif;font-size:.85rem;">💰 재화만 초기화 (→ 0)</button>' +
-          '<button id="adminResetStats" style="width:100%;padding:.6rem;border:1px solid #3a5f8a;background:#0e1a28;color:#6090c0;border-radius:6px;cursor:pointer;font-family:'Black Han Sans',sans-serif;font-size:.85rem;">📊 전적만 초기화</button>' +
-          '<button id="adminResetAll" style="width:100%;padding:.6rem;border:1px solid #c84848;background:#2a1010;color:#e87070;border-radius:6px;cursor:pointer;font-family:'Black Han Sans',sans-serif;font-size:.85rem;font-weight:bold;">🗑️ 전체 초기화</button>' +
-          '<button id="adminAddCurrency" style="width:100%;padding:.6rem;border:1px solid #c8a96e;background:#1a1000;color:#c8a96e;border-radius:6px;cursor:pointer;font-family:'Black Han Sans',sans-serif;font-size:.85rem;">➕ 재화 1000 추가</button>' +
+          '<button id="adminResetCurrency" style="width:100%;padding:.6rem;border:1px solid #4a8c5c;background:#1a2a1a;color:#6ab87c;border-radius:6px;cursor:pointer;font-family:Black Han Sans,sans-serif;font-size:.85rem;">💰 재화만 초기화 (→ 0)</button>' +
+          '<button id="adminResetStats" style="width:100%;padding:.6rem;border:1px solid #3a5f8a;background:#0e1a28;color:#6090c0;border-radius:6px;cursor:pointer;font-family:Black Han Sans,sans-serif;font-size:.85rem;">📊 전적만 초기화</button>' +
+          '<button id="adminResetAll" style="width:100%;padding:.6rem;border:1px solid #c84848;background:#2a1010;color:#e87070;border-radius:6px;cursor:pointer;font-family:Black Han Sans,sans-serif;font-size:.85rem;font-weight:bold;">🗑️ 전체 초기화</button>' +
+          '<button id="adminAddCurrency" style="width:100%;padding:.6rem;border:1px solid #c8a96e;background:#1a1000;color:#c8a96e;border-radius:6px;cursor:pointer;font-family:Black Han Sans,sans-serif;font-size:.85rem;">➕ 재화 1000 추가</button>' +
         '</div>' +
         '<div id="adminResultMsg" style="font-size:.8rem;color:#888;min-height:1.5rem;text-align:center;"></div>' +
-        '<button id="adminCloseBtn" style="width:100%;padding:.5rem;border:1px solid #2a2a45;background:transparent;color:#888;border-radius:6px;cursor:pointer;font-family:'Black Han Sans',sans-serif;font-size:.85rem;">닫기</button>' +
+        '<button id="adminCloseBtn" style="width:100%;padding:.5rem;border:1px solid #2a2a45;background:transparent;color:#888;border-radius:6px;cursor:pointer;font-family:Black Han Sans,sans-serif;font-size:.85rem;">닫기</button>' +
       '</div>';
     document.body.appendChild(overlay);
     const userEl = document.getElementById('adminCurrentUser');
@@ -5575,8 +5624,7 @@ window.addEventListener('load', () => loadFirebase(() => {}));
     const resultEl = document.getElementById('adminResultMsg');
     async function doReset(payload, label) {
       if (!currentUser || !fsdb) { resultEl.textContent='❌ 로그인 필요'; return; }
-      if (!confirm(label + '
-정말 초기화하시겠습니까?')) return;
+      if (!confirm(label + '\n정말 초기화하시겠습니까?')) return;
       resultEl.textContent = '처리 중...'; resultEl.style.color='#c8a96e';
       try {
         await fsdb.collection('users').doc(currentUser.uid).update(payload);
