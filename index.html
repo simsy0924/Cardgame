@@ -652,6 +652,81 @@
   .gameover-title.win { color: var(--accent); }
   .gameover-title.lose { color: var(--danger); }
 
+  /* ── GAME CONFIRM DIALOG ── */
+  #gameConfirmOverlay {
+    position: fixed;
+    inset: 0;
+    background: #000a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 400;
+    padding: 1rem;
+  }
+
+  #gameConfirmOverlay.hidden { display: none; }
+
+  #gameConfirmBox {
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    width: min(360px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: .9rem;
+    box-shadow: 0 0 30px #c8a96e22;
+  }
+
+  #gameConfirmTitle {
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: .95rem;
+    color: var(--accent);
+    letter-spacing: .08em;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: .6rem;
+  }
+
+  #gameConfirmMsg {
+    font-size: .85rem;
+    color: var(--text);
+    line-height: 1.6;
+    white-space: pre-wrap;
+  }
+
+  #gameConfirmBtns {
+    display: flex;
+    gap: .5rem;
+    justify-content: flex-end;
+  }
+
+  #gameConfirmBtns button {
+    padding: .5rem 1.1rem;
+    border-radius: 6px;
+    font-family: 'Black Han Sans', sans-serif;
+    font-size: .85rem;
+    letter-spacing: .06em;
+    cursor: pointer;
+    transition: all .15s;
+    border: 1px solid;
+  }
+
+  #gameConfirmBtns .gc-yes {
+    background: var(--accent);
+    color: #1a1000;
+    border-color: var(--accent);
+  }
+
+  #gameConfirmBtns .gc-yes:hover { background: #dfc07e; }
+
+  #gameConfirmBtns .gc-no {
+    background: transparent;
+    color: var(--text-dim);
+    border-color: var(--border);
+  }
+
+  #gameConfirmBtns .gc-no:hover { border-color: var(--accent); color: var(--accent); }
+
   /* ── UTILS ── */
   .hidden { display: none !important; }
   .flex-row { display: flex; align-items: center; gap: .5rem; }
@@ -967,6 +1042,7 @@
 
   <div class="deck-actions">
     <button class="btn btn-secondary" onclick="loadPreset('펭귄')">펭귄 기본 덱</button>
+    <button class="btn btn-secondary" onclick="loadPreset('지배자')">지배자 기본 덱</button>
     <button class="btn btn-secondary" onclick="clearDeck()">초기화</button>
     <button class="btn btn-primary" id="dbConfirmBtn" onclick="confirmDeck()" disabled>덱 확정 →</button>
   </div>
@@ -1102,6 +1178,18 @@
     <div class="card-picker-grid" id="zoneViewGrid"></div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('zoneViewModal')">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ GAME CONFIRM DIALOG ════════════ -->
+<div id="gameConfirmOverlay" class="hidden">
+  <div id="gameConfirmBox">
+    <div id="gameConfirmTitle">효과 발동 확인</div>
+    <div id="gameConfirmMsg"></div>
+    <div id="gameConfirmBtns">
+      <button class="gc-no" id="gcNoBtn">취소</button>
+      <button class="gc-yes" id="gcYesBtn">확인</button>
     </div>
   </div>
 </div>
@@ -1639,10 +1727,11 @@ function triggerKkomaPenguin(from) {
   const targets = findAllInDeck(c => isPenguinMonster(c.id));
   if (targets.length === 0) return;
   // ★ 임의효과: 발동 여부 먼저 물어보기
-  if (!confirm('꼬마 펭귄 ②\n덱에서 펭귄 몬스터 1장을 소환합니까?')) return;
-  markEffectUsed('꼬마 펭귄', 2);
-  // ★ 기동효과이므로 체인 시작 (상대 응답 기회)
-  enqueueTriggeredEffect({ type: 'triggerKkomaPenguin', label: '꼬마 펭귄 ②' });
+  gameConfirm('꼬마 펭귄 ②\n덱에서 펭귄 몬스터 1장을 소환합니까?', (yes) => {
+    if (!yes) return;
+    markEffectUsed('꼬마 펭귄', 2);
+    enqueueTriggeredEffect({ type: 'triggerKkomaPenguin', label: '꼬마 펭귄 ②' });
+  });
 }
 function resolveKkomaPenguin() {
   const targets = findAllInDeck(c => isPenguinMonster(c.id));
@@ -1657,8 +1746,10 @@ function triggerPenguinBubu(from) {
   const bubu = [...G.myField].reverse().find(c => c.id === '펭귄 부부' && c.summonedFrom === 'deck');
   if (bubu) bubu.bubuTriggerReady = true;
   // ★ 임의효과: 발동 여부 먼저 물어보기
-  if (!confirm('펭귄 부부 ①\n덱에서 펭귄 카드를 최대 2장 패에 넣겠습니까?')) return;
-  enqueueTriggeredEffect({ type: 'triggerPenguinBubu1', label: '펭귄 부부 ①' });
+  gameConfirm('펭귄 부부 ①\n덱에서 펭귄 카드를 최대 2장 패에 넣겠습니까?', (yes) => {
+    if (!yes) return;
+    enqueueTriggeredEffect({ type: 'triggerPenguinBubu1', label: '펭귄 부부 ①' });
+  });
 }
 function resolvePenguinBubu1() {
   markEffectUsed('펭귄 부부', 1);
@@ -1774,13 +1865,14 @@ function checkPenguinVillageReplace(discardCount) {
   const villageIdx = G.myHand.findIndex(c => c.id === '펭귄 마을' && c.isPublic);
   const fieldPenguins = G.myField.filter(c => isPenguinMonster(c.id));
   if (villageIdx >= 0 && fieldPenguins.length > 0 && discardCount > 0) {
-    if (confirm(`펭귄 마을 ② 발동? (패 버리는 대신 필드 펭귄 몬스터 묘지로)`)) {
+    gameConfirm('펭귄 마을 ② 발동? (패 버리는 대신 필드 펭귄 몬스터 묘지로)', (yes) => {
+      if (!yes) return;
       openCardPicker(fieldPenguins, '펭귄 마을 ②: 대신 묘지로 보낼 펭귄 몬스터', Math.min(discardCount, fieldPenguins.length), (sel) => {
         sel.forEach(i => { const mon = fieldPenguins[i]; sendToGrave(mon.id, 'field'); if (mon.id === '수문장 펭귄') triggerSummonerPenguin2(); });
         renderAll();
       });
-      return true;
-    }
+    });
+    return true;
   }
   return false;
 }
@@ -1899,8 +1991,10 @@ function resolvePenguinGlory2() {
 // 펭귄 용사 ① 트리거
 function triggerPenguinHero(from) {
   if (!canUseEffect('펭귄 용사', 1)) return;
-  if (!confirm('펭귄 용사 ①\n덱에서 펭귄 카드 서치 + 펭귄 몬스터 소환 + 패 1장 버리기를 발동합니까?')) return;
-  enqueueTriggeredEffect({ type: 'triggerPenguinHero1', label: '펭귄 용사 ①' });
+  gameConfirm('펭귄 용사 ①\n덱에서 펭귄 카드 서치 + 펭귄 몬스터 소환 + 패 1장 버리기를 발동합니까?', (yes) => {
+    if (!yes) return;
+    enqueueTriggeredEffect({ type: 'triggerPenguinHero1', label: '펭귄 용사 ①' });
+  });
 }
 function resolvePenguinHero1() {
   markEffectUsed('펭귄 용사', 1);
@@ -1946,8 +2040,10 @@ function resolvePenguinHero2() {
 // 펭귄 용사 ③
 function autoTriggerHeroGrave() {
   // ★ 임의효과: 발동 여부 물어보기
-  if (!confirm('펭귄 용사 ③\n묘지에서 다시 소환하고 펭귄 공격력을 1씩 올립니까?')) return;
-  enqueueTriggeredEffect({ type: 'triggerPenguinHero3', label: '펭귄 용사 ③' });
+  gameConfirm('펭귄 용사 ③\n묘지에서 다시 소환하고 펭귄 공격력을 1씩 올립니까?', (yes) => {
+    if (!yes) return;
+    enqueueTriggeredEffect({ type: 'triggerPenguinHero3', label: '펭귄 용사 ③' });
+  });
 }
 function resolvePenguinHero3() {
   notify('펭귄 용사 ③ 발동!');
@@ -2011,8 +2107,10 @@ function resolvePenguinForever2() {
 // 펭귄의 전설 ①
 function triggerPenguinLegend(from) {
   if (!canUseEffect('펭귄의 전설', 1)) return;
-  if (!confirm('펭귄의 전설 ①\n묘지에서 꼬마 펭귄을 최대 2장 소환합니까?')) return;
-  enqueueTriggeredEffect({ type: 'triggerPenguinLegend1', label: '펭귄의 전설 ①' });
+  gameConfirm('펭귄의 전설 ①\n묘지에서 꼬마 펭귄을 최대 2장 소환합니까?', (yes) => {
+    if (!yes) return;
+    enqueueTriggeredEffect({ type: 'triggerPenguinLegend1', label: '펭귄의 전설 ①' });
+  });
 }
 function resolvePenguinLegend1() {
   markEffectUsed('펭귄의 전설', 1);
@@ -2061,8 +2159,10 @@ function resolvePenguinWizard1() {
 // 펭귄 마법사 ②
 function triggerPenguinWizard(from) {
   if (!canUseEffect('펭귄 마법사', 2, 2) || G.opField.length === 0) return;
-  if (!confirm('펭귄 마법사 ②\n패를 버리고 상대 몬스터를 제외합니까?')) return;
-  enqueueTriggeredEffect({ type: 'triggerPenguinWizard2', label: '펭귄 마법사 ②' });
+  gameConfirm('펭귄 마법사 ②\n패를 버리고 상대 몬스터를 제외합니까?', (yes) => {
+    if (!yes) return;
+    enqueueTriggeredEffect({ type: 'triggerPenguinWizard2', label: '펭귄 마법사 ②' });
+  });
 }
 function resolvePenguinWizard2() {
   markEffectUsed('펭귄 마법사', 2);
@@ -2232,6 +2332,44 @@ function notify(msg, duration = 2500) {
 
 function formatSeconds(sec) {
   return `${Math.max(0, Math.ceil(sec))}초`;
+}
+
+// ── 브라우저 confirm() 대체 커스텀 다이얼로그 ──────────────
+// 기존 코드에서 confirm()을 호출하는 모든 부분은 이 함수를 경유한다.
+// callback(true/false) 형태로 결과를 반환한다.
+let _gcPending = null; // 현재 대기 중인 콜백
+function gameConfirm(msg, callback) {
+  const overlay = document.getElementById('gameConfirmOverlay');
+  const msgEl   = document.getElementById('gameConfirmMsg');
+  const titleEl = document.getElementById('gameConfirmTitle');
+  const yesBtn  = document.getElementById('gcYesBtn');
+  const noBtn   = document.getElementById('gcNoBtn');
+  if (!overlay) { callback(window.confirm(msg)); return; } // 폴백
+
+  // 이미 대기 중인 confirm이 있으면 직전 것을 false로 닫음
+  if (_gcPending) { _gcPending(false); _gcPending = null; }
+
+  // 타이틀/메시지 분리 (첫 줄이 타이틀)
+  const lines = msg.split('\n');
+  titleEl.textContent = lines[0] || '효과 발동 확인';
+  msgEl.textContent   = lines.slice(1).join('\n').trim();
+
+  overlay.classList.remove('hidden');
+
+  function close(result) {
+    overlay.classList.add('hidden');
+    yesBtn.onclick = null;
+    noBtn.onclick  = null;
+    _gcPending = null;
+    callback(result);
+  }
+
+  _gcPending = (r) => close(r);
+  yesBtn.onclick = () => close(true);
+  noBtn.onclick  = () => close(false);
+
+  // 오버레이 클릭 시 취소
+  overlay.onclick = (e) => { if (e.target === overlay) close(false); };
 }
 
 function getOtherRole(role) {
@@ -2920,10 +3058,10 @@ function onMyFieldClick(i) {
     selectedFieldIdx = i;
     document.querySelectorAll('#opField .zone-slot').forEach(el => el.classList.toggle('attack-target', true));
     if (G.opField.length === 0) {
-      if (confirm(`${G.myField[i]?.name}으로 직접 공격? (상대 패 ${G.myField[i]?.atk}장 손실)`)) {
-        directAttack(i);
-      }
-      selectedFieldIdx = -1;
+      gameConfirm(`${G.myField[i]?.name}으로 직접 공격?\n상대 패 ${G.myField[i]?.atk}장 손실`, (yes) => {
+        if (yes) directAttack(i);
+        selectedFieldIdx = -1;
+      });
     } else {
       notify('공격할 상대 몬스터를 클릭하세요');
     }
@@ -3546,14 +3684,15 @@ function executeCombat(atkIdx, defIdx) {
       // 구사일생 체크: 공격력 차 >= 내 패 수일 때 발동 가능
       const guIdxInHand = G.myHand.findIndex(c => c.id === '구사일생');
       if (guIdxInHand >= 0 && Math.abs(diff) >= G.myHand.length) {
-        if (confirm(`구사일생 발동? (전투 데미지 0 + 드로우 1장)\n조건: 공격력 차(${Math.abs(diff)}) ≥ 패 수(${G.myHand.length})`)) {
+        gameConfirm(`구사일생 발동?\n전투 데미지 0 + 드로우 1장\n조건: 공격력 차(${Math.abs(diff)}) ≥ 패 수(${G.myHand.length})`, (yes) => {
+          if (!yes) { forceDiscard(Math.abs(diff), true); return; }
           G.myHand.splice(guIdxInHand, 1);
           G.myGrave.push({ id: '구사일생', name: '구사일생' });
           drawOne();
           log('구사일생: 전투 데미지 0 + 드로우', 'mine');
           sendGameState(); renderAll();
-          return; // 데미지 없음
-        }
+        });
+        return; // 비동기 처리 — 이후 코드는 gameConfirm 콜백 안에서 실행됨
       }
       forceDiscard(Math.abs(diff), true);
     }
@@ -3669,9 +3808,11 @@ function showGameOver(win) {
 }
 
 function concede() {
-  if (!confirm('정말 항복하시겠습니까?')) return;
-  showGameOver(false);
-  sendAction({ type: 'gameOver', winner: myRole === 'host' ? 'guest' : 'host' });
+  gameConfirm('정말 항복하시겠습니까?', (yes) => {
+    if (!yes) return;
+    showGameOver(false);
+    sendAction({ type: 'gameOver', winner: myRole === 'host' ? 'guest' : 'host' });
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -3828,19 +3969,30 @@ let isJoiningRoom = false;
 
 function loadFirebase(callback) {
   if (firebaseLoaded) { callback(); return; }
+
+  // 순서대로 로드할 모든 Firebase SDK
   const scripts = [
     'https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js',
     'https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js',
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js',
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js',
   ];
 
   const loadScriptInOrder = (idx) => {
     if (idx >= scripts.length) {
       firebaseLoaded = true;
+      initAuth();   // Auth 초기화 (중복 방지는 initAuth 내부에서 처리)
       callback();
       return;
     }
+    const src = scripts[idx];
+    // 이미 로드된 스크립트는 건너뜀
+    if (document.querySelector(`script[src="${src}"]`)) {
+      loadScriptInOrder(idx + 1);
+      return;
+    }
     const s = document.createElement('script');
-    s.src = scripts[idx];
+    s.src = src;
     s.async = false;
     s.onload = () => loadScriptInOrder(idx + 1);
     s.onerror = () => notify('Firebase SDK 로드 실패. 네트워크 상태를 확인하세요.');
@@ -4067,14 +4219,15 @@ function handleOpponentAction(action) {
       log(`상대 서치: ${action.cardName || ''}`, 'opponent');
       { const eyeIdx = G.myHand.findIndex(c => c.id === '눈에는 눈');
         if (eyeIdx >= 0 && canUseEffect('눈에는 눈', 1)) {
-          if (confirm('눈에는 눈 발동? (드로우 2장)')) {
+          gameConfirm('눈에는 눈 발동? (드로우 2장)', (yes) => {
+            if (!yes) return;
             markEffectUsed('눈에는 눈', 1);
             G.myHand.splice(eyeIdx, 1);
             G.myGrave.push({ id: '눈에는 눈', name: '눈에는 눈' });
             drawN(2);
             log('눈에는 눈: 드로우 2장!', 'mine');
             sendGameState(); renderAll();
-          }
+          });
         }
       }
       break;
@@ -4311,6 +4464,7 @@ function _startNewGame() {
 }
 
 function initDecks() {
+  // 덱빌더에서 확정한 덱 우선, 없으면 펭귄 기본덱으로 폴백
   const penguinDeck = [
     '펭귄 마을','펭귄 마을','펭귄 마을','펭귄 마을',
     '꼬마 펭귄','꼬마 펭귄','꼬마 펭귄','꼬마 펭귄',
@@ -4492,10 +4646,28 @@ function loadPreset(theme) {
       '펭귄이여 영원하라':4,'펭귄 마법사':4,'구사일생':2,'눈에는 눈':2,
     };
     builderKeyDeck = { '펭귄 용사':1, '펭귄의 일격':1, '펭귄의 전설':1, '일격필살':1, '단 한번의 기회':1 };
+    notify('펭귄 기본 덱 로드!');
+  } else if (theme === '지배자') {
+    // 지배자/지배룡 기본덱
+    // 메인덱: 지배자 4종×4 + 지배룡 4종×4 + 지배의 사슬×4 + 지배룡과 지배자×4 + 범용 8장 = 48장
+    builderMainDeck = {
+      '수원소의 지배자':4, '화원소의 지배자':4,
+      '전원소의 지배자':4, '풍원소의 지배자':4,
+      '수원소의 지배룡':4, '화원소의 지배룡':4,
+      '전원소의 지배룡':4, '풍원소의 지배룡':4,
+      '지배의 사슬':4, '지배룡과 지배자':4,
+      '눈에는 눈':2, '출입통제':2,
+      '단단한 카드 자물쇠':2, '구사일생':2,
+    };
+    // 키카드덱: 사원소 2종 + 기적 + 범용 2종
+    builderKeyDeck = {
+      '사원소의 지배룡':1, '사원소의 지배자':1,
+      '사원소의 기적':1, '일격필살':1, '단 한번의 기회':1,
+    };
+    notify('지배자/지배룡 기본 덱 로드!');
   }
   renderBuilderDeck();
   filterDeckPool(currentPoolFilter);
-  notify('펭귄 기본 덱 로드!');
 }
 
 function clearDeck() {
@@ -4622,8 +4794,7 @@ function activateJibaejaShui1(handIdx) {
       if (targets.length === 0) { notify('덱에 지배자 몬스터가 없습니다.'); return; }
       openCardPicker(targets, '수원소의 지배자 ①: 덱에서 지배자 몬스터 서치', 1, (sel) => {
         if (sel.length > 0) searchToHand(targets[sel[0]].id);
-        if (confirm('1장 드로우하겠습니까?')) drawOne();
-        sendGameState(); renderAll();
+        gameConfirm('1장 드로우하겠습니까?', (yes) => { if (yes) drawOne(); sendGameState(); renderAll(); });
       });
     });
   });
@@ -4640,8 +4811,7 @@ function activateJibaejaHwa1(handIdx) {
       if (targets.length === 0) { notify('덱에 지배자 몬스터가 없습니다.'); return; }
       openCardPicker(targets, '화원소의 지배자 ①: 덱에서 지배자 몬스터 소환', 1, (sel) => {
         if (sel.length > 0) summonFromDeck(targets[sel[0]].id);
-        if (confirm('1장 드로우하겠습니까?')) drawOne();
-        sendGameState(); renderAll();
+        gameConfirm('1장 드로우하겠습니까?', (yes) => { if (yes) drawOne(); sendGameState(); renderAll(); });
       });
     });
   });
@@ -4669,8 +4839,7 @@ function activateJibaejaJeon1(handIdx) {
             summonFromGrave(t.id);
           }
         }
-        if (confirm('1장 드로우하겠습니까?')) drawOne();
-        sendGameState(); renderAll();
+        gameConfirm('1장 드로우하겠습니까?', (yes) => { if (yes) drawOne(); sendGameState(); renderAll(); });
       });
     });
   });
@@ -4752,17 +4921,21 @@ function activateJibaejaHwa2(fieldIdx) {
 // 전원소의 지배자 ②: 소환 시 지배자+지배룡 각 1장 서치 + 드로우
 function triggerJibaejaJeon2() {
   if (!canUseEffect('전원소의 지배자', 2)) return;
-  if (!confirm('전원소의 지배자 ②\n덱에서 지배자 카드와 지배룡 카드를 각 1장씩 서치 + 드로우하겠습니까?')) return;
-  markEffectUsed('전원소의 지배자', 2);
-  jibaeMirakCostIfNeeded(() => {
-    const jaTargets = findAllInDeck(c => isJibaeCard(c.id) && isJibaejaMonster(c.id));
-    const ryongTargets = findAllInDeck(c => isJibaeryongMonster(c.id));
-    openCardPicker(jaTargets, '전원소의 지배자 ②: 지배자 카드 서치', 1, (sel1) => {
-      if (sel1.length > 0) searchToHand(jaTargets[sel1[0]].id);
-      openCardPicker(ryongTargets, '전원소의 지배자 ②: 지배룡 카드 서치', 1, (sel2) => {
-        if (sel2.length > 0) searchToHand(ryongTargets[sel2[0]].id);
-        if (confirm('1장 드로우하겠습니까?')) drawOne();
-        sendGameState(); renderAll();
+  gameConfirm('전원소의 지배자 ②\n덱에서 지배자 카드와 지배룡 카드를 각 1장씩 서치 + 드로우하겠습니까?', (yes) => {
+    if (!yes) return;
+    markEffectUsed('전원소의 지배자', 2);
+    jibaeMirakCostIfNeeded(() => {
+      const jaTargets = findAllInDeck(c => isJibaeCard(c.id) && isJibaejaMonster(c.id));
+      const ryongTargets = findAllInDeck(c => isJibaeryongMonster(c.id));
+      openCardPicker(jaTargets, '전원소의 지배자 ②: 지배자 카드 서치', 1, (sel1) => {
+        if (sel1.length > 0) searchToHand(jaTargets[sel1[0]].id);
+        openCardPicker(ryongTargets, '전원소의 지배자 ②: 지배룡 카드 서치', 1, (sel2) => {
+          if (sel2.length > 0) searchToHand(ryongTargets[sel2[0]].id);
+          gameConfirm('1장 드로우하겠습니까?', (drawYes) => {
+            if (drawYes) drawOne();
+            sendGameState(); renderAll();
+          });
+        });
       });
     });
   });
@@ -4790,9 +4963,10 @@ function activateJibaeja3(fieldIdx, cardId) {
 function onSentToGraveFromNonHand(cardId) {
   if (!isJibaeryongMonster(cardId)) return;
   if (!canUseEffect(cardId + '_grave1')) return;
-  if (!confirm(`${CARDS[cardId]?.name} ①\n패 이외에서 묘지로 보내졌습니다. 효과를 발동합니까?`)) return;
-  markEffectUsed(cardId + '_grave1');
-  jibaeMirakCostIfNeeded(() => {
+  gameConfirm(`${CARDS[cardId]?.name} ①\n패 이외에서 묘지로 보내졌습니다. 효과를 발동합니까?`, (yes) => {
+    if (!yes) return;
+    markEffectUsed(cardId + '_grave1');
+    jibaeMirakCostIfNeeded(() => {
     switch(cardId) {
       case '수원소의 지배룡':
         // 묘지에서 다른 지배자/지배룡 서치
@@ -4836,16 +5010,19 @@ function onSentToGraveFromNonHand(cardId) {
           }); }
         break;
     }
-  });
+    }); // jibaeMirakCostIfNeeded
+  }); // gameConfirm
 }
 
 // ── 지배룡 ② (버려졌을 때 드로우) ────────────────────────
 function onJibaeryongDiscarded(cardId) {
   if (!isJibaeryongMonster(cardId)) return;
   if (!canUseEffect(cardId + '_discard2')) return;
-  if (!confirm(`${CARDS[cardId]?.name} ②\n버려졌습니다. 1장 드로우합니까?`)) return;
-  markEffectUsed(cardId + '_discard2');
-  jibaeMirakCostIfNeeded(() => { drawOne(); sendGameState(); renderAll(); });
+  gameConfirm(`${CARDS[cardId]?.name} ②\n버려졌습니다. 1장 드로우합니까?`, (yes) => {
+    if (!yes) return;
+    markEffectUsed(cardId + '_discard2');
+    jibaeMirakCostIfNeeded(() => { drawOne(); sendGameState(); renderAll(); });
+  });
 }
 
 // ── 지배룡 ③ (필드에서 묘지로 → 지배자 버리고 드로우) ────
@@ -4914,14 +5091,15 @@ function tryActivateSaWonsoJibaeryong3() {
   if (G.myHand.length > 5) return;
   if (!G.myField.some(c => c.id === '사원소의 지배룡')) return;
   if (!canUseEffect('사원소의 지배룡', 3)) return;
-  if (!confirm('사원소의 지배룡 ③\n상대 효과 무효 + 내 패 2장 버리겠습니까?')) return;
-  markEffectUsed('사원소의 지배룡', 3);
-  log('사원소의 지배룡 ③: 효과 무효!', 'mine');
-  sendAction({ type: 'negate', reason: '사원소의 지배룡 ③' });
-  // 패 2장 버리기
-  _forcedDiscardOne('사원소의 지배룡 ③: 패 1장 버리기 (1/2)', () => {
-    _forcedDiscardOne('사원소의 지배룡 ③: 패 1장 버리기 (2/2)', () => {
-      sendGameState(); renderAll();
+  gameConfirm('사원소의 지배룡 ③\n상대 효과 무효 + 내 패 2장 버리겠습니까?', (yes) => {
+    if (!yes) return;
+    markEffectUsed('사원소의 지배룡', 3);
+    log('사원소의 지배룡 ③: 효과 무효!', 'mine');
+    sendAction({ type: 'negate', reason: '사원소의 지배룡 ③' });
+    _forcedDiscardOne('사원소의 지배룡 ③: 패 1장 버리기 (1/2)', () => {
+      _forcedDiscardOne('사원소의 지배룡 ③: 패 1장 버리기 (2/2)', () => {
+        sendGameState(); renderAll();
+      });
     });
   });
 }
@@ -4984,18 +5162,20 @@ function tryActivateSaWonsoJibaeja3() {
   if (!G.myField.some(c => c.id === '사원소의 지배자')) return;
   if (!canUseEffect('사원소의 지배자', 3)) return;
   if (G.opField.length === 0 && !G.opFieldCard) return;
-  if (!confirm('사원소의 지배자 ③\n상대 필드 카드 1장 묘지 + 내 패 1장 버리겠습니까?')) return;
-  markEffectUsed('사원소의 지배자', 3);
-  openCardPicker([...G.opField, ...(G.opFieldCard?[G.opFieldCard]:[])], '사원소의 지배자 ③: 상대 필드 카드 묘지로', 1, (sel) => {
-    if (sel.length > 0) {
-      const targets = [...G.opField, ...(G.opFieldCard?[G.opFieldCard]:[])];
-      const t = targets[sel[0]];
-      const oi = G.opField.findIndex(c => c.id === t.id);
-      if (oi >= 0) { G.opGrave.push(G.opField.splice(oi, 1)[0]); sendAction({ type: 'opFieldRemove', cardId: t.id, to: 'grave' }); }
-      log(`사원소의 지배자 ③: ${t.name} 묘지로`, 'mine');
-    }
-    _forcedDiscardOne('사원소의 지배자 ③: 패 1장 버리기 (코스트)', () => {
-      sendGameState(); renderAll();
+  gameConfirm('사원소의 지배자 ③\n상대 필드 카드 1장 묘지 + 내 패 1장 버리겠습니까?', (yes) => {
+    if (!yes) return;
+    markEffectUsed('사원소의 지배자', 3);
+    openCardPicker([...G.opField, ...(G.opFieldCard?[G.opFieldCard]:[])], '사원소의 지배자 ③: 상대 필드 카드 묘지로', 1, (sel) => {
+      if (sel.length > 0) {
+        const targets = [...G.opField, ...(G.opFieldCard?[G.opFieldCard]:[])];
+        const t = targets[sel[0]];
+        const oi = G.opField.findIndex(c => c.id === t.id);
+        if (oi >= 0) { G.opGrave.push(G.opField.splice(oi, 1)[0]); sendAction({ type: 'opFieldRemove', cardId: t.id, to: 'grave' }); }
+        log(`사원소의 지배자 ③: ${t.name} 묘지로`, 'mine');
+      }
+      _forcedDiscardOne('사원소의 지배자 ③: 패 1장 버리기 (코스트)', () => {
+        sendGameState(); renderAll();
+      });
     });
   });
 }
@@ -5042,15 +5222,16 @@ function activateSaWonsoMirak(handIdx) {
 let jibaeSaslTurnDiscardCount = 0; // 이 턴에 버려진 패 수 추적
 function onHandDiscarded_jibaeSasl() {
   jibaeSaslTurnDiscardCount++;
-  // 패에 지배의 사슬이 있으면 자동 트리거 확인
   const idx = G.myHand.findIndex(c => c.id === '지배의 사슬');
   if (idx < 0) return;
   if (!canUseEffect('지배의 사슬', 1)) return;
-  if (!confirm('지배의 사슬 ①\n패가 버려졌습니다. 이 턴에 버려진 패의 매수까지 드로우하겠습니까?')) return;
-  markEffectUsed('지배의 사슬', 1);
-  drawN(jibaeSaslTurnDiscardCount);
-  log(`지배의 사슬 ①: ${jibaeSaslTurnDiscardCount}장 드로우`, 'mine');
-  sendGameState(); renderAll();
+  gameConfirm('지배의 사슬 ①\n패가 버려졌습니다. 이 턴에 버려진 패의 매수까지 드로우하겠습니까?', (yes) => {
+    if (!yes) return;
+    markEffectUsed('지배의 사슬', 1);
+    drawN(jibaeSaslTurnDiscardCount);
+    log(`지배의 사슬 ①: ${jibaeSaslTurnDiscardCount}장 드로우`, 'mine');
+    sendGameState(); renderAll();
+  });
 }
 // 지배의 사슬 ②: 상대 턴, 묘지 제외 → 제외된 카드 8장까지 덱으로 + 드로우
 function activateJibaeSasl2() {
@@ -5178,18 +5359,19 @@ function _removeFromFieldOrGrave(cardId) {
 // 원하는만큼 버리기 (선택적 다중 버리기)
 function _optionalMultiDiscard(title, callback) {
   if (G.myHand.length === 0) { callback(); return; }
-  if (!confirm(`${title}\n패를 버리겠습니까? (취소하면 버리지 않음)`)) { callback(); return; }
-  openCardPicker(G.myHand, title, G.myHand.length, (sel) => {
-    const ids = sel.map(i => G.myHand[i]?.id).filter(Boolean);
-    sel.sort((a,b)=>b-a).forEach(i => {
-      if (G.myHand[i]) {
-        const c = G.myHand.splice(i, 1)[0];
-        G.myGrave.push(c);
-        onJibaeryongDiscarded(c.id);
-        onHandDiscarded_jibaeSasl();
-      }
+  gameConfirm(`${title}\n패를 버리겠습니까? (취소하면 버리지 않음)`, (yes) => {
+    if (!yes) { callback(); return; }
+    openCardPicker(G.myHand, title, G.myHand.length, (sel) => {
+      sel.sort((a,b)=>b-a).forEach(i => {
+        if (G.myHand[i]) {
+          const c = G.myHand.splice(i, 1)[0];
+          G.myGrave.push(c);
+          onJibaeryongDiscarded(c.id);
+          onHandDiscarded_jibaeSasl();
+        }
+      });
+      callback();
     });
-    callback();
   });
 }
 
@@ -5266,23 +5448,22 @@ function activateCard(handIdx) {
 
     case '서치 봉인의 항아리':
       // ① 덱으로 되돌리고 드로우  ② 버려서 서치 봉인
-      { const choice = confirm('서치 봉인의 항아리\n\n확인 = ① 덱으로 되돌리고 1장 드로우\n취소 = ② 패에서 버려서 이 턴 서치 봉인');
-      if (choice) {
-        // ① 덱으로
-        G.myHand.splice(handIdx, 1);
-        G.myDeck.push({ id: c.id, name: c.name });
-        G.myDeck = shuffle(G.myDeck);
-        drawOne();
-        log('서치 봉인의 항아리 ①: 덱으로 + 드로우', 'mine');
-      } else {
-        // ② 버리고 서치 봉인
-        G.myHand.splice(handIdx, 1);
-        G.myGrave.push({ id: c.id, name: c.name });
-        log('서치 봉인의 항아리 ②: 이 턴 서치 봉인!', 'mine');
-        sendAction({ type: 'searchBan', reason: '서치 봉인의 항아리' });
-      }
-      sendGameState(); renderAll();
-      return; }
+      gameConfirm('서치 봉인의 항아리\n확인 = ① 덱으로 되돌리고 1장 드로우\n취소 = ② 버려서 이 턴 서치 봉인', (choice) => {
+        if (choice) {
+          G.myHand.splice(handIdx, 1);
+          G.myDeck.push({ id: c.id, name: c.name });
+          G.myDeck = shuffle(G.myDeck);
+          drawOne();
+          log('서치 봉인의 항아리 ①: 덱으로 + 드로우', 'mine');
+        } else {
+          G.myHand.splice(handIdx, 1);
+          G.myGrave.push({ id: c.id, name: c.name });
+          log('서치 봉인의 항아리 ②: 이 턴 서치 봉인!', 'mine');
+          sendAction({ type: 'searchBan', reason: '서치 봉인의 항아리' });
+        }
+        sendGameState(); renderAll();
+      });
+      return;
 
     case '유혹의 황금사과':
       G.myHand.splice(handIdx, 1);
@@ -5552,99 +5733,10 @@ function renderLoggedOutUI() {
   document.getElementById('profileArea').style.display = 'none';
 }
 
-// ── loadFirebase에 Auth+Firestore SDK 추가 후 initAuth 자동 실행
-// (기존 loadFirebase 함수는 건드리지 않고, 완료 콜백 이후에만 처리)
-const _origLoadFirebase = loadFirebase;
-loadFirebase = function(callback) {
-  _origLoadFirebase(() => {
-    // Auth + Firestore SDK 추가 로드
-    const extra = [
-      'https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js',
-      'https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js',
-    ];
-    function loadExtra(idx) {
-      if (idx >= extra.length) { initAuth(); callback(); return; }
-      const src = extra[idx];
-      if (document.querySelector('script[src="' + src + '"]')) { loadExtra(idx+1); return; }
-      const s = document.createElement('script');
-      s.src = src; s.async = false;
-      s.onload = () => loadExtra(idx + 1);
-      s.onerror = () => { loadExtra(idx + 1); };
-      document.head.appendChild(s);
-    }
-    loadExtra(0);
-  });
-};
-
 // 페이지 로드 후 미리 SDK 로드 (로그인 버튼 응답 빠르게)
 window.addEventListener('load', () => loadFirebase(() => {}));
 
-// ─────────────────────────────────────────────
-// ⚠️  ADMIN CHEAT PANEL  (완성 후 이 블록 전체 삭제)
-// ─────────────────────────────────────────────
-(function mountAdminPanel() {
-  const ADMIN_PW = 'reset-cardgame-2025';
-  function injectBtn() {
-    if (document.getElementById('adminPanelBtn')) return;
-    const btn = document.createElement('button');
-    btn.id = 'adminPanelBtn';
-    btn.textContent = '🔧 관리자';
-    btn.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:9000;background:#1c1c2e;color:#c8a96e;border:1px solid #2a2a45;border-radius:6px;padding:6px 12px;font-size:12px;font-family:"Black Han Sans",sans-serif;cursor:pointer;letter-spacing:.05em;opacity:.7;transition:opacity .2s;';
-    btn.onmouseenter = () => { btn.style.opacity='1'; };
-    btn.onmouseleave = () => { btn.style.opacity='.7'; };
-    btn.onclick = openAdminPanel;
-    document.body.appendChild(btn);
-  }
-  function openAdminPanel() {
-    const pw = prompt('관리자 비밀번호를 입력하세요:');
-    if (pw !== ADMIN_PW) { alert('비밀번호가 틀렸습니다.'); return; }
-    const existing = document.getElementById('adminOverlay');
-    if (existing) existing.remove();
-    const overlay = document.createElement('div');
-    overlay.id = 'adminOverlay';
-    overlay.style.cssText = 'position:fixed;inset:0;background:#000c;display:flex;align-items:center;justify-content:center;z-index:9001;';
-    overlay.innerHTML =
-      '<div style="background:#13131e;border:1px solid #2a2a45;border-radius:12px;padding:1.5rem;width:min(400px,90vw);display:flex;flex-direction:column;gap:.8rem;">' +
-        '<div style="font-family:Black Han Sans,sans-serif;color:#c8a96e;font-size:1rem;letter-spacing:.1em;border-bottom:1px solid #2a2a45;padding-bottom:.6rem;">⚠️ 관리자 데이터 초기화</div>' +
-        '<div id="adminCurrentUser" style="font-size:.8rem;color:#c8a96e;background:#1c1c2e;border-radius:6px;padding:.5rem .8rem;"></div>' +
-        '<div style="display:flex;flex-direction:column;gap:.5rem;">' +
-          '<button id="adminResetCurrency" style="width:100%;padding:.6rem;border:1px solid #4a8c5c;background:#1a2a1a;color:#6ab87c;border-radius:6px;cursor:pointer;font-family:Black Han Sans,sans-serif;font-size:.85rem;">💰 재화만 초기화 (→ 0)</button>' +
-          '<button id="adminResetStats" style="width:100%;padding:.6rem;border:1px solid #3a5f8a;background:#0e1a28;color:#6090c0;border-radius:6px;cursor:pointer;font-family:Black Han Sans,sans-serif;font-size:.85rem;">📊 전적만 초기화</button>' +
-          '<button id="adminResetAll" style="width:100%;padding:.6rem;border:1px solid #c84848;background:#2a1010;color:#e87070;border-radius:6px;cursor:pointer;font-family:Black Han Sans,sans-serif;font-size:.85rem;font-weight:bold;">🗑️ 전체 초기화</button>' +
-          '<button id="adminAddCurrency" style="width:100%;padding:.6rem;border:1px solid #c8a96e;background:#1a1000;color:#c8a96e;border-radius:6px;cursor:pointer;font-family:Black Han Sans,sans-serif;font-size:.85rem;">➕ 재화 1000 추가</button>' +
-        '</div>' +
-        '<div id="adminResultMsg" style="font-size:.8rem;color:#888;min-height:1.5rem;text-align:center;"></div>' +
-        '<button id="adminCloseBtn" style="width:100%;padding:.5rem;border:1px solid #2a2a45;background:transparent;color:#888;border-radius:6px;cursor:pointer;font-family:Black Han Sans,sans-serif;font-size:.85rem;">닫기</button>' +
-      '</div>';
-    document.body.appendChild(overlay);
-    const userEl = document.getElementById('adminCurrentUser');
-    if (currentUser && userProfile) {
-      userEl.textContent = '👤 ' + (userProfile.nickname||currentUser.displayName) + '  ·  💰 ' + userProfile.currency + '  ·  랭크 ' + userProfile.rank;
-    } else { userEl.textContent = '⚠️ 로그인되어 있지 않습니다.'; }
-    const resultEl = document.getElementById('adminResultMsg');
-    async function doReset(payload, label) {
-      if (!currentUser || !fsdb) { resultEl.textContent='❌ 로그인 필요'; return; }
-      if (!confirm(label + '\n정말 초기화하시겠습니까?')) return;
-      resultEl.textContent = '처리 중...'; resultEl.style.color='#c8a96e';
-      try {
-        await fsdb.collection('users').doc(currentUser.uid).update(payload);
-        userProfile = await getUserProfile(currentUser.uid);
-        renderProfileUI(currentUser);
-        userEl.textContent = '👤 ' + userProfile.nickname + '  ·  💰 ' + userProfile.currency + '  ·  랭크 ' + userProfile.rank;
-        resultEl.textContent = '✅ ' + label + ' 완료'; resultEl.style.color='#6ab87c';
-      } catch(e) { resultEl.textContent='❌ 실패: '+e.message; resultEl.style.color='#e87070'; }
-    }
-    document.getElementById('adminResetCurrency').onclick = () => doReset({currency:0},'재화 초기화');
-    document.getElementById('adminResetStats').onclick = () => doReset({totalWins:0,totalLosses:0,totalGames:0,rank:1000},'전적 초기화');
-    document.getElementById('adminResetAll').onclick = () => doReset({currency:0,totalWins:0,totalLosses:0,totalGames:0,rank:1000,ownedItems:[],unlockedCards:[],equippedSleeve:'default',equippedBoard:'default',updatedAt:firebase.firestore.FieldValue.serverTimestamp()},'전체 초기화');
-    document.getElementById('adminAddCurrency').onclick = () => doReset({currency:firebase.firestore.FieldValue.increment(1000)},'재화 +1000');
-    document.getElementById('adminCloseBtn').onclick = () => overlay.remove();
-    overlay.addEventListener('click', e => { if(e.target===overlay) overlay.remove(); });
-  }
-  if (document.readyState==='loading') document.addEventListener('DOMContentLoaded', injectBtn);
-  else injectBtn();
-})();
-// ⚠️  END OF ADMIN CHEAT PANEL
+
 </script>
 </body>
 </html>
