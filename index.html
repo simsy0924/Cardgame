@@ -3,30 +3,38 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- CSP: Firebase CDN + Google Fonts만 허용, inline eval 차단 -->
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'self';
+           script-src 'self' https://www.gstatic.com https://apis.google.com;
+           style-src  'self' 'unsafe-inline' https://fonts.googleapis.com;
+           font-src   https://fonts.gstatic.com;
+           connect-src 'self' https://*.firebaseio.com https://*.googleapis.com wss://*.firebaseio.com;
+           img-src    'self' data: https:;">
 <title>CardGame — 핸드 배틀</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;700;900&family=Black+Han+Sans&display=swap');
 
   :root {
-    --bg: #0a0a0f;
-    --surface: #13131e;
+    --bg:       #0a0a0f;
+    --surface:  #13131e;
     --surface2: #1c1c2e;
-    --border: #2a2a45;
-    --accent: #c8a96e;
-    --accent2: #7c5cbf;
-    --danger: #c84848;
-    --safe: #4a8c5c;
-    --text: #e8e0d0;
+    --border:   #2a2a45;
+    --accent:   #c8a96e;
+    --accent2:  #7c5cbf;
+    --danger:   #c84848;
+    --safe:     #4a8c5c;
+    --text:     #e8e0d0;
     --text-dim: #888080;
-    --monster: #8B5E3C;
-    --normal: #4A7C59;
-    --magic: #3A5F8A;
-    --trap: #7A3A5A;
-    --field: #5A6A3A;
+    --monster:  #8B5E3C;
+    --normal:   #4A7C59;
+    --magic:    #3A5F8A;
+    --trap:     #7A3A5A;
+    --field:    #5A6A3A;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  
+
   body {
     background: var(--bg);
     color: var(--text);
@@ -47,9 +55,7 @@
     background: radial-gradient(ellipse at 50% 0%, #1e1040 0%, #0a0a0f 70%);
   }
 
-  .title-block {
-    text-align: center;
-  }
+  .title-block { text-align: center; }
 
   .title-block h1 {
     font-family: 'Black Han Sans', sans-serif;
@@ -114,30 +120,14 @@
     transition: all .2s;
   }
 
-  .btn-primary {
-    background: var(--accent);
-    color: #1a1000;
-  }
-
+  .btn-primary { background: var(--accent); color: #1a1000; }
   .btn-primary:hover { background: #dfc07e; transform: translateY(-1px); }
 
-  .btn-secondary {
-    background: transparent;
-    color: var(--accent);
-    border: 1px solid var(--accent);
-  }
-
+  .btn-secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
   .btn-secondary:hover { background: #c8a96e22; }
 
-  .btn-danger {
-    background: var(--danger);
-    color: #fff;
-  }
-
-  .btn-safe {
-    background: var(--safe);
-    color: #fff;
-  }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-safe   { background: var(--safe);   color: #fff; }
 
   .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
 
@@ -186,23 +176,10 @@
     flex-wrap: wrap;
   }
 
-  .game-header .room-info {
-    font-size: .8rem;
-    color: var(--text-dim);
-    letter-spacing: .05em;
-  }
+  .game-header .room-info { font-size: .8rem; color: var(--text-dim); letter-spacing: .05em; }
+  .game-header .room-info span { color: var(--accent); font-family: 'Black Han Sans', sans-serif; letter-spacing: .1em; }
 
-  .game-header .room-info span {
-    color: var(--accent);
-    font-family: 'Black Han Sans', sans-serif;
-    letter-spacing: .1em;
-  }
-
-  .phase-indicator {
-    display: flex;
-    gap: .4rem;
-    align-items: center;
-  }
+  .phase-indicator { display: flex; gap: .4rem; align-items: center; }
 
   .phase-chip {
     padding: .25rem .7rem;
@@ -215,12 +192,7 @@
     transition: all .3s;
   }
 
-  .phase-chip.active {
-    opacity: 1;
-    border-color: var(--accent);
-    color: var(--accent);
-    background: #c8a96e18;
-  }
+  .phase-chip.active { opacity: 1; border-color: var(--accent); color: var(--accent); background: #c8a96e18; }
 
   .turn-label {
     font-family: 'Black Han Sans', sans-serif;
@@ -230,15 +202,10 @@
     letter-spacing: .05em;
   }
 
-  .turn-mine { background: #4a8c5c33; color: #6ab87c; border: 1px solid #4a8c5c; }
+  .turn-mine     { background: #4a8c5c33; color: #6ab87c; border: 1px solid #4a8c5c; }
   .turn-opponent { background: #c8484833; color: #e87070; border: 1px solid #c84848; }
 
-  .clock-wrap {
-    display: flex;
-    gap: .4rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
+  .clock-wrap { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
 
   .clock-chip {
     font-family: 'Black Han Sans', sans-serif;
@@ -251,41 +218,21 @@
     letter-spacing: .04em;
   }
 
-  .clock-chip.running {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: #c8a96e1a;
-  }
+  .clock-chip.running { color: var(--accent); border-color: var(--accent); background: #c8a96e1a; }
 
-  /* ── BOARD AREAS ── */
+  /* ── BOARD ── */
   .board {
     flex: 1;
     display: grid;
     grid-template-rows: 1fr auto 1fr;
-    gap: 0;
     overflow: hidden;
   }
 
-  .player-area {
-    display: flex;
-    flex-direction: column;
-    padding: .8rem 1rem;
-    gap: .5rem;
-    min-height: 0;
-  }
-
+  .player-area { display: flex; flex-direction: column; padding: .8rem 1rem; gap: .5rem; min-height: 0; }
   .player-area.opponent { background: #0d0d18; }
-  .player-area.self { background: #10101a; }
+  .player-area.self     { background: #10101a; }
 
-  .area-label {
-    display: flex;
-    align-items: center;
-    gap: .75rem;
-    font-size: .75rem;
-    color: var(--text-dim);
-    letter-spacing: .08em;
-  }
-
+  .area-label { display: flex; align-items: center; gap: .75rem; font-size: .75rem; color: var(--text-dim); letter-spacing: .08em; }
   .area-label strong { color: var(--text); font-size: .9rem; }
 
   .hand-count {
@@ -298,14 +245,7 @@
     font-family: 'Black Han Sans', sans-serif;
   }
 
-  /* ── MONSTER ZONE ── */
-  .monster-zone {
-    display: flex;
-    gap: .5rem;
-    justify-content: center;
-    align-items: center;
-    flex-wrap: wrap;
-  }
+  .monster-zone { display: flex; gap: .5rem; justify-content: center; align-items: center; flex-wrap: wrap; }
 
   .zone-slot {
     width: 80px;
@@ -320,12 +260,12 @@
     transition: border-color .2s;
   }
 
-  .zone-slot.active { border-color: var(--accent); }
+  .zone-slot.active       { border-color: var(--accent); }
   .zone-slot.attack-target { border-color: var(--danger); animation: pulse-red .6s infinite alternate; }
 
   @keyframes pulse-red {
     from { box-shadow: 0 0 0 0 #c8484844; }
-    to { box-shadow: 0 0 0 6px #c8484800; }
+    to   { box-shadow: 0 0 0 6px #c8484800; }
   }
 
   /* ── CENTER DIVIDER ── */
@@ -341,33 +281,18 @@
     flex-wrap: wrap;
   }
 
-  .field-zone {
-    display: flex;
-    align-items: center;
-    gap: .4rem;
-    font-size: .75rem;
-    color: var(--text-dim);
-  }
+  .field-zone { display: flex; align-items: center; gap: .4rem; font-size: .75rem; color: var(--text-dim); }
 
   .field-card-slot {
-    width: 60px;
-    height: 40px;
+    width: 60px; height: 40px;
     border: 1px dashed var(--border);
     border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: .6rem;
-    color: var(--text-dim);
+    display: flex; align-items: center; justify-content: center;
+    font-size: .6rem; color: var(--text-dim);
     cursor: pointer;
   }
 
-  .phase-actions {
-    display: flex;
-    gap: .5rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
+  .phase-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 
   .btn-sm {
     padding: .35rem .8rem;
@@ -382,9 +307,9 @@
     transition: all .15s;
   }
 
-  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm:hover        { border-color: var(--accent); color: var(--accent); }
   .btn-sm.active-phase { background: var(--accent); color: #1a1000; border-color: var(--accent); }
-  .btn-sm:disabled { opacity: .3; cursor: not-allowed; }
+  .btn-sm:disabled     { opacity: .3; cursor: not-allowed; }
 
   /* ── HAND ── */
   .hand-area {
@@ -397,15 +322,13 @@
     flex-shrink: 0;
   }
 
-  /* ── CARD COMPONENTS ── */
+  /* ── CARD ── */
   .card {
-    width: 78px;
-    height: 108px;
+    width: 78px; height: 108px;
     border-radius: 6px;
     border: 1.5px solid var(--border);
     background: var(--surface2);
-    display: flex;
-    flex-direction: column;
+    display: flex; flex-direction: column;
     cursor: pointer;
     transition: transform .15s, border-color .15s, box-shadow .15s;
     position: relative;
@@ -414,109 +337,58 @@
     user-select: none;
   }
 
-  .card:hover { transform: translateY(-6px) scale(1.04); box-shadow: 0 8px 24px #000a; }
+  .card:hover    { transform: translateY(-6px) scale(1.04); box-shadow: 0 8px 24px #000a; }
   .card.selected { border-color: var(--accent); box-shadow: 0 0 12px #c8a96e88; transform: translateY(-10px); }
   .card.public-card { border-color: #c88040; }
   .card.public-card::after {
     content: "공개";
-    position: absolute;
-    top: 2px; right: 2px;
+    position: absolute; top: 2px; right: 2px;
     font-size: .5rem;
-    background: #c88040;
-    color: #fff;
-    padding: 1px 3px;
-    border-radius: 2px;
+    background: #c88040; color: #fff;
+    padding: 1px 3px; border-radius: 2px;
     font-family: 'Black Han Sans', sans-serif;
   }
 
-  .card-type-bar {
-    height: 4px;
-    width: 100%;
-  }
+  .card-type-bar { height: 4px; width: 100%; }
 
   .card-body {
-    flex: 1;
-    padding: .3rem .35rem;
-    display: flex;
-    flex-direction: column;
-    gap: .2rem;
+    flex: 1; padding: .3rem .35rem;
+    display: flex; flex-direction: column; gap: .2rem;
     overflow: hidden;
   }
 
-  .card-name {
-    font-size: .55rem;
-    font-weight: 700;
-    line-height: 1.2;
-    color: var(--text);
-    word-break: keep-all;
-  }
+  .card-name      { font-size: .55rem; font-weight: 700; line-height: 1.2; color: var(--text); word-break: keep-all; }
+  .card-type-label { font-size: .5rem; color: var(--text-dim); font-family: 'Black Han Sans', sans-serif; letter-spacing: .05em; }
+  .card-atk       { position: absolute; bottom: 3px; right: 4px; font-family: 'Black Han Sans', sans-serif; font-size: .7rem; color: var(--accent); }
 
-  .card-type-label {
-    font-size: .5rem;
-    color: var(--text-dim);
-    font-family: 'Black Han Sans', sans-serif;
-    letter-spacing: .05em;
-  }
+  .field-card-display { font-size: .5rem; color: var(--accent); text-align: center; padding: 2px; word-break: break-all; line-height: 1.2; }
 
-  .card-atk {
-    position: absolute;
-    bottom: 3px; right: 4px;
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: .7rem;
-    color: var(--accent);
-  }
-
-  /* Field card in zone */
-  .field-card-display {
-    font-size: .5rem;
-    color: var(--accent);
-    text-align: center;
-    padding: 2px;
-    word-break: break-all;
-    line-height: 1.2;
-  }
-
-  /* back of card (opponent hand) */
   .card-back {
-    width: 78px;
-    height: 108px;
+    width: 78px; height: 108px;
     border-radius: 6px;
     border: 1.5px solid var(--border);
     background: linear-gradient(135deg, #1e1e32, #13132a);
     flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: .55rem;
-    color: var(--text-dim);
-    position: relative;
-    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .55rem; color: var(--text-dim);
+    position: relative; overflow: hidden;
   }
 
   .card-back::before {
     content: '';
-    position: absolute;
-    inset: 6px;
-    border: 1px solid #2a2a45;
-    border-radius: 4px;
+    position: absolute; inset: 6px;
+    border: 1px solid #2a2a45; border-radius: 4px;
   }
 
-  .card-back.public-back {
-    border-color: #c88040;
-    background: linear-gradient(135deg, #2a1a10, #1a1208);
-  }
+  .card-back.public-back { border-color: #c88040; background: linear-gradient(135deg, #2a1a10, #1a1208); }
 
   .card-back.public-back .pub-name {
-    font-size: .5rem;
-    color: #c88040;
-    padding: 4px;
-    text-align: center;
-    word-break: break-all;
-    z-index: 1;
-    line-height: 1.2;
+    font-size: .5rem; color: #c88040;
+    padding: 4px; text-align: center; word-break: break-all;
+    z-index: 1; line-height: 1.2;
   }
 
-  /* ── LOG PANEL ── */
+  /* ── LOG ── */
   .log-panel {
     background: var(--surface);
     border-top: 1px solid var(--border);
@@ -527,36 +399,19 @@
     scrollbar-color: var(--border) transparent;
   }
 
-  .log-panel h3 {
-    font-size: .7rem;
-    color: var(--text-dim);
-    letter-spacing: .1em;
-    margin-bottom: .4rem;
-    font-family: 'Black Han Sans', sans-serif;
-  }
+  .log-panel h3 { font-size: .7rem; color: var(--text-dim); letter-spacing: .1em; margin-bottom: .4rem; font-family: 'Black Han Sans', sans-serif; }
 
-  .log-entry {
-    font-size: .75rem;
-    color: var(--text-dim);
-    padding: .15rem 0;
-    border-bottom: 1px solid #1a1a2a;
-    line-height: 1.4;
-  }
-
-  .log-entry.mine { color: #6ab87c; }
-  .log-entry.opponent { color: #e87070; }
-  .log-entry.system { color: var(--accent); font-style: italic; }
+  .log-entry       { font-size: .75rem; color: var(--text-dim); padding: .15rem 0; border-bottom: 1px solid #1a1a2a; line-height: 1.4; }
+  .log-entry.mine      { color: #6ab87c; }
+  .log-entry.opponent  { color: #e87070; }
+  .log-entry.system    { color: var(--accent); font-style: italic; }
 
   /* ── MODAL ── */
   .modal-overlay {
-    position: fixed;
-    inset: 0;
+    position: fixed; inset: 0;
     background: #000b;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-    padding: 1rem;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; padding: 1rem;
   }
 
   .modal-overlay.hidden { display: none; }
@@ -569,99 +424,46 @@
     width: min(520px, 100%);
     max-height: 90vh;
     overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    display: flex; flex-direction: column; gap: 1rem;
   }
 
-  .modal h2 {
-    font-family: 'Black Han Sans', sans-serif;
-    color: var(--accent);
-    font-size: 1.1rem;
-    letter-spacing: .08em;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: .75rem;
-  }
+  .modal h2 { font-family: 'Black Han Sans', sans-serif; color: var(--accent); font-size: 1.1rem; letter-spacing: .08em; border-bottom: 1px solid var(--border); padding-bottom: .75rem; }
 
-  .modal-effects {
-    font-size: .82rem;
-    line-height: 1.7;
-    color: var(--text);
-    white-space: pre-wrap;
-    background: var(--surface2);
-    border-radius: 6px;
-    padding: .8rem;
-  }
+  .modal-effects { font-size: .82rem; line-height: 1.7; color: var(--text); white-space: pre-wrap; background: var(--surface2); border-radius: 6px; padding: .8rem; }
 
-  .modal-meta {
-    display: flex;
-    gap: .5rem;
-    flex-wrap: wrap;
-    font-size: .75rem;
-  }
+  .modal-meta { display: flex; gap: .5rem; flex-wrap: wrap; font-size: .75rem; }
 
-  .meta-chip {
-    padding: .2rem .6rem;
-    border-radius: 20px;
-    border: 1px solid;
-    font-family: 'Black Han Sans', sans-serif;
-    letter-spacing: .05em;
-  }
+  .meta-chip { padding: .2rem .6rem; border-radius: 20px; border: 1px solid; font-family: 'Black Han Sans', sans-serif; letter-spacing: .05em; }
 
-  .modal-actions {
-    display: flex;
-    gap: .5rem;
-    flex-wrap: wrap;
-  }
-
+  .modal-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
   .modal-actions .btn { flex: 1; min-width: 100px; width: auto; }
 
   /* ── CARD PICKER ── */
   .card-picker-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: .5rem;
-    max-height: 50vh;
-    overflow-y: auto;
-    padding: .5rem 0;
+    display: flex; flex-wrap: wrap; gap: .5rem;
+    max-height: 50vh; overflow-y: auto; padding: .5rem 0;
   }
 
   /* ── GAME OVER ── */
   #gameover {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: #000d;
-    z-index: 200;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 1.5rem;
-    text-align: center;
+    display: none; position: fixed; inset: 0;
+    background: #000d; z-index: 200;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 1.5rem; text-align: center;
   }
 
   #gameover.show { display: flex; }
 
-  .gameover-title {
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: clamp(3rem, 10vw, 6rem);
-    letter-spacing: .2em;
-    text-shadow: 0 0 40px currentColor;
-  }
-
-  .gameover-title.win { color: var(--accent); }
+  .gameover-title { font-family: 'Black Han Sans', sans-serif; font-size: clamp(3rem, 10vw, 6rem); letter-spacing: .2em; text-shadow: 0 0 40px currentColor; }
+  .gameover-title.win  { color: var(--accent); }
   .gameover-title.lose { color: var(--danger); }
 
-  /* ── GAME CONFIRM DIALOG ── */
+  /* ── GAME CONFIRM ── */
   #gameConfirmOverlay {
-    position: fixed;
-    inset: 0;
+    position: fixed; inset: 0;
     background: #000a;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 400;
-    padding: 1rem;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 400; padding: 1rem;
   }
 
   #gameConfirmOverlay.hidden { display: none; }
@@ -672,274 +474,104 @@
     border-radius: 10px;
     padding: 1.25rem 1.5rem;
     width: min(360px, 100%);
-    display: flex;
-    flex-direction: column;
-    gap: .9rem;
+    display: flex; flex-direction: column; gap: .9rem;
     box-shadow: 0 0 30px #c8a96e22;
   }
 
-  #gameConfirmTitle {
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: .95rem;
-    color: var(--accent);
-    letter-spacing: .08em;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: .6rem;
-  }
+  #gameConfirmTitle { font-family: 'Black Han Sans', sans-serif; font-size: .95rem; color: var(--accent); letter-spacing: .08em; border-bottom: 1px solid var(--border); padding-bottom: .6rem; }
+  #gameConfirmMsg   { font-size: .85rem; color: var(--text); line-height: 1.6; white-space: pre-wrap; }
 
-  #gameConfirmMsg {
-    font-size: .85rem;
-    color: var(--text);
-    line-height: 1.6;
-    white-space: pre-wrap;
-  }
-
-  #gameConfirmBtns {
-    display: flex;
-    gap: .5rem;
-    justify-content: flex-end;
-  }
+  #gameConfirmBtns { display: flex; gap: .5rem; justify-content: flex-end; }
 
   #gameConfirmBtns button {
     padding: .5rem 1.1rem;
     border-radius: 6px;
     font-family: 'Black Han Sans', sans-serif;
-    font-size: .85rem;
-    letter-spacing: .06em;
-    cursor: pointer;
-    transition: all .15s;
-    border: 1px solid;
+    font-size: .85rem; letter-spacing: .06em;
+    cursor: pointer; transition: all .15s; border: 1px solid;
   }
 
-  #gameConfirmBtns .gc-yes {
-    background: var(--accent);
-    color: #1a1000;
-    border-color: var(--accent);
-  }
-
+  #gameConfirmBtns .gc-yes { background: var(--accent); color: #1a1000; border-color: var(--accent); }
   #gameConfirmBtns .gc-yes:hover { background: #dfc07e; }
-
-  #gameConfirmBtns .gc-no {
-    background: transparent;
-    color: var(--text-dim);
-    border-color: var(--border);
-  }
-
-  #gameConfirmBtns .gc-no:hover { border-color: var(--accent); color: var(--accent); }
+  #gameConfirmBtns .gc-no  { background: transparent; color: var(--text-dim); border-color: var(--border); }
+  #gameConfirmBtns .gc-no:hover  { border-color: var(--accent); color: var(--accent); }
 
   /* ── UTILS ── */
   .hidden { display: none !important; }
   .flex-row { display: flex; align-items: center; gap: .5rem; }
   .spacer { flex: 1; }
 
-  .graveyard-info {
-    display: flex;
-    gap: .6rem;
-    font-size: .7rem;
-    color: var(--text-dim);
-  }
+  .graveyard-info { display: flex; gap: .6rem; font-size: .7rem; color: var(--text-dim); }
 
-  .zone-info {
-    padding: .2rem .5rem;
-    background: var(--surface2);
-    border-radius: 4px;
-    border: 1px solid var(--border);
-    cursor: pointer;
-  }
-
+  .zone-info { padding: .2rem .5rem; background: var(--surface2); border-radius: 4px; border: 1px solid var(--border); cursor: pointer; }
   .zone-info:hover { border-color: var(--accent); color: var(--text); }
 
   .notification {
-    position: fixed;
-    top: 1rem;
-    right: 1rem;
+    position: fixed; top: 1rem; right: 1rem;
     background: var(--surface2);
     border: 1px solid var(--accent);
-    border-radius: 8px;
-    padding: .75rem 1.2rem;
-    font-size: .85rem;
-    color: var(--accent);
-    z-index: 300;
-    animation: slide-in .3s ease;
+    border-radius: 8px; padding: .75rem 1.2rem;
+    font-size: .85rem; color: var(--accent);
+    z-index: 300; animation: slide-in .3s ease;
     max-width: 300px;
   }
 
   @keyframes slide-in {
     from { transform: translateX(120%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
+    to   { transform: translateX(0);    opacity: 1; }
   }
 
   /* ── DECK BUILDER ── */
   #deckBuilder {
-    display: none;
-    flex-direction: column;
+    display: none; flex-direction: column;
     min-height: 100vh;
     background: radial-gradient(ellipse at 50% 0%, #1e1040 0%, #0a0a0f 70%);
-    padding: 1rem;
-    gap: 1rem;
+    padding: 1rem; gap: 1rem;
   }
 
-  .deck-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: .5rem;
-  }
+  .deck-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+  .deck-header h2 { font-family: 'Black Han Sans', sans-serif; color: var(--accent); font-size: 1.2rem; letter-spacing: .1em; }
 
-  .deck-header h2 {
-    font-family: 'Black Han Sans', sans-serif;
-    color: var(--accent);
-    font-size: 1.2rem;
-    letter-spacing: .1em;
-  }
-
-  .deck-stats {
-    font-size: .8rem;
-    color: var(--text-dim);
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: .3rem .8rem;
-  }
-
+  .deck-stats { font-size: .8rem; color: var(--text-dim); background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: .3rem .8rem; }
   .deck-stats span { color: var(--accent); font-family: 'Black Han Sans', sans-serif; }
 
-  .deck-tabs {
-    display: flex;
-    gap: .4rem;
-    flex-wrap: wrap;
-  }
+  .deck-tabs { display: flex; gap: .4rem; flex-wrap: wrap; }
 
-  .deck-tab {
-    padding: .3rem .8rem;
-    border-radius: 20px;
-    border: 1px solid var(--border);
-    background: var(--surface2);
-    color: var(--text-dim);
-    font-family: 'Black Han Sans', sans-serif;
-    font-size: .75rem;
-    cursor: pointer;
-    transition: all .15s;
-  }
+  .deck-tab { padding: .3rem .8rem; border-radius: 20px; border: 1px solid var(--border); background: var(--surface2); color: var(--text-dim); font-family: 'Black Han Sans', sans-serif; font-size: .75rem; cursor: pointer; transition: all .15s; }
+  .deck-tab.active { border-color: var(--accent); color: var(--accent); background: #c8a96e18; }
 
-  .deck-tab.active {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: #c8a96e18;
-  }
+  .deck-pool { display: flex; flex-wrap: wrap; gap: .4rem; overflow-y: auto; max-height: 40vh; padding: .3rem 0; }
 
-  .deck-pool {
-    display: flex;
-    flex-wrap: wrap;
-    gap: .4rem;
-    overflow-y: auto;
-    max-height: 40vh;
-    padding: .3rem 0;
-  }
-
-  .pool-card {
-    position: relative;
-    cursor: pointer;
-  }
-
-  .pool-card .card-count-badge {
-    position: absolute;
-    top: -4px; right: -4px;
-    background: var(--accent);
-    color: #1a1000;
-    border-radius: 50%;
-    width: 18px; height: 18px;
-    font-size: .65rem;
-    font-family: 'Black Han Sans', sans-serif;
-    display: flex; align-items: center; justify-content: center;
-    z-index: 2;
-  }
+  .pool-card { position: relative; cursor: pointer; }
 
   .pool-card .card-in-deck {
-    position: absolute;
-    bottom: -4px; left: -4px;
-    background: var(--safe);
-    color: #fff;
-    border-radius: 50%;
-    width: 18px; height: 18px;
-    font-size: .6rem;
-    font-family: 'Black Han Sans', sans-serif;
-    display: flex; align-items: center; justify-content: center;
-    z-index: 2;
+    position: absolute; bottom: -4px; left: -4px;
+    background: var(--safe); color: #fff;
+    border-radius: 50%; width: 18px; height: 18px;
+    font-size: .6rem; font-family: 'Black Han Sans', sans-serif;
+    display: flex; align-items: center; justify-content: center; z-index: 2;
   }
 
-  .my-deck-area {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: .8rem;
-    display: flex;
-    flex-direction: column;
-    gap: .5rem;
-  }
+  .my-deck-area { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: .8rem; display: flex; flex-direction: column; gap: .5rem; }
+  .my-deck-area h3 { font-size: .8rem; color: var(--text-dim); letter-spacing: .08em; font-family: 'Black Han Sans', sans-serif; }
 
-  .my-deck-area h3 {
-    font-size: .8rem;
-    color: var(--text-dim);
-    letter-spacing: .08em;
-    font-family: 'Black Han Sans', sans-serif;
-  }
+  .my-deck-list { display: flex; flex-wrap: wrap; gap: .3rem; max-height: 25vh; overflow-y: auto; }
 
-  .my-deck-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: .3rem;
-    max-height: 25vh;
-    overflow-y: auto;
-  }
-
-  .deck-card-chip {
-    padding: .2rem .5rem;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    font-size: .7rem;
-    color: var(--text);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: .3rem;
-  }
-
+  .deck-card-chip { padding: .2rem .5rem; background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; font-size: .7rem; color: var(--text); cursor: pointer; display: flex; align-items: center; gap: .3rem; }
   .deck-card-chip:hover { border-color: var(--danger); color: var(--danger); }
   .deck-card-chip .chip-count { color: var(--accent); font-family: 'Black Han Sans', sans-serif; }
 
-  .key-deck-area {
-    background: var(--surface);
-    border: 1px solid #7c5cbf;
-    border-radius: 8px;
-    padding: .8rem;
-    display: flex;
-    flex-direction: column;
-    gap: .5rem;
-  }
+  .key-deck-area { background: var(--surface); border: 1px solid #7c5cbf; border-radius: 8px; padding: .8rem; display: flex; flex-direction: column; gap: .5rem; }
+  .key-deck-area h3 { font-size: .8rem; color: #9c7cdf; letter-spacing: .08em; font-family: 'Black Han Sans', sans-serif; }
 
-  .key-deck-area h3 {
-    font-size: .8rem;
-    color: #9c7cdf;
-    letter-spacing: .08em;
-    font-family: 'Black Han Sans', sans-serif;
-  }
-
-  .deck-actions {
-    display: flex;
-    gap: .5rem;
-    flex-wrap: wrap;
-  }
-
+  .deck-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
   .deck-actions .btn { flex: 1; min-width: 120px; width: auto; }
 
   @media (max-width: 480px) {
-    .zone-slot { width: 60px; height: 84px; }
-    .card { width: 58px; height: 80px; }
-    .card-back { width: 58px; height: 80px; }
-    .card-name { font-size: .48rem; }
+    .zone-slot  { width: 60px;  height: 84px; }
+    .card       { width: 58px;  height: 80px; }
+    .card-back  { width: 58px;  height: 80px; }
+    .card-name  { font-size: .48rem; }
   }
 </style>
 </head>
@@ -952,39 +584,46 @@
     <p>패가 목숨 · 핸드 배틀 TCG</p>
   </div>
 
-  <!-- 계정 블록 -->
+  <!-- 계정 -->
   <div class="lobby-card" id="accountBlock">
     <h2>계정</h2>
     <div id="loginArea">
       <button class="btn btn-primary" onclick="signInWithGoogle()">Google로 로그인</button>
-      <p style="font-size:.78rem;color:var(--text-dim);text-align:center;margin-top:.3rem">로그인하면 전적·재화·랭킹이 기록됩니다</p>
+      <p style="font-size:.78rem;color:var(--text-dim);text-align:center;margin-top:.3rem">
+        로그인하면 전적·재화·랭킹이 기록됩니다
+      </p>
     </div>
     <div id="profileArea" style="display:none">
       <div style="display:flex;align-items:center;gap:.8rem">
-        <img id="profileAvatar" src="" width="36" height="36" style="border-radius:50%;border:1px solid var(--border);flex-shrink:0" alt="">
+        <img id="profileAvatar" src="" width="36" height="36"
+             style="border-radius:50%;border:1px solid var(--border);flex-shrink:0" alt="프로필 사진">
         <div style="flex:1;min-width:0">
           <div id="profileName" style="font-family:'Black Han Sans',sans-serif;font-size:.95rem;color:var(--accent)"></div>
           <div id="profileStats" style="font-size:.72rem;color:var(--text-dim);margin-top:.15rem"></div>
         </div>
         <div id="profileCurrency" style="font-family:'Black Han Sans',sans-serif;font-size:1rem;color:#f0c040;white-space:nowrap"></div>
       </div>
-      <div style="display:flex;gap:.4rem;margin-top:.5rem;">
+      <div style="display:flex;gap:.4rem;margin-top:.5rem">
         <input id="nicknameInput" type="text" maxlength="12" placeholder="닉네임 변경"
-               style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:.35rem .6rem;color:var(--text);font-size:.82rem;font-family:'Black Han Sans',sans-serif;">
-        <button onclick="saveNickname()" style="padding:.35rem .7rem;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:6px;cursor:pointer;font-family:'Black Han Sans',sans-serif;font-size:.78rem;white-space:nowrap;">저장</button>
+               style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:.35rem .6rem;color:var(--text);font-size:.82rem;font-family:'Black Han Sans',sans-serif">
+        <button onclick="saveNickname()"
+                style="padding:.35rem .7rem;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:6px;cursor:pointer;font-family:'Black Han Sans',sans-serif;font-size:.78rem;white-space:nowrap">
+          저장
+        </button>
       </div>
-      <button class="btn btn-secondary" onclick="signOutUser()" style="margin-top:.4rem;font-size:.8rem;padding:.4rem">로그아웃</button>
+      <button class="btn btn-secondary" onclick="signOutUser()" style="margin-top:.4rem;font-size:.8rem;padding:.4rem">
+        로그아웃
+      </button>
     </div>
   </div>
 
+  <!-- 플레이어 설정 -->
   <div class="lobby-card">
     <h2>플레이어 설정</h2>
     <input id="playerName" type="text" placeholder="닉네임 입력" maxlength="12">
-    <div id="deckBuilderBtn" style="display:none">
-      <!-- 덱 빌더는 v2에서 추가 예정 -->
-    </div>
   </div>
 
+  <!-- 방 만들기 -->
   <div class="lobby-card">
     <h2>새 방 만들기</h2>
     <button id="createRoomBtn" class="btn btn-primary" onclick="createRoom()">방 만들기</button>
@@ -996,9 +635,11 @@
     <button id="startGameBtn" class="btn btn-safe hidden" onclick="startGame()">게임 시작 (상대 입장 후)</button>
   </div>
 
+  <!-- 방 참가 -->
   <div class="lobby-card">
     <h2>방 참가하기</h2>
-    <input id="joinCode" type="text" placeholder="방 코드 4자리" maxlength="4" style="text-transform:uppercase;letter-spacing:.2em;font-size:1.2rem;text-align:center">
+    <input id="joinCode" type="text" placeholder="방 코드 4자리" maxlength="4"
+           style="text-transform:uppercase;letter-spacing:.2em;font-size:1.2rem;text-align:center">
     <button id="joinRoomBtn" class="btn btn-secondary" onclick="joinRoom()">참가</button>
     <div id="joinStatus" class="status-msg hidden"></div>
   </div>
@@ -1011,7 +652,6 @@
     <div class="deck-stats">메인 <span id="dbMainCount">0</span>/40~60 · 키카드 <span id="dbKeyCount">0</span>/0~5</div>
   </div>
 
-  <!-- 테마 필터 탭 -->
   <div class="deck-tabs" id="dbTabs">
     <div class="deck-tab active" onclick="filterDeckPool('전체')">전체</div>
     <div class="deck-tab" onclick="filterDeckPool('펭귄')">펭귄</div>
@@ -1025,16 +665,13 @@
     <div class="deck-tab" onclick="filterDeckPool('범용')">범용</div>
   </div>
 
-  <!-- 카드 풀 -->
   <div class="deck-pool" id="dbPool"></div>
 
-  <!-- 내 메인 덱 -->
   <div class="my-deck-area">
     <h3>📦 메인 덱</h3>
     <div class="my-deck-list" id="dbMainList"></div>
   </div>
 
-  <!-- 내 키카드 덱 -->
   <div class="key-deck-area">
     <h3>🔑 키카드 덱 (종류별 1장, 최대 5종)</h3>
     <div class="my-deck-list" id="dbKeyList"></div>
@@ -1050,9 +687,10 @@
 
 <!-- ════════════ GAME ════════════ -->
 <div id="game">
-  <!-- Header -->
   <div class="game-header">
-    <div class="room-info">방코드 <span id="hdrRoomCode">----</span> · <span id="hdrMyName">나</span> vs <span id="hdrOpName">상대</span></div>
+    <div class="room-info">
+      방코드 <span id="hdrRoomCode">----</span> · <span id="hdrMyName">나</span> vs <span id="hdrOpName">상대</span>
+    </div>
     <div class="phase-indicator">
       <div class="phase-chip" id="phDraw">드로우</div>
       <div class="phase-chip" id="phDeploy">전개</div>
@@ -1066,10 +704,9 @@
     <div id="turnLabel" class="turn-label turn-opponent">상대 턴</div>
   </div>
 
-  <!-- Board -->
   <div class="board">
 
-    <!-- OPPONENT AREA -->
+    <!-- 상대 영역 -->
     <div class="player-area opponent">
       <div class="area-label">
         <strong id="opNameLabel">상대</strong>
@@ -1082,26 +719,24 @@
           <span class="zone-info" onclick="showZone('opExile')">제외 <span id="opExileCount">0</span></span>
         </div>
       </div>
-      <!-- Opponent hand (backs / revealed publics) -->
       <div class="hand-area" id="opHand"></div>
-      <!-- Opponent field -->
       <div class="monster-zone" id="opField"></div>
     </div>
 
-    <!-- CENTER -->
+    <!-- 센터 -->
     <div class="center-divider">
       <div class="field-zone">
         <span>상대 필드</span>
         <div class="field-card-slot" id="opFieldZone" onclick="viewFieldCard('op')">비어있음</div>
       </div>
       <div class="phase-actions" id="phaseActions">
-        <button class="btn-sm" id="btnDraw" onclick="doDrawPhase()">드로우</button>
-        <button class="btn-sm" id="btnEndDeploy" onclick="endDeploy()">전개 종료</button>
-        <button class="btn-sm" id="btnEndAttack" onclick="endAttack()">공격 종료</button>
-        <button class="btn-sm" id="btnEndTurn" onclick="endTurn()">턴 종료</button>
-        <button class="btn-sm" id="btnKeyFetch" onclick="startKeyFetchEffect()">키카드 가져오기</button>
+        <button class="btn-sm" id="btnDraw"       onclick="doDrawPhase()">드로우</button>
+        <button class="btn-sm" id="btnEndDeploy"  onclick="endDeploy()">전개 종료</button>
+        <button class="btn-sm" id="btnEndAttack"  onclick="endAttack()">공격 종료</button>
+        <button class="btn-sm" id="btnEndTurn"    onclick="endTurn()">턴 종료</button>
+        <button class="btn-sm" id="btnKeyFetch"   onclick="startKeyFetchEffect()">키카드 가져오기</button>
         <button class="btn-sm hidden" id="btnChainRespond" onclick="openChainResponse()">체인 응답</button>
-        <button class="btn-sm hidden" id="btnChainPass" onclick="passChainPriority()">체인 패스</button>
+        <button class="btn-sm hidden" id="btnChainPass"    onclick="passChainPriority()">체인 패스</button>
         <button class="btn-sm" onclick="concede()" style="color:var(--danger);border-color:var(--danger)">항복</button>
       </div>
       <div class="field-zone">
@@ -1110,9 +745,8 @@
       </div>
     </div>
 
-    <!-- MY AREA -->
+    <!-- 내 영역 -->
     <div class="player-area self">
-      <!-- My field -->
       <div class="monster-zone" id="myField"></div>
       <div class="area-label">
         <strong id="myNameLabel">나</strong>
@@ -1125,12 +759,10 @@
           <span class="zone-info" onclick="showZone('myExile')">제외 <span id="myExileCount">0</span></span>
         </div>
       </div>
-      <!-- My hand -->
       <div class="hand-area" id="myHand"></div>
     </div>
   </div>
 
-  <!-- Log -->
   <div class="log-panel">
     <h3>게임 로그</h3>
     <div id="logEntries"></div>
@@ -1146,7 +778,7 @@
 
 <!-- ════════════ MODALS ════════════ -->
 
-<!-- Card Detail Modal -->
+<!-- 카드 상세 -->
 <div class="modal-overlay hidden" id="cardDetailModal">
   <div class="modal">
     <h2 id="mdCardName">카드명</h2>
@@ -1158,20 +790,21 @@
   </div>
 </div>
 
-<!-- Card Picker Modal (for targeting / discard / etc) -->
+<!-- 카드 픽커 -->
+<!-- 버그 수정: 취소 버튼이 closeModal만 호출하면 pickerQueue가 막히므로 confirmPick(true)로 연결 -->
 <div class="modal-overlay hidden" id="cardPickerModal">
   <div class="modal">
     <h2 id="pickerTitle">카드 선택</h2>
     <p id="pickerDesc" style="font-size:.82rem;color:var(--text-dim)"></p>
     <div class="card-picker-grid" id="pickerGrid"></div>
     <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="closeModal('cardPickerModal')">취소</button>
+      <button class="btn btn-secondary" onclick="cancelPick()">취소</button>
       <button class="btn btn-primary" id="pickerConfirmBtn" onclick="confirmPick()">확인</button>
     </div>
   </div>
 </div>
 
-<!-- Zone Viewer Modal -->
+<!-- 존 뷰어 -->
 <div class="modal-overlay hidden" id="zoneViewModal">
   <div class="modal">
     <h2 id="zoneViewTitle">묘지</h2>
@@ -1182,26 +815,58 @@
   </div>
 </div>
 
-<!-- ════════════ GAME CONFIRM DIALOG ════════════ -->
+<!-- 효과 발동 확인 다이얼로그 -->
 <div id="gameConfirmOverlay" class="hidden">
   <div id="gameConfirmBox">
     <div id="gameConfirmTitle">효과 발동 확인</div>
     <div id="gameConfirmMsg"></div>
     <div id="gameConfirmBtns">
-      <button class="gc-no" id="gcNoBtn">취소</button>
+      <button class="gc-no"  id="gcNoBtn">취소</button>
       <button class="gc-yes" id="gcYesBtn">확인</button>
     </div>
   </div>
 </div>
 
 <!-- ════════════ SCRIPTS ════════════ -->
+<!--
+  로드 순서 (의존성 순):
+  1. cards.js    — CARDS, CARD_TYPE_COLOR, CARD_TYPE_LABEL 상수 (모든 파일이 참조)
+  2. engine.js   — G 상태, 유틸, 드로우/소환 헬퍼 (network·effect·ui가 참조)
+  3. ui.js       — renderAll, openCardPicker, 덱빌더 (effect가 참조)
+  4. network.js  — sendGameState, listenRoom, sendAction (effect가 참조)
+  5. penguin.js  — 펭귄 효과 (effect의 onSummon이 참조)
+  6. jibaeja.js  — 지배자 효과 (effect의 onSummon이 참조)
+  7. effect.js   — 페이즈, 전투, 체인, activateCard (penguin·jibaeja 완전히 로드된 후)
+  8. account.js  — 계정/로그인 (Firebase auth, 독립적)
+
+  ※ 원본의 effects.js → effect.js 로 파일명 변경됨에 주의
+-->
 <script src="js/cards.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/network.js"></script>
 <script src="js/penguin.js"></script>
 <script src="js/jibaeja.js"></script>
-<script src="js/effects.js"></script>
+<script src="js/effect.js"></script>
 <script src="js/account.js"></script>
+
+<script>
+  /**
+   * 카드 픽커 취소 처리.
+   * closeModal만 호출하면 pickerQueue가 영구적으로 막히므로
+   * 빈 선택([])으로 콜백을 실행하고 큐를 진행시킵니다.
+   * forced 모드일 때는 취소 불가 — confirmPick()의 가드가 처리합니다.
+   */
+  function cancelPick() {
+    if (typeof confirmPick === 'function') {
+      // pickerSelected를 비워서 "아무것도 선택 안 함"으로 처리
+      pickerSelected = [];
+      confirmPick();
+    } else {
+      closeModal('cardPickerModal');
+    }
+  }
+</script>
+
 </body>
 </html>
