@@ -5382,8 +5382,7 @@ function initAuth() {
 }
 
 function signInWithGoogle() {
-  // loadFirebase가 이미 SDK를 로드했으면 바로 실행
-  if (firebaseLoaded) {
+  function doLogin() {
     if (!authInitialized) initAuth();
     const provider = new firebase.auth.GoogleAuthProvider();
     firebase.auth().signInWithPopup(provider).catch(e => {
@@ -5393,21 +5392,11 @@ function signInWithGoogle() {
         notify('로그인 실패: ' + e.message);
       }
     });
-    return;
   }
-  // 아직 안 됐으면 loadFirebase 경유
+  // SDK 로드 여부 확인 후 실행
+  if (window.firebase && firebase.auth) { doLogin(); return; }
   notify('로그인 준비 중...');
-  loadFirebase(() => {
-    initAuth();
-    const provider = new firebase.auth.GoogleAuthProvider();
-    firebase.auth().signInWithPopup(provider).catch(e => {
-      if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user') {
-        firebase.auth().signInWithRedirect(new firebase.auth.GoogleAuthProvider());
-      } else {
-        notify('로그인 실패: ' + e.message);
-      }
-    });
-  });
+  loadAccountSDK(doLogin);
 }
 
 function signOutUser() {
@@ -5503,32 +5492,27 @@ function renderLoggedOutUI() {
   document.getElementById('profileArea').style.display = 'none';
 }
 
-// ── loadFirebase에 Auth+Firestore SDK 추가 후 initAuth 자동 실행
-// (기존 loadFirebase 함수는 건드리지 않고, 완료 콜백 이후에만 처리)
-const _origLoadFirebase = loadFirebase;
-loadFirebase = function(callback) {
-  _origLoadFirebase(() => {
-    // Auth + Firestore SDK 추가 로드
-    const extra = [
-      'https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js',
-      'https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js',
-    ];
-    function loadExtra(idx) {
-      if (idx >= extra.length) { initAuth(); callback(); return; }
-      const src = extra[idx];
-      if (document.querySelector('script[src="' + src + '"]')) { loadExtra(idx+1); return; }
-      const s = document.createElement('script');
-      s.src = src; s.async = false;
-      s.onload = () => loadExtra(idx + 1);
-      s.onerror = () => { loadExtra(idx + 1); };
-      document.head.appendChild(s);
-    }
-    loadExtra(0);
-  });
-};
-
-// 페이지 로드 후 미리 SDK 로드 (로그인 버튼 응답 빠르게)
-window.addEventListener('load', () => loadFirebase(() => {}));
+// Auth+Firestore SDK 로드 (로그인 버튼 클릭 시 또는 페이지 로드 후 조용히)
+function loadAccountSDK(cb) {
+  const extra = [
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js',
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js',
+    'https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js',
+  ];
+  function next(idx) {
+    if (idx >= extra.length) { if (cb) cb(); return; }
+    const src = extra[idx];
+    if (document.querySelector('script[src="' + src + '"]')) { next(idx+1); return; }
+    const s = document.createElement('script');
+    s.src = src; s.async = false;
+    s.onload = () => next(idx+1);
+    s.onerror = () => next(idx+1);
+    document.head.appendChild(s);
+  }
+  next(0);
+}
+// 페이지 로드 후 백그라운드에서 조용히 로드 (게임 기능엔 영향 없음)
+window.addEventListener('load', () => { setTimeout(() => loadAccountSDK(initAuth), 1000); });
 
 // ─────────────────────────────────────────────
 // ⚠️  ADMIN CHEAT PANEL  (완성 후 이 블록 전체 삭제)
