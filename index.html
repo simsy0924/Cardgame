@@ -5612,31 +5612,23 @@ function initAuth() {
 }
 
 function signInWithGoogle() {
-  // loadFirebase가 이미 SDK를 로드했으면 바로 실행
-  if (firebaseLoaded) {
-    if (!authInitialized) initAuth();
-    const provider = new firebase.auth.GoogleAuthProvider();
-    firebase.auth().signInWithPopup(provider).catch(e => {
-      if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user') {
-        firebase.auth().signInWithRedirect(new firebase.auth.GoogleAuthProvider());
-      } else {
-        notify('로그인 실패: ' + e.message);
-      }
-    });
+  if (!firebaseLoaded) {
+    notify('로그인 준비 중...');
+    loadFirebase(() => { initAuth(); _doGooglePopup(); });
     return;
   }
-  // 아직 안 됐으면 loadFirebase 경유
-  notify('로그인 준비 중...');
-  loadFirebase(() => {
-    initAuth();
-    const provider = new firebase.auth.GoogleAuthProvider();
-    firebase.auth().signInWithPopup(provider).catch(e => {
-      if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user') {
-        firebase.auth().signInWithRedirect(new firebase.auth.GoogleAuthProvider());
-      } else {
-        notify('로그인 실패: ' + e.message);
-      }
-    });
+  if (!authInitialized) initAuth();
+  _doGooglePopup();
+}
+
+function _doGooglePopup() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  firebase.auth().signInWithPopup(provider).catch(e => {
+    if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user') {
+      notify('팝업이 차단됐습니다. 브라우저의 팝업 허용 후 다시 시도하세요.');
+    } else {
+      notify('로그인 실패: ' + e.message);
+    }
   });
 }
 
