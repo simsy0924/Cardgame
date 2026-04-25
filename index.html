@@ -2200,8 +2200,17 @@ function initAuth() {
   if (!window.firebase) return;
   if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 
-  // Firestore 초기화
   fsdb = firebase.firestore();
+
+  // 리다이렉트 로그인 후 돌아왔을 때 결과 처리
+  firebase.auth().getRedirectResult().then(async (result) => {
+    if (result && result.user) {
+      // 리다이렉트 성공 — onAuthStateChanged가 이어서 처리
+    }
+  }).catch(e => {
+    console.error('리다이렉트 결과 오류:', e);
+    notify('로그인 실패: ' + e.message);
+  });
 
   firebase.auth().onAuthStateChanged(async (user) => {
     currentUser = user;
@@ -2209,7 +2218,6 @@ function initAuth() {
       await ensureUserDoc(user);
       userProfile = await getUserProfile(user.uid);
       renderProfileUI(user);
-      // 닉네임 자동 채움 (비어있을 때만)
       const nameInput = document.getElementById('playerName');
       if (nameInput && !nameInput.value.trim()) {
         nameInput.value = userProfile?.nickname || user.displayName || '';
@@ -2244,7 +2252,8 @@ function signInWithGoogle() {
 
 function _doGoogleSignIn() {
   const provider = new firebase.auth.GoogleAuthProvider();
-  firebase.auth().signInWithPopup(provider).catch(e => {
+  // 모바일 호환성을 위해 리다이렉트 방식 사용
+  firebase.auth().signInWithRedirect(provider).catch(e => {
     console.error('로그인 실패:', e);
     notify('로그인 실패: ' + e.message);
   });
