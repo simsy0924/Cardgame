@@ -930,17 +930,29 @@ function activateThemeCardEffectFromHand(handIdx, effectNum = 1) {
   if (!effectText) { notify('효과 텍스트를 찾을 수 없습니다.'); return; }
   const { costText, mainText } = _splitCostAndMain(effectText);
 
+  const chainEffect = {
+    type: 'themeEffect',
+    label: `${c.name} ${effectNum}`,
+    cardId: c.id,
+    effectNum,
+    theme: card.theme,
+    mainText,
+  };
+
+  if (activeChainState && activeChainState.active && activeChainState.priority !== myRole) {
+    notify('현재 체인 우선권은 상대에게 있습니다. (체인 시작 직후에는 상대가 먼저 응답)');
+    return;
+  }
+
   _payThemeCost(card, handIdx, costText, (paid) => {
     if (!paid) return;
+    if (activeChainState && activeChainState.active && activeChainState.priority !== myRole) {
+      notify('코스트 지불 후 우선권이 변경되어 발동할 수 없습니다.');
+      return;
+    }
     markEffectUsed(c.id, effectNum);
-    beginChain({
-      type: 'themeEffect',
-      label: `${c.name} ${effectNum}`,
-      cardId: c.id,
-      effectNum,
-      theme: card.theme,
-      mainText,
-    });
+    if (activeChainState && activeChainState.active) addChainLink(chainEffect);
+    else beginChain(chainEffect);
     sendGameState();
     renderAll();
   });
@@ -990,7 +1002,9 @@ function resolveThemeEffect(link) {
     openCardPicker(G.opField, `${card.name}: 상대 몬스터 묘지로`, 1, (sel) => {
       if (sel.length > 0) {
         const mon = G.opField.splice(sel[0], 1)[0];
+        if (!mon) return;
         G.opGrave.push(mon);
+        sendAction({ type: 'opFieldRemove', cardId: mon.id, to: 'grave' });
       }
       renderAll();
     });
