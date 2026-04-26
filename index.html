@@ -636,6 +636,13 @@
     <button id="joinRoomBtn" class="btn btn-secondary" onclick="joinRoom()">참가</button>
     <div id="joinStatus" class="status-msg hidden"></div>
   </div>
+
+  <!-- 관리자 (로그인한 UID가 Firestore admins 컬렉션에 있을 때만 표시) -->
+  <div class="lobby-card" style="border-color:#c84848;display:none">
+    <h2 style="color:#c84848">관리자</h2>
+    <button id="adminResetBtn" class="btn btn-danger" onclick="adminResetAllStats()">전적 초기화</button>
+  </div>
+
 </div>
 
 <!-- ════════════ DECK BUILDER ════════════ -->
