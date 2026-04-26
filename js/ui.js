@@ -200,6 +200,26 @@ function renderChainActions() {
     const opponentPriority = chainActive && !myPriority;
     btnKeyFetch.disabled = noKeyCard || inDraw || opponentPriority;
   }
+  renderChainStack();
+}
+
+function renderChainStack() {
+  let wrap = document.getElementById('chainStackView');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'chainStackView';
+    wrap.style.cssText = 'margin-top:8px;padding:8px;border:1px solid #4a4a5e;border-radius:8px;background:#1a1a24;font-size:.78rem;color:#ddd;';
+    const holder = document.getElementById('phaseActions');
+    if (!holder) return;
+    holder.appendChild(wrap);
+  }
+  const links = activeChainState?.links || [];
+  if (!activeChainState?.active || links.length === 0) {
+    wrap.innerHTML = '<div style="opacity:.7">체인 없음</div>';
+    return;
+  }
+  const rows = links.map((l, i) => `<div>⛓️ 체인 ${i + 1}: ${l.label || l.type}</div>`).join('');
+  wrap.innerHTML = `<div style="margin-bottom:4px;color:#9c7cdf">체인 스택 (해제는 역순)</div>${rows}`;
 }
 
 function startKeyFetchEffect() {
@@ -826,6 +846,12 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
               }
               addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
             }
+          } else if (['크툴루', '올드 원', '라이온', '타이거', '라이거', '마피아', '불가사의'].includes(card.theme)) {
+            const effectText = card.effects || '';
+            if (effectText.includes('①')) addBtn('① 효과 발동', 'btn-primary', () => activateThemeCardEffectFromHand(handIdx, 1));
+            if (effectText.includes('②')) addBtn('② 효과 발동', 'btn-secondary', () => activateThemeCardEffectFromHand(handIdx, 2));
+            if (effectText.includes('③')) addBtn('③ 효과 발동', 'btn-secondary', () => activateThemeCardEffectFromHand(handIdx, 3));
+            addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
           } else {
             if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
               addBtn('효과 소환 전용', 'btn-secondary', () => notify('통상 소환은 없습니다. 카드 효과로만 소환할 수 있습니다.'));
@@ -1370,4 +1396,3 @@ function enterGameWithDeck() {
   gameResultRecorded = false;
   enterGame();
 }
-
