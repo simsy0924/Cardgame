@@ -453,9 +453,41 @@ function handleOpponentAction(action) {
         if (idx >= 0) { const mon = G.myField.splice(idx,1)[0]; G.myHand.push({id:mon.id,name:mon.name,isPublic:true}); renderAll(); } }
       break;
     case 'opFieldRemove':
-      // 내 필드 카드가 제거됨
-      { const idx = G.myField.findIndex(c => c.id === action.cardId);
-        if (idx >= 0) { const mon = G.myField.splice(idx,1)[0]; if (action.to === 'grave') G.myGrave.push(mon); else G.myExile.push(mon); renderAll(); } }
+      // 내 필드 카드가 제거됨 (묘지 또는 제외)
+      {
+        const idx = G.myField.findIndex(c => c.id === action.cardId);
+        if (idx >= 0) {
+          // 펭귄의 전설 ③: 대상 지정 효과 무효
+          if (typeof checkPenguinLegendImmunity === 'function' &&
+              checkPenguinLegendImmunity(action.cardId, true)) {
+            // 전설 내성 — 효과 무효, 카드 유지
+            renderAll();
+            break;
+          }
+          const mon = G.myField.splice(idx, 1)[0];
+          if (action.to === 'grave') G.myGrave.push(mon);
+          else G.myExile.push(mon);
+          renderAll();
+        }
+      }
+      break;
+    case 'opFieldExile':
+      // 내 필드 카드가 제외됨 (펭귄 마법사 ② 등)
+      {
+        const idx = G.myField.findIndex(c => c.id === action.cardId);
+        if (idx >= 0) {
+          // 펭귄의 전설 ③: 대상 지정 효과 무효
+          if (typeof checkPenguinLegendImmunity === 'function' &&
+              checkPenguinLegendImmunity(action.cardId, true)) {
+            renderAll();
+            break;
+          }
+          const mon = G.myField.splice(idx, 1)[0];
+          G.myExile.push(mon);
+          log(`상대 효과로 ${mon.name} 제외됨`, 'opponent');
+          renderAll();
+        }
+      }
       break;
     case 'negate':
       log(`상대 효과 무효: ${action.reason || ''}`, 'opponent');

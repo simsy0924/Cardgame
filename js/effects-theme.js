@@ -146,6 +146,16 @@ function activateCard(handIdx) {
   const c = G.myHand[handIdx];
   if (!c) return;
   const card = CARDS[c.id];
+
+  // ── 펭귄 테마 카드: 전용 라우터로 위임 ──
+  if (card && card.theme === '펭귄') {
+    if (typeof activatePenguinCard === 'function') {
+      activatePenguinCard(handIdx, 1);
+    }
+    return;
+  }
+
+  // ── 동적 테마 핸들러 (올드원, 라이온, 타이거, 라이거, 마피아, 불가사의 등) ──
   if (card && activateRegisteredThemeCardEffect(handIdx, 1)) {
     return;
   }

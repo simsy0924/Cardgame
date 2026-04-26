@@ -167,57 +167,60 @@ function resolveChain(chainState) {
   }
 }
 
+// ─────────────────────────────────────────────
+// CHAIN RESOLVERS — 체인 링크 타입별 실행 함수 매핑
+// ─────────────────────────────────────────────
+const CHAIN_RESOLVERS = {
+  // 공용
+  keyFetch:                  (link) => resolveKeyFetch(link.cardId),
+  // 펭귄 마을
+  penguinVillage1:           ()     => resolvePenguinVillage1(),
+  // 꼬마 펭귄
+  triggerKkomaPenguin:       ()     => resolveKkomaPenguin(),
+  // 펭귄 부부
+  triggerPenguinBubu1:       ()     => resolvePenguinBubu1(),
+  ignitionPenguinBubu2:      ()     => resolvePenguinBubu2(),
+  // 현자 펭귄
+  ignitionSagePenguin1:      ()     => resolveSagePenguin1(),
+  ignitionSagePenguin2:      ()     => resolveSagePenguin2(),
+  // 수문장 펭귄
+  ignitionSummonerPenguin1:  (link) => resolveSummonerPenguin1(link.sourceInstanceId),
+  // 펭귄!돌격!
+  ignitionPenguinCharge1:    (link) => resolvePenguinCharge1(link.sourceInstanceId),
+  ignitionPenguinCharge2:    ()     => resolvePenguinCharge2(),
+  // 펭귄의 영광
+  ignitionPenguinGlory1:     (link) => resolvePenguinGlory1(link.sourceInstanceId),
+  ignitionPenguinGlory2:     ()     => resolvePenguinGlory2(),
+  // 펭귄 용사
+  triggerPenguinHero1:       ()     => resolvePenguinHero1(),
+  quickPenguinHero2:         ()     => resolvePenguinHero2(),
+  triggerPenguinHero3:       ()     => resolvePenguinHero3(),
+  // 펭귄의 일격
+  quickPenguinStrike1:       ()     => resolvePenguinStrike1(),
+  triggerPenguinStrike2:     ()     => _tryRecoverPenguinStrikeFromGrave(),
+  // 펭귄이여 영원하라
+  ignitionPenguinForever1:   ()     => resolvePenguinForever1(),
+  quickPenguinForever2:      ()     => resolvePenguinForever2(),
+  // 펭귄의 전설
+  triggerPenguinLegend1:     ()     => resolvePenguinLegend1(),
+  quickPenguinLegend2:       ()     => resolvePenguinLegend2(),
+  // 펭귄 마법사
+  ignitionPenguinWizard1:    ()     => resolvePenguinWizard1(),
+  triggerPenguinWizard2:     ()     => resolvePenguinWizard2(),
+  ignitionPenguinWizard3:    ()     => resolvePenguinWizard3(),
+  // 동적 테마 (theme-common.js)
+  themeEffect:               (link) => resolveThemeEffect(link),
+};
+
+// 체인 링크를 역순으로 로컬 실행 (Firebase 없이 해결하거나 resolvedLinks 처리 시)
 function executeChainLocally(links) {
   links.forEach(link => {
     if (link.by !== myRole) return;
-    if (link.type === 'keyFetch') {
-      resolveKeyFetch(link.cardId);
-    } else if (link.type === 'penguinVillage1') {
-      resolvePenguinVillage1();
-    } else if (link.type === 'triggerKkomaPenguin') {
-      resolveKkomaPenguin();
-    } else if (link.type === 'triggerPenguinBubu1') {
-      resolvePenguinBubu1();
-    } else if (link.type === 'triggerPenguinHero1') {
-      resolvePenguinHero1();
-    } else if (link.type === 'triggerPenguinLegend1') {
-      resolvePenguinLegend1();
-    } else if (link.type === 'triggerPenguinWizard2') {
-      resolvePenguinWizard2();
-    } else if (link.type === 'triggerPenguinHero3') {
-      resolvePenguinHero3();
-    } else if (link.type === 'quickPenguinHero2') {
-      resolvePenguinHero2();
-    } else if (link.type === 'quickPenguinLegend2') {
-      resolvePenguinLegend2();
-    } else if (link.type === 'quickPenguinStrike1') {
-      resolvePenguinStrike1();
-    } else if (link.type === 'quickPenguinForever2') {
-      resolvePenguinForever2();
-    } else if (link.type === 'ignitionPenguinBubu2') {
-      resolvePenguinBubu2();
-    } else if (link.type === 'ignitionSagePenguin1') {
-      resolveSagePenguin1();
-    } else if (link.type === 'ignitionSagePenguin2') {
-      resolveSagePenguin2();
-    } else if (link.type === 'ignitionSummonerPenguin1') {
-      resolveSummonerPenguin1(link.sourceInstanceId);
-    } else if (link.type === 'ignitionPenguinCharge1') {
-      resolvePenguinCharge1(link.sourceInstanceId);
-    } else if (link.type === 'ignitionPenguinCharge2') {
-      resolvePenguinCharge2();
-    } else if (link.type === 'ignitionPenguinGlory1') {
-      resolvePenguinGlory1(link.sourceInstanceId);
-    } else if (link.type === 'ignitionPenguinGlory2') {
-      resolvePenguinGlory2();
-    } else if (link.type === 'ignitionPenguinForever1') {
-      resolvePenguinForever1();
-    } else if (link.type === 'ignitionPenguinWizard1') {
-      resolvePenguinWizard1();
-    } else if (link.type === 'ignitionPenguinWizard3') {
-      resolvePenguinWizard3();
-    } else if (link.type === 'themeEffect') {
-      resolveThemeEffect(link);
+    const resolver = CHAIN_RESOLVERS[link.type];
+    if (resolver) {
+      resolver(link);
+    } else {
+      console.warn('[Chain] 알 수 없는 링크 타입:', link.type);
     }
   });
   sendGameState();

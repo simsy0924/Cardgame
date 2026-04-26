@@ -191,8 +191,27 @@ function triggerSummonerPenguin2() {
 }
 
 // ─────────────────────────────────────────────
-// 펭귄 마을 ② 체크
+// 펭귄의 전설 ③ — 비대상 내성
+// 상대 효과가 내 필드의 펭귄의 전설을 대상으로 지정하려 할 때 차단
+// 반환값: true = 전설이 보호되어 대상 지정 불가, false = 정상 진행
 // ─────────────────────────────────────────────
+function isPenguinLegendTargeted(cardId) {
+  if (cardId !== '펭귄의 전설') return false;
+  return G.myField.some(c => c.id === '펭귄의 전설');
+}
+
+// 상대가 내 필드 카드를 대상으로 하는 효과 처리 전에 호출
+// cardId: 대상이 될 내 필드 카드 id
+// isTargeting: true = 대상 지정 효과, false = 비대상 효과(전설도 막을 수 없음)
+// 반환값: true = 전설 내성으로 효과 무효, false = 정상 진행
+function checkPenguinLegendImmunity(cardId, isTargeting = true) {
+  if (!isTargeting) return false; // 비대상 효과는 전설도 받음
+  if (cardId !== '펭귄의 전설') return false;
+  if (!G.myField.some(c => c.id === '펭귄의 전설')) return false;
+  log('펭귄의 전설 ③: 대상 지정 효과 무효!', 'mine');
+  notify('펭귄의 전설 ③: 이 카드를 대상으로 하는 효과는 무효입니다.');
+  return true;
+}
 function checkPenguinVillageReplace(discardCount) {
   const villageIdx    = G.myHand.findIndex(c => c.id === '펭귄 마을' && c.isPublic);
   const fieldPenguins = G.myField.filter(c => isPenguinMonster(c.id));
@@ -208,13 +227,31 @@ function checkPenguinVillageReplace(discardCount) {
         sel.forEach(i => {
           const mon = fieldPenguins[i];
           sendToGrave(mon.id, 'field');
+          // 수문장 펭귄 ②: 마을 효과로 묘지 시 상대 몬스터 제거
           if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
         });
+        // 펭귄의 일격 ②: 마을 효과로 몬스터가 묘지로 보내졌을 경우 묘지의 이 카드를 패에 넣는다
+        _tryRecoverPenguinStrikeFromGrave();
         renderAll();
       }
     );
   });
   return true;
+}
+
+// 펭귄의 일격 ② — 펭귄 마을 효과로 몬스터 묘지 시 자동 트리거
+function _tryRecoverPenguinStrikeFromGrave() {
+  const graveIdx = G.myGrave.findIndex(c => c.id === '펭귄의 일격');
+  if (graveIdx < 0) return;
+  if (!canUseEffect('펭귄의 일격', 2)) return;
+  gameConfirm('펭귄의 일격 ②\n묘지의 펭귄의 일격을 패에 넣습니까?', (yes) => {
+    if (!yes) return;
+    markEffectUsed('펭귄의 일격', 2);
+    const c = G.myGrave.splice(graveIdx, 1)[0];
+    G.myHand.push({ id: c.id, name: c.name, isPublic: true });
+    log('펭귄의 일격 ②: 묘지에서 패로 회수!', 'mine');
+    sendGameState(); renderAll();
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -681,5 +718,15 @@ function activateGraveEffect(cardId) {
 // 레거시 호환
 function activatePenguinEffect() { return false; }
 
-// 상대 펭귄 액션 처리 (현재 빈 구현 — 필요 시 확장)
-function handlePenguinOpAction(action) {}
+// 상대 펭귄 액션 처리
+function handlePenguinOpAction(action) {
+  switch (action.type) {
+    case 'opFieldExile':
+      // 상대 펭귄 마법사 ②로 내 카드 제외 — network.js의 opFieldExile 케이스에서 처리됨
+      // 여기선 추가 로그만
+      log(`상대 효과: ${action.cardId ? (CARDS[action.cardId]?.name || action.cardId) : '카드'} 제외`, 'opponent');
+      break;
+    default:
+      break;
+  }
+}
