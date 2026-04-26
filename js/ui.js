@@ -846,7 +846,7 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
               }
               addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
             }
-          } else if (['크툴루', '올드 원', '라이온', '타이거', '라이거', '마피아', '불가사의'].includes(card.theme)) {
+          } else if (['크툴루', '올드 원', '올드원', '라이온', '타이거', '라이거', '마피아', '불가사의'].includes(card.theme)) {
             const effectText = card.effects || '';
             if (effectText.includes('①')) addBtn('① 효과 발동', 'btn-primary', () => activateThemeCardEffectFromHand(handIdx, 1));
             if (effectText.includes('②')) addBtn('② 효과 발동', 'btn-secondary', () => activateThemeCardEffectFromHand(handIdx, 2));
