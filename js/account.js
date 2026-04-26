@@ -146,4 +146,3 @@ function renderLoggedOutUI() {
 window.addEventListener('load', () => loadFirebase(() => {}));
 
 
-</script>

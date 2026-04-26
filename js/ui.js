@@ -1345,7 +1345,6 @@ let _deckReadyHandler = null;
 function checkBothDecksReady(overlay) {
   if (!roomRef) { enterGameWithDeck(); return; }
 
-  // 이전 핸들러가 있으면 해당 핸들러만 정확히 제거 (listenRoom 핸들러는 유지)
   if (_deckReadyHandler) {
     roomRef.off('value', _deckReadyHandler);
     _deckReadyHandler = null;
@@ -1354,10 +1353,8 @@ function checkBothDecksReady(overlay) {
   _deckReadyHandler = function(snap) {
     const data = snap.val();
     if (!data) return;
-
     const hostReady = data.hostDeckReady === true;
     const guestReady = data.guestDeckReady === true;
-
     if (hostReady && guestReady) {
       roomRef.off('value', _deckReadyHandler);
       _deckReadyHandler = null;

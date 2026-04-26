@@ -10,7 +10,6 @@ function doDrawPhase() {
   if (roomRef) roomRef.child('roomPhase').set({ activePlayer: myRole, phase: 'deploy' });
 }
 
-// drawN: drawCards의 별칭 (engine.js의 drawOne과 일관성 유지)
 function drawN(n) { drawCards(n); }
 
 function drawCards(n) {
@@ -532,6 +531,9 @@ function resolvePenguinVillage1() {
 }
 
 function renderFieldZones() {
+  // ui.js의 renderFieldZones가 실제 구현
+}
+
 // ENTER GAME
 // ─────────────────────────────────────────────
 function enterGame() {
