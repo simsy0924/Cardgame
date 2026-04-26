@@ -1026,6 +1026,19 @@ function advancePhase(phase) {
 }
 
 // ─────────────────────────────────────────────
+// MODAL HELPERS
+// ─────────────────────────────────────────────
+function closeModal(modalId) {
+  const el = document.getElementById(modalId);
+  if (el) el.classList.add('hidden');
+}
+
+function openModal(modalId) {
+  const el = document.getElementById(modalId);
+  if (el) el.classList.remove('hidden');
+}
+
+// ─────────────────────────────────────────────
 // CARD PICKER MODAL
 // ─────────────────────────────────────────────
 // ─────────────────────────────────────────────
