@@ -637,7 +637,7 @@
     <div id="joinStatus" class="status-msg hidden"></div>
   </div>
 
-  <!-- 관리자 (로그인한 UID가 Firestore admins 컬렉션에 있을 때만 표시) -->
+  <!-- 관리자 -->
   <div class="lobby-card" style="border-color:#c84848;display:none">
     <h2 style="color:#c84848">관리자</h2>
     <button id="adminResetBtn" class="btn btn-danger" onclick="adminResetAllStats()">전적 초기화</button>
@@ -791,7 +791,6 @@
 </div>
 
 <!-- 카드 픽커 -->
-<!-- 버그 수정: 취소 버튼이 closeModal만 호출하면 pickerQueue가 막히므로 confirmPick(true)로 연결 -->
 <div class="modal-overlay hidden" id="cardPickerModal">
   <div class="modal">
     <h2 id="pickerTitle">카드 선택</h2>
@@ -828,19 +827,6 @@
 </div>
 
 <!-- ════════════ SCRIPTS ════════════ -->
-<!--
-  로드 순서 (의존성 순):
-  1. cards.js    — CARDS, CARD_TYPE_COLOR, CARD_TYPE_LABEL 상수 (모든 파일이 참조)
-  2. engine.js   — G 상태, 유틸, 드로우/소환 헬퍼 (network·effect·ui가 참조)
-  3. ui.js       — renderAll, openCardPicker, 덱빌더 (effect가 참조)
-  4. network.js  — sendGameState, listenRoom, sendAction (effect가 참조)
-  5. penguin.js  — 펭귄 효과 (effect의 onSummon이 참조)
-  6. jibaeja.js  — 지배자 효과 (effect의 onSummon이 참조)
-  7. effect.js   — 페이즈, 전투, 체인, activateCard (penguin·jibaeja 완전히 로드된 후)
-  8. account.js  — 계정/로그인 (Firebase auth, 독립적)
-
-  
--->
 <script src="js/cards.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/ui.js"></script>
@@ -862,14 +848,26 @@
 
 <script>
   /**
-   * 카드 픽커 취소 처리.
-   * closeModal만 호출하면 pickerQueue가 영구적으로 막히므로
-   * 빈 선택([])으로 콜백을 실행하고 큐를 진행시킵니다.
-   * forced 모드일 때는 취소 불가 — confirmPick()의 가드가 처리합니다.
+   * ★ 전역 유틸 — HTML onclick 속성에서 직접 호출되므로
+   *   ui.js 로드 완료 여부와 무관하게 여기서 보장한다.
    */
+
+  // 모달 열기/닫기
+  function closeModal(modalId) {
+    const el = document.getElementById(modalId);
+    if (el) el.classList.add('hidden');
+  }
+  function openModal(modalId) {
+    const el = document.getElementById(modalId);
+    if (el) el.classList.remove('hidden');
+  }
+
+  // 카드 픽커 취소
+  // closeModal만 호출하면 pickerQueue가 영구적으로 막히므로
+  // 빈 선택([])으로 콜백을 실행하고 큐를 진행시킨다.
+  // forced 모드일 때는 confirmPick() 내부 가드가 처리한다.
   function cancelPick() {
     if (typeof confirmPick === 'function') {
-      // pickerSelected를 비워서 "아무것도 선택 안 함"으로 처리
       pickerSelected = [];
       confirmPick();
     } else {
