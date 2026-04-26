@@ -30,8 +30,8 @@ function _inferThemePredicate(theme) {
   if (theme === '라이거') {
     return c => ['라이거', '라이온', '타이거'].includes(CARDS[c.id]?.theme);
   }
-  if (theme === '올드 원') {
-    return c => ['올드 원', '크툴루'].includes(CARDS[c.id]?.theme);
+  if (theme === '올드 원' || theme === '올드원') {
+    return c => ['올드 원', '올드원', '크툴루'].includes(CARDS[c.id]?.theme);
   }
   return c => CARDS[c.id]?.theme === theme;
 }
