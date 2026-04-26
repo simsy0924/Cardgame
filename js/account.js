@@ -186,6 +186,7 @@ async function adminResetAllStats() {
         totalLosses: 0,
         totalGames: 0,
         rank: 1000,
+        currency: 0,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
     });
