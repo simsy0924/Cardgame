@@ -19,11 +19,13 @@ function initAuth() {
       await ensureUserDoc(user);
       userProfile = await getUserProfile(user.uid);
       renderProfileUI(user);
+      checkAdminUI();
       const ni = document.getElementById('playerName');
       if (ni && !ni.value.trim()) ni.value = userProfile?.nickname || user.displayName || '';
     } else {
       userProfile = null;
       renderLoggedOutUI();
+      checkAdminUI();
     }
   });
 }
@@ -142,6 +144,76 @@ function renderLoggedOutUI() {
   document.getElementById('profileArea').style.display = 'none';
 }
 
+
+// ─────────────────────────────────────────────
+// 관리자 전적 초기화
+// 보안: Firebase Firestore의 admins 컬렉션에
+// 본인 UID 문서가 존재할 때만 실행 가능
+// Firebase Console에서 직접 추가:
+//   Firestore > admins > {내 UID} > { uid: "..." }
+// ─────────────────────────────────────────────
+async function adminResetAllStats() {
+  if (!currentUser) {
+    notify('로그인이 필요합니다.');
+    return;
+  }
+  if (!fsdb) {
+    notify('Firebase에 연결되어 있지 않습니다.');
+    return;
+  }
+
+  // 서버에서 관리자 여부 확인
+  try {
+    const adminDoc = await fsdb.collection('admins').doc(currentUser.uid).get();
+    if (!adminDoc.exists) {
+      notify('관리자 권한이 없습니다.');
+      return;
+    }
+  } catch (e) {
+    notify('권한 확인 실패: ' + e.message);
+    return;
+  }
+
+  if (!confirm('정말 모든 유저의 전적을 초기화합니까?\n이 작업은 되돌릴 수 없습니다.')) return;
+
+  try {
+    notify('초기화 중...');
+    const snapshot = await fsdb.collection('users').get();
+    const batch = fsdb.batch();
+    snapshot.forEach(doc => {
+      batch.update(doc.ref, {
+        totalWins: 0,
+        totalLosses: 0,
+        totalGames: 0,
+        rank: 1000,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+    await batch.commit();
+    notify('✅ 모든 유저 전적 초기화 완료!');
+
+    if (currentUser) {
+      userProfile = await getUserProfile(currentUser.uid);
+      renderProfileUI(currentUser);
+    }
+  } catch (e) {
+    notify('초기화 실패: ' + e.message);
+    console.error(e);
+  }
+}
+
+// 로그인 상태에 따라 관리자 버튼 표시 여부 결정
+async function checkAdminUI() {
+  const btn = document.getElementById('adminResetBtn');
+  if (!btn) return;
+  if (!currentUser || !fsdb) { btn.closest('.lobby-card').style.display = 'none'; return; }
+  try {
+    const adminDoc = await fsdb.collection('admins').doc(currentUser.uid).get();
+    btn.closest('.lobby-card').style.display = adminDoc.exists ? '' : 'none';
+  } catch (e) {
+    btn.closest('.lobby-card').style.display = 'none';
+  }
+}
 // 페이지 로드 후 미리 SDK 로드 (로그인 버튼 응답 빠르게)
 window.addEventListener('load', () => loadFirebase(() => {}));
 
