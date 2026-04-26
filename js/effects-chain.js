@@ -12,7 +12,6 @@ function beginChain(effect) {
   log(`체인 1: ${effect.label} 발동`, 'mine');
 
   if (!roomRef) {
-    // 로컬/데모: 상대 자동 패스 → 즉시 해결
     const localState = { ...chainState, passCount: 2 };
     resolveChain(localState);
     return;
@@ -20,6 +19,12 @@ function beginChain(effect) {
 
   roomRef.child('chainState').set(chainState);
   syncClockRunState(chainState.priority);
+}
+
+// 상대가 체인을 열었을 때 사원소 ③ 자동 트리거
+function _checkSaWonsoCounterOnOpponentChain() {
+  if (typeof tryActivateSaWonsoJibaeryong3 === 'function') tryActivateSaWonsoJibaeryong3();
+  if (typeof tryActivateSaWonsoJibaeja3    === 'function') tryActivateSaWonsoJibaeja3();
 }
 
 function openChainResponse() {
@@ -216,6 +221,11 @@ const CHAIN_RESOLVERS = {
   ignitionPenguinWizard3:    ()     => resolvePenguinWizard3(),
   // 동적 테마 (theme-common.js)
   themeEffect:               (link) => resolveThemeEffect(link),
+  // 지배자 ① — 코스트 후 체인 해결
+  jibaeShui1:                ()     => resolveJibaeShui1(),
+  jibaeHwa1:                 ()     => resolveJibaeHwa1(),
+  jibaeJeon1:                ()     => resolveJibaeJeon1(),
+  jibaeFung1:                ()     => resolveJibaeFung1(),
 };
 
 // 체인 링크를 역순으로 로컬 실행 (Firebase 없이 해결하거나 resolvedLinks 처리 시)

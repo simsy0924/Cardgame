@@ -97,6 +97,12 @@ function listenChainState() {
     if (!data.active) return;
     if (data.priority === myRole) {
       notify(`체인 우선권: ${data.links?.length || 0}체인. 응답 또는 패스를 선택하세요.`);
+      // 상대가 체인 1을 열었을 때 사원소의 지배룡/지배자 ③ 자동 발동 체크
+      if (data.links?.length === 1 && data.startedBy !== myRole) {
+        if (typeof _checkSaWonsoCounterOnOpponentChain === 'function') {
+          _checkSaWonsoCounterOnOpponentChain();
+        }
+      }
     }
   });
 }
@@ -494,6 +500,60 @@ function handleOpponentAction(action) {
     case 'negate':
       log(`상대 효과 무효: ${action.reason || ''}`, 'opponent');
       notify(`내 효과가 무효됐습니다! (${action.reason || ''})`);
+      // 사원소의 지배룡 ③ / 사원소의 지배자 ③ 자동 트리거 체크
+      if (typeof tryActivateSaWonsoJibaeryong3 === 'function') tryActivateSaWonsoJibaeryong3();
+      if (typeof tryActivateSaWonsoJibaeja3    === 'function') tryActivateSaWonsoJibaeja3();
+      break;
+    case 'negateField': {
+      // 상대 효과로 내 필드 카드 효과가 턴 종료까지 무효
+      const nfName = CARDS[action.cardId]?.name || action.cardId;
+      log(`상대 효과: ${nfName} 효과 무효 (턴 종료까지)`, 'opponent');
+      notify(`${nfName}의 효과가 무효됐습니다!`);
+      // 실제 무효 상태는 서버 없이 클라이언트에서 플래그 관리 불가 — 알림으로 처리
+      renderAll();
+      break;
+    }
+    case 'opGraveExile': {
+      // 상대가 내 묘지 카드를 제외 (풍원소의 지배자 ① 등)
+      const idx = G.myGrave.findIndex(c => c.id === action.cardId);
+      if (idx >= 0) {
+        const c = G.myGrave.splice(idx, 1)[0];
+        G.myExile.push(c);
+        log(`상대 효과: 내 묘지 ${c.name} 제외됨`, 'opponent');
+      }
+      renderAll();
+      break;
+    }
+    case 'opAtkChange': {
+      // 상대가 내 필드 몬스터 공격력 변경 (지배룡과 지배자 ① 등)
+      const fi = action.fieldIdx;
+      if (fi !== undefined && G.myField[fi]) {
+        G.myField[fi].atk = Math.max(0, (G.myField[fi].atk || 0) + (action.delta || 0));
+        log(`상대 효과: 내 ${G.myField[fi].name} ATK ${action.delta > 0 ? '+' : ''}${action.delta} → ${G.myField[fi].atk}`, 'opponent');
+      }
+      renderAll();
+      break;
+    }
+    case 'opFieldCardRemove': {
+      // 상대가 내 필드 마법을 제거
+      if (G.myFieldCard && G.myFieldCard.id === action.cardId) {
+        const c = G.myFieldCard;
+        G.myFieldCard = null;
+        if (action.to === 'grave') G.myGrave.push(c);
+        else G.myExile.push(c);
+        log(`상대 효과: 내 필드 카드 ${c.name} 제거됨`, 'opponent');
+      }
+      renderAll();
+      break;
+    }
+    case 'searchBan':
+      log('서치 봉인: 이 턴 덱에서 카드를 패에 넣을 수 없습니다.', 'system');
+      notify('서치 봉인의 항아리: 이 턴 서치 불가!');
+      break;
+    case 'exileBan':
+      G.exileBanActive = true;
+      log('신성한 수호자: 이 턴 서로 카드 제외 불가!', 'system');
+      notify('이 턴 카드를 제외할 수 없습니다!');
       break;
     case 'endTurn':
       isMyTurn = true;
