@@ -10,8 +10,6 @@ function doDrawPhase() {
   if (roomRef) roomRef.child('roomPhase').set({ activePlayer: myRole, phase: 'deploy' });
 }
 
-function drawN(n) { drawCards(n); }
-
 function drawCards(n) {
   for (let i = 0; i < n; i++) {
     if (!G.myDeck || G.myDeck.length === 0) {
@@ -530,9 +528,7 @@ function resolvePenguinVillage1() {
   log('체인 처리: 펭귄 마을 ① 공개', 'mine');
 }
 
-function renderFieldZones() {
-  // ui.js의 renderFieldZones가 실제 구현
-}
+function renderFieldZones() {}
 
 // ENTER GAME
 // ─────────────────────────────────────────────
@@ -855,12 +851,9 @@ window.onerror = function(msg, src, line, col, err) {
 // ─────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  const nameInput = document.getElementById('playerName');
-  if (nameInput) nameInput.focus();
-  if (DEMO_MODE) {
-    const statusEl = document.getElementById('createStatus');
-    if (statusEl) statusEl.textContent = 'DEMO 모드 활성화';
-  }
-});
+document.getElementById('playerName').focus();
+
+if (DEMO_MODE) {
+  document.getElementById('createStatus').textContent = 'DEMO 모드 활성화';
+}
 
