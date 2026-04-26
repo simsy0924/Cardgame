@@ -428,9 +428,10 @@ function handleOpponentAction(action) {
       handleOpponentCombat(action);
       break;
     case 'directAttack':
-      log(`상대 직접 공격! 패 ${action.card.atk}장 손실`, 'opponent');
+      log(`상대 직접 공격! 패 ${action.card.atk}장 피해`, 'opponent');
       notify(`직접 공격 당함! 패 ${action.card.atk}장 버려야 합니다`);
-      forceDiscard(action.card.atk, true); // 상대가 공격자 → 공개패 우선
+      // 펭귄 마을 ②, 구사일생 포함 피해 처리
+      _resolveCombatDamage(action.card.atk);
       break;
     case 'forceDiscard':
       // 상대가 내 패를 버리게 함 (상대가 공격자일 때)
@@ -519,34 +520,40 @@ function handleOpponentAction(action) {
 }
 
 function handleOpponentCombat(action) {
-  // action.atkCard attacks action.defCard
-  const atkCard = action.atkCard; // opponent's monster
-  const defCard = action.defCard; // my monster
+  const atkCard = action.atkCard;
+  const defCard = action.defCard;
   const diff = atkCard.atk - defCard.atk;
 
   log(`상대 전투: ${atkCard.name}(${atkCard.atk}) vs ${defCard.name}(${defCard.atk})`, 'opponent');
 
   if (diff > 0) {
-    // Opponent wins — my monster goes to grave, I lose diff cards
+    // 상대 승리 — 내 몬스터 묘지, 패 피해
     const myIdx = G.myField.findIndex(c => c.id === defCard.id);
-    if (myIdx >= 0) { G.myGrave.push(G.myField.splice(myIdx, 1)[0]); }
-    // 상대 공격 피해: 공개패는 상대가 고르고, 일반패는 무작위
-    forceDiscard(diff, true);
-    log(`내 ${defCard.name} 묘지. 패 ${diff}장 잃음`, 'opponent');
+    if (myIdx >= 0) {
+      const mon = G.myField.splice(myIdx, 1)[0];
+      G.myGrave.push(mon);
+      onSentToGrave(mon.id);
+    }
+    log(`내 ${defCard.name} 묘지. 패 ${diff}장 피해`, 'opponent');
+    renderAll();
+    // 펭귄 마을 ②, 구사일생 포함 피해 처리
+    _resolveCombatDamage(diff);
   } else if (diff < 0) {
-    // I win — opponent's monster goes to grave
+    // 내 몬스터 승리
     const opIdx = G.opField.findIndex(c => c.id === atkCard.id);
-    if (opIdx >= 0) { G.opGrave.push(G.opField.splice(opIdx, 1)[0]); }
+    if (opIdx >= 0) G.opGrave.push(G.opField.splice(opIdx, 1)[0]);
     log(`상대 ${atkCard.name} 묘지`, 'mine');
+    renderAll();
   } else {
     if (atkCard.atk !== 0) {
       const myIdx = G.myField.findIndex(c => c.id === defCard.id);
       const opIdx = G.opField.findIndex(c => c.id === atkCard.id);
-      if (myIdx >= 0) G.myGrave.push(G.myField.splice(myIdx, 1)[0]);
+      if (myIdx >= 0) { G.myGrave.push(G.myField.splice(myIdx, 1)[0]); }
       if (opIdx >= 0) G.opGrave.push(G.opField.splice(opIdx, 1)[0]);
+      log('공격력 동일 — 양쪽 묘지', 'system');
     }
+    renderAll();
   }
-  renderAll();
 }
 
 // ─────────────────────────────────────────────

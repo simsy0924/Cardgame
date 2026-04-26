@@ -129,12 +129,13 @@ function activateQuickEffect(effect) {
 }
 
 function activateIgnitionEffect(effect) {
+  // 기동효과: 자신 전개 단계에 체인 1로만 발동 가능
+  if (!isMyTurn || currentPhase !== 'deploy') {
+    notify('기동효과는 자신 전개 단계에만 발동할 수 있습니다.');
+    return;
+  }
   if (activeChainState && activeChainState.active) {
-    if (activeChainState.priority !== myRole) {
-      notify('현재 체인 우선권은 상대에게 있습니다. (체인 시작 직후에는 상대가 먼저 응답)');
-      return;
-    }
-    addChainLink(effect);
+    notify('기동효과는 체인 1로만 발동할 수 있습니다.');
     return;
   }
   beginChain(effect);

@@ -106,24 +106,12 @@ function executeCombat(atkIdx, defIdx) {
     log(`${attacker.name} 묘지. 내 패 ${Math.abs(diff)}장 버리기`, 'mine');
     // 묘지 트리거 (펭귄 용사 ③ 등)
     onSentToGrave(attacker.id);
-    // 펭귄 마을 ② 체크 먼저
-    const replaced = checkPenguinVillageReplace(Math.abs(diff));
-    if (!replaced) {
-      // 구사일생 체크: 공격력 차 >= 내 패 수일 때 발동 가능
-      const guIdxInHand = G.myHand.findIndex(c => c.id === '구사일생');
-      if (guIdxInHand >= 0 && Math.abs(diff) >= G.myHand.length) {
-        gameConfirm(`구사일생 발동?\n전투 데미지 0 + 드로우 1장\n조건: 공격력 차(${Math.abs(diff)}) ≥ 패 수(${G.myHand.length})`, (yes) => {
-          if (!yes) { forceDiscard(Math.abs(diff), true); return; }
-          G.myHand.splice(guIdxInHand, 1);
-          G.myGrave.push({ id: '구사일생', name: '구사일생' });
-          drawOne();
-          log('구사일생: 전투 데미지 0 + 드로우', 'mine');
-          sendGameState(); renderAll();
-        });
-        return; // 비동기 처리 — 이후 코드는 gameConfirm 콜백 안에서 실행됨
-      }
-      forceDiscard(Math.abs(diff), true);
-    }
+    // 이후 패 처리는 _resolveCombatDamage에 위임 (펭귄 마을 ②, 구사일생 비동기 처리)
+    sendAction({ type: 'combat', atkIdx, defIdx, atkCard: attacker, defCard: defender });
+    attackedMonstersThisTurn.add(attacker.id);
+    sendGameState(); renderAll();
+    _resolveCombatDamage(Math.abs(diff));
+    return;
   } else {
     if (attacker.atk === 0) {
       log(`공격력 0 — 양쪽 유지`, 'system');
@@ -154,55 +142,105 @@ function directAttack(atkIdx) {
   sendGameState(); renderAll();
 }
 
+// ─────────────────────────────────────────────
+// 전투 피해 처리 — 펭귄 마을 ②, 구사일생 순서대로 비동기 체크
+// ─────────────────────────────────────────────
+function _resolveCombatDamage(dmg) {
+  // 1순위: 펭귄 마을 ② (패 버리는 대신 필드 펭귄 묘지)
+  const villageIdx    = G.myHand.findIndex(c => c.id === '펭귄 마을' && c.isPublic);
+  const fieldPenguins = G.myField.filter(c => isPenguinMonster(c.id));
+
+  if (villageIdx >= 0 && fieldPenguins.length > 0) {
+    gameConfirm('펭귄 마을 ② 발동?\n패 버리는 대신 필드 펭귄 몬스터를 묘지로 보냅니다.', (yes) => {
+      if (yes) {
+        openCardPicker(
+          fieldPenguins,
+          `펭귄 마을 ②: 묘지로 보낼 펭귄 몬스터 (최대 ${Math.min(dmg, fieldPenguins.length)}장)`,
+          Math.min(dmg, fieldPenguins.length),
+          (sel) => {
+            const sent = sel.length;
+            sel.forEach(i => {
+              const mon = fieldPenguins[i];
+              sendToGrave(mon.id, 'field');
+              if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
+            });
+            _tryRecoverPenguinStrikeFromGrave();
+            const remaining = dmg - sent;
+            // 대체한 것보다 피해가 더 많으면 나머지는 패 버리기
+            if (remaining > 0) _resolveForceDiscardWithGuard(remaining);
+            else { sendGameState(); renderAll(); checkWinCondition(); }
+          },
+          true // forced
+        );
+      } else {
+        // 마을 ② 거부 → 구사일생 or 일반 버리기
+        _resolveForceDiscardWithGuard(dmg);
+      }
+    });
+  } else {
+    // 마을 조건 불충족 → 구사일생 or 일반 버리기
+    _resolveForceDiscardWithGuard(dmg);
+  }
+}
+
+// 구사일생 체크 후 강제 패 버리기
+function _resolveForceDiscardWithGuard(dmg) {
+  const guIdx = G.myHand.findIndex(c => c.id === '구사일생');
+  if (guIdx >= 0 && dmg >= G.myHand.length) {
+    gameConfirm(`구사일생 발동?\n전투 데미지 0 + 드로우 1장\n조건: 공격력 차(${dmg}) ≥ 패 수(${G.myHand.length})`, (yes) => {
+      if (!yes) { forceDiscard(dmg); return; }
+      G.myHand.splice(guIdx, 1);
+      G.myGrave.push({ id: '구사일생', name: '구사일생' });
+      drawOne();
+      log('구사일생: 전투 데미지 0 + 드로우', 'mine');
+      sendGameState(); renderAll();
+    });
+  } else {
+    forceDiscard(dmg);
+  }
+}
+
 function forceDiscard(n, opponentPicks = false) {
   if (G.myHand.length === 0) { checkWinCondition(); return; }
   const actualN = Math.min(n, G.myHand.length);
 
   if (opponentPicks) {
-    // 상대가 내 패를 고름
-    // 공개패: 상대가 볼 수 있으므로 상대가 고른 것으로 처리 (가장 위협적인 것 우선)
-    // 비공개패: 무작위
-    const publicCards = G.myHand.filter(c => c.isPublic);
+    // 상대가 고름: 공개패 우선, 나머지 무작위
+    const publicCards  = G.myHand.filter(c => c.isPublic);
+    const privateCards = G.myHand.filter(c => !c.isPublic);
     let remaining = actualN;
     const toDiscard = [];
-
-    // 공개패 먼저 (상대 시점에서 가장 유리한 선택)
     publicCards.slice(0, remaining).forEach(c => { toDiscard.push(c); remaining--; });
-    // 비공개패 무작위
-    const privateCards = G.myHand.filter(c => !c.isPublic);
     while (remaining > 0 && privateCards.length > 0) {
-      const idx = Math.floor(Math.random() * privateCards.length);
-      toDiscard.push(privateCards.splice(idx, 1)[0]);
+      toDiscard.push(privateCards.splice(Math.floor(Math.random() * privateCards.length), 1)[0]);
       remaining--;
     }
-
     const names = toDiscard.map(c => c.name).join(', ');
     log(`상대가 선택: ${names}`, 'mine');
     notify(`상대 효과: ${names} 버림`);
-
     toDiscard.forEach(c => {
       const hi = G.myHand.findIndex(h => h.id === c.id && h.isPublic === c.isPublic);
       if (hi >= 0) G.myGrave.push(G.myHand.splice(hi, 1)[0]);
     });
     sendGameState(); renderAll(); checkWinCondition();
   } else {
-    // 내가 고름
+    // 내가 고름 — forced=true: 반드시 선택해야 함
     openCardPicker(
       G.myHand,
       `패를 ${actualN}장 버려야 합니다 (${actualN}장 선택)`,
       actualN,
       (selected) => {
-        selected.sort((a,b) => b-a).forEach(i => {
-          if (G.myHand[i]) { G.myGrave.push(G.myHand.splice(i, 1)[0]); }
+        selected.sort((a, b) => b - a).forEach(i => {
+          if (G.myHand[i]) G.myGrave.push(G.myHand.splice(i, 1)[0]);
         });
-        // 덜 선택했으면 나머지 무작위
-        const remaining = actualN - selected.length;
-        for (let i = 0; i < remaining && G.myHand.length > 0; i++) {
-          const ri = Math.floor(Math.random() * G.myHand.length);
-          G.myGrave.push(G.myHand.splice(ri, 1)[0]);
+        // 덜 선택된 경우 무작위로 채움
+        const rem = actualN - selected.length;
+        for (let i = 0; i < rem && G.myHand.length > 0; i++) {
+          G.myGrave.push(G.myHand.splice(Math.floor(Math.random() * G.myHand.length), 1)[0]);
         }
         sendGameState(); renderAll(); checkWinCondition();
-      }
+      },
+      true // forced — 취소 불가
     );
   }
 }
