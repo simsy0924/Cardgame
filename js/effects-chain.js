@@ -117,9 +117,14 @@ function flushTriggeredEffects() {
 }
 
 function activateQuickEffect(effect) {
+  // 퀵 효과: 자신/상대 턴 전개·공격·엔드 단계에 발동 가능. 체인에 응답으로 추가 가능.
+  if (currentPhase === 'draw') {
+    notify('드로우 단계에는 효과를 발동할 수 없습니다.');
+    return;
+  }
   if (activeChainState && activeChainState.active) {
     if (activeChainState.priority !== myRole) {
-      notify('현재 체인 우선권은 상대에게 있습니다. (체인 시작 직후에는 상대가 먼저 응답)');
+      notify('현재 체인 우선권은 상대에게 있습니다.');
       return;
     }
     addChainLink(effect);
@@ -129,7 +134,7 @@ function activateQuickEffect(effect) {
 }
 
 function activateIgnitionEffect(effect) {
-  // 기동효과: 자신 전개 단계에 체인 1로만 발동 가능
+  // 기동효과: 자신 전개 단계, 체인 1로만 발동 가능
   if (!isMyTurn || currentPhase !== 'deploy') {
     notify('기동효과는 자신 전개 단계에만 발동할 수 있습니다.');
     return;
@@ -244,8 +249,41 @@ function manualDiscard(handIdx) {
   checkWinCondition();
 }
 
-// ★ 강제 패 버리기 — 반드시 1장 선택해야 함, 취소 불가
+// ★ 강제 패 버리기 1장 — 코스트용, 취소 불가
+// 펭귄 마을 ②: 버리는 대신 필드 펭귄 묘지 가능
 function _forcedDiscardOne(title, callback) {
+  if (G.myHand.length === 0) { callback(); return; }
+
+  // 펭귄 마을 ② 체크
+  const villageIdx    = G.myHand.findIndex(c => c.id === '펭귄 마을' && c.isPublic);
+  const fieldPenguins = G.myField.filter(c => isPenguinMonster(c.id));
+
+  if (villageIdx >= 0 && fieldPenguins.length > 0) {
+    gameConfirm(
+      `펭귄 마을 ② 발동?\n패 1장 버리는 대신 필드 펭귄 몬스터를 묘지로 보냅니다.`,
+      (yes) => {
+        if (yes) {
+          openCardPicker(fieldPenguins, '펭귄 마을 ②: 묘지로 보낼 펭귄 몬스터', 1, (sel) => {
+            if (sel.length > 0) {
+              const mon = fieldPenguins[sel[0]];
+              sendToGrave(mon.id, 'field');
+              if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
+              _tryRecoverPenguinStrikeFromGrave();
+            }
+            callback();
+          }, true);
+        } else {
+          // 마을 거부 → 일반 강제 버리기
+          _doForcedDiscardOne(title, callback);
+        }
+      }
+    );
+  } else {
+    _doForcedDiscardOne(title, callback);
+  }
+}
+
+function _doForcedDiscardOne(title, callback) {
   if (G.myHand.length === 0) { callback(); return; }
   openCardPicker(G.myHand, title, 1, (sel) => {
     if (sel.length > 0) {
@@ -256,7 +294,7 @@ function _forcedDiscardOne(title, callback) {
       onHandDiscarded_jibaeSasl();
     }
     callback();
-  }, true); // forced=true: 반드시 선택, 취소 불가
+  }, true);
 }
 
 function resolveKeyFetch(cardId) {

@@ -434,11 +434,12 @@ function handleOpponentAction(action) {
       _resolveCombatDamage(action.card.atk);
       break;
     case 'forceDiscard':
-      // 상대가 내 패를 버리게 함 (상대가 공격자일 때)
-      if (action.attackerPicks) {
-        log(`상대 효과로 패 ${action.count}장 버리기`, 'opponent');
-        notify(`패 ${action.count}장을 버려야 합니다!`);
-        forceDiscard(action.count, true);
+      {
+        const cnt = action.count || 0;
+        const reason = action.reason ? ` (${action.reason})` : '';
+        log(`상대 효과: 패 ${cnt}장 버리기${reason}`, 'opponent');
+        notify(`패 ${cnt}장을 골라 버려야 합니다!${reason}`);
+        forceDiscard(cnt);
       }
       break;
     case 'revealAllHand':

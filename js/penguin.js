@@ -166,12 +166,13 @@ function resolveSummonerPenguin1(sourceInstanceId) {
   markEffectUsed('수문장 펭귄', 1);
   G.myField[fieldIdx].atk += 1;
   log(`수문장 펭귄 ATK +1 → ${G.myField[fieldIdx].atk}`, 'mine');
-  openCardPicker(G.myHand, '수문장 펭귄 ①: 자신 패 1장 버리기', 1, (sel) => {
+  // "서로 패를 1장 고르고 버린다" — 내가 먼저 고르고, 상대에게도 forceDiscard 전송
+  openCardPicker(G.myHand, '수문장 펭귄 ①: 자신 패 1장 버리기 (필수)', 1, (sel) => {
     if (sel.length > 0) G.myGrave.push(G.myHand.splice(sel[0], 1)[0]);
     log('수문장 펭귄 ①: 상대도 패 1장 버려야 합니다.', 'system');
     sendAction({ type: 'forceDiscard', count: 1, reason: '수문장 펭귄 ①' });
     sendGameState(); renderAll();
-  });
+  }, true); // forced — 취소 불가
 }
 
 // ─────────────────────────────────────────────
@@ -453,22 +454,27 @@ function resolvePenguinHero3() {
 
 // ─────────────────────────────────────────────
 // 펭귄의 일격 ①
+// 코스트: "패를 1장 버리고 발동" → 체인 발동 전에 먼저 지불
+// 무효되어도 코스트 패는 날아감
 // ─────────────────────────────────────────────
 function activatePenguinStrike1() {
-  activateQuickEffect({ type: 'quickPenguinStrike1', label: '펭귄의 일격 ①' });
+  if (!canUseEffect('펭귄의 일격', 1)) { notify('이미 사용했습니다.'); return; }
+  if (!G.myField.some(c => isPenguinMonster(c.id))) { notify('필드에 펭귄 몬스터가 없습니다.'); return; }
+  // 코스트 먼저 지불 — 체인 발동 전
+  _forcedDiscardOne('펭귄의 일격 ①: 코스트로 패 1장 버리기 (무효되어도 날아감)', () => {
+    markEffectUsed('펭귄의 일격', 1);
+    // 패에서 일격 카드 묘지로 (코스트 아닌 발동 비용)
+    const sIdx = G.myHand.findIndex(c => c.id === '펭귄의 일격');
+    if (sIdx >= 0) G.myGrave.push(G.myHand.splice(sIdx, 1)[0]);
+    activateQuickEffect({ type: 'quickPenguinStrike1', label: '펭귄의 일격 ①' });
+  });
 }
 
 function resolvePenguinStrike1() {
-  if (!canUseEffect('펭귄의 일격', 1)) { notify('이미 사용했습니다.'); return; }
-  if (!G.myField.some(c => isPenguinMonster(c.id))) { notify('필드에 펭귄 몬스터가 없습니다.'); return; }
-  _forcedDiscardOne('펭귄의 일격 ①: 패 1장 버리기 (코스트, 필수)', () => {
-    markEffectUsed('펭귄의 일격', 1);
-    const sIdx = G.myHand.findIndex(c => c.id === '펭귄의 일격');
-    if (sIdx >= 0) G.myGrave.push(G.myHand.splice(sIdx, 1)[0]);
-    log('펭귄의 일격 ①: 상대 효과 무효!', 'mine');
-    sendAction({ type: 'negate', reason: '펭귄의 일격' });
-    sendGameState(); renderAll();
-  });
+  // 코스트는 이미 activate 시점에 지불됨
+  log('펭귄의 일격 ①: 상대 효과 무효!', 'mine');
+  sendAction({ type: 'negate', reason: '펭귄의 일격' });
+  sendGameState(); renderAll();
 }
 
 // ─────────────────────────────────────────────

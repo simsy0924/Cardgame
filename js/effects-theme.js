@@ -276,7 +276,7 @@ function activateCard(handIdx) {
       G.myHand.splice(handIdx, 1);
       G.myGrave.push({ id: c.id, name: c.name });
       log('일격필살: 상대 패 1장 버리기!', 'mine');
-      sendAction({ type: 'forceDiscard', count: 1, reason: '일격필살', attackerPicks: true });
+      sendAction({ type: 'forceDiscard', count: 1, reason: '일격필살' });
       sendGameState(); renderAll();
       return;
 

@@ -56,6 +56,14 @@ function endAttack() {
 
 function endTurn() {
   if (!isMyTurn || currentPhase !== 'end') return;
+
+  // 엔드 단계 유발효과 잔여분이 있으면 먼저 처리
+  if (pendingTriggerEffects.length > 0) {
+    notify('발동할 유발효과가 있습니다. 먼저 처리해주세요.');
+    flushTriggeredEffects();
+    return;
+  }
+
   resetTurnEffects();
   attackedMonstersThisTurn.clear();
   G.turn++;
@@ -64,7 +72,6 @@ function endTurn() {
   log('턴 종료 — 상대 턴', 'mine');
   sendAction({ type: 'endTurn' });
   sendGameState();
-  // 페이즈 상태 저장 (재접속 복원용)
   const opRole = myRole === 'host' ? 'guest' : 'host';
   if (roomRef) roomRef.child('roomPhase').set({ activePlayer: opRole, phase: 'draw' });
   renderPhase();
@@ -92,13 +99,13 @@ function executeCombat(atkIdx, defIdx) {
   log(`전투: ${attacker.name}(${attacker.atk}) vs ${defender.name}(${defender.atk})`, 'mine');
 
   if (diff > 0) {
-    // 내 몬스터 승리 — 상대 묘지, 상대 패 diff장 손실 (내가 공격자니까 상대 공개패 우선 선택)
+    // 내 몬스터 승리 — 상대 묘지, 상대가 직접 패 선택해서 버림
     G.opField.splice(defIdx, 1);
     G.opGrave.push(defender);
     log(`${defender.name} 묘지. 상대 패 ${diff}장 손실`, 'system');
     notify(`공격 성공! 상대 패 ${diff}장 손실`);
-    // 상대에게 forceDiscard 전송 (공개패 우선)
-    sendAction({ type: 'forceDiscard', count: diff, attackerPicks: true });
+    // 상대 화면에서 상대가 직접 선택
+    sendAction({ type: 'forceDiscard', count: diff, reason: '전투 피해' });
   } else if (diff < 0) {
     // 상대 몬스터 승리 — 내 묘지, 내 패 |diff|장 손실
     G.myField.splice(atkIdx, 1);
@@ -142,107 +149,99 @@ function directAttack(atkIdx) {
   sendGameState(); renderAll();
 }
 
-// ─────────────────────────────────────────────
-// 전투 피해 처리 — 펭귄 마을 ②, 구사일생 순서대로 비동기 체크
-// ─────────────────────────────────────────────
+// 전투 피해 처리 — 구사일생 체크 후 forceDiscard (마을 ②는 forceDiscard 내부에서 처리)
 function _resolveCombatDamage(dmg) {
-  // 1순위: 펭귄 마을 ② (패 버리는 대신 필드 펭귄 묘지)
-  const villageIdx    = G.myHand.findIndex(c => c.id === '펭귄 마을' && c.isPublic);
-  const fieldPenguins = G.myField.filter(c => isPenguinMonster(c.id));
-
-  if (villageIdx >= 0 && fieldPenguins.length > 0) {
-    gameConfirm('펭귄 마을 ② 발동?\n패 버리는 대신 필드 펭귄 몬스터를 묘지로 보냅니다.', (yes) => {
-      if (yes) {
-        openCardPicker(
-          fieldPenguins,
-          `펭귄 마을 ②: 묘지로 보낼 펭귄 몬스터 (최대 ${Math.min(dmg, fieldPenguins.length)}장)`,
-          Math.min(dmg, fieldPenguins.length),
-          (sel) => {
-            const sent = sel.length;
-            sel.forEach(i => {
-              const mon = fieldPenguins[i];
-              sendToGrave(mon.id, 'field');
-              if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
-            });
-            _tryRecoverPenguinStrikeFromGrave();
-            const remaining = dmg - sent;
-            // 대체한 것보다 피해가 더 많으면 나머지는 패 버리기
-            if (remaining > 0) _resolveForceDiscardWithGuard(remaining);
-            else { sendGameState(); renderAll(); checkWinCondition(); }
-          },
-          true // forced
-        );
-      } else {
-        // 마을 ② 거부 → 구사일생 or 일반 버리기
-        _resolveForceDiscardWithGuard(dmg);
-      }
-    });
-  } else {
-    // 마을 조건 불충족 → 구사일생 or 일반 버리기
-    _resolveForceDiscardWithGuard(dmg);
-  }
+  _resolveForceDiscardWithGuard(dmg);
 }
 
 // 구사일생 체크 후 강제 패 버리기
 function _resolveForceDiscardWithGuard(dmg) {
   const guIdx = G.myHand.findIndex(c => c.id === '구사일생');
   if (guIdx >= 0 && dmg >= G.myHand.length) {
-    gameConfirm(`구사일생 발동?\n전투 데미지 0 + 드로우 1장\n조건: 공격력 차(${dmg}) ≥ 패 수(${G.myHand.length})`, (yes) => {
-      if (!yes) { forceDiscard(dmg); return; }
-      G.myHand.splice(guIdx, 1);
-      G.myGrave.push({ id: '구사일생', name: '구사일생' });
-      drawOne();
-      log('구사일생: 전투 데미지 0 + 드로우', 'mine');
-      sendGameState(); renderAll();
-    });
+    gameConfirm(
+      `구사일생 발동?\n전투 데미지 0 + 드로우 1장\n조건: 공격력 차(${dmg}) ≥ 패 수(${G.myHand.length})`,
+      (yes) => {
+        if (!yes) { forceDiscard(dmg); return; }
+        G.myHand.splice(guIdx, 1);
+        G.myGrave.push({ id: '구사일생', name: '구사일생' });
+        drawOne();
+        log('구사일생: 전투 데미지 0 + 드로우', 'mine');
+        sendGameState(); renderAll();
+      }
+    );
   } else {
     forceDiscard(dmg);
   }
 }
 
-function forceDiscard(n, opponentPicks = false) {
+// ─────────────────────────────────────────────
+// 펭귄 마을 ② 공통 헬퍼
+// 패 버리기가 발생하는 모든 경로에서 호출.
+// 조건 충족 시 gameConfirm → 대신 필드 펭귄 묘지 or 나머지 패 버리기.
+// done(true)  = 마을 ②로 전부 대체됨 (추가 버리기 불필요)
+// done(false) = 마을 미발동 또는 부족분 → 일반 버리기 진행
+// ─────────────────────────────────────────────
+function _tryVillageReplace(n, onSkip) {
+  const villageIdx    = G.myHand.findIndex(c => c.id === '펭귄 마을' && c.isPublic);
+  const fieldPenguins = G.myField.filter(c => isPenguinMonster(c.id));
+  if (villageIdx < 0 || fieldPenguins.length === 0 || n <= 0) { onSkip(n); return; }
+
+  gameConfirm(
+    `펭귄 마을 ② 발동?\n패 ${n}장 버리는 대신 필드 펭귄 몬스터를 묘지로 보냅니다.`,
+    (yes) => {
+      if (!yes) { onSkip(n); return; }
+      const maxReplace = Math.min(n, fieldPenguins.length);
+      openCardPicker(
+        fieldPenguins,
+        `펭귄 마을 ②: 묘지로 보낼 펭귄 몬스터 (최대 ${maxReplace}장)`,
+        maxReplace,
+        (sel) => {
+          const sent = sel.length;
+          sel.forEach(i => {
+            const mon = fieldPenguins[i];
+            sendToGrave(mon.id, 'field');
+            if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
+          });
+          _tryRecoverPenguinStrikeFromGrave();
+          const remaining = n - sent;
+          if (remaining > 0) onSkip(remaining); // 부족분은 일반 버리기
+          else { sendGameState(); renderAll(); checkWinCondition(); }
+        },
+        true // forced
+      );
+    }
+  );
+}
+
+// ─────────────────────────────────────────────
+// forceDiscard — 패 n장 강제 버리기 (항상 내가 직접 선택, 취소 불가)
+// 펭귄 마을 ②: 버리기 전 대체 가능 여부 먼저 체크
+// ─────────────────────────────────────────────
+function forceDiscard(n) {
   if (G.myHand.length === 0) { checkWinCondition(); return; }
   const actualN = Math.min(n, G.myHand.length);
 
-  if (opponentPicks) {
-    // 상대가 고름: 공개패 우선, 나머지 무작위
-    const publicCards  = G.myHand.filter(c => c.isPublic);
-    const privateCards = G.myHand.filter(c => !c.isPublic);
-    let remaining = actualN;
-    const toDiscard = [];
-    publicCards.slice(0, remaining).forEach(c => { toDiscard.push(c); remaining--; });
-    while (remaining > 0 && privateCards.length > 0) {
-      toDiscard.push(privateCards.splice(Math.floor(Math.random() * privateCards.length), 1)[0]);
-      remaining--;
-    }
-    const names = toDiscard.map(c => c.name).join(', ');
-    log(`상대가 선택: ${names}`, 'mine');
-    notify(`상대 효과: ${names} 버림`);
-    toDiscard.forEach(c => {
-      const hi = G.myHand.findIndex(h => h.id === c.id && h.isPublic === c.isPublic);
-      if (hi >= 0) G.myGrave.push(G.myHand.splice(hi, 1)[0]);
-    });
-    sendGameState(); renderAll(); checkWinCondition();
-  } else {
-    // 내가 고름 — forced=true: 반드시 선택해야 함
+  _tryVillageReplace(actualN, (rem) => {
+    const remN = Math.min(rem, G.myHand.length);
+    if (remN <= 0) { sendGameState(); renderAll(); checkWinCondition(); return; }
     openCardPicker(
       G.myHand,
-      `패를 ${actualN}장 버려야 합니다 (${actualN}장 선택)`,
-      actualN,
+      `패를 ${remN}장 버려야 합니다 (${remN}장 선택)`,
+      remN,
       (selected) => {
         selected.sort((a, b) => b - a).forEach(i => {
           if (G.myHand[i]) G.myGrave.push(G.myHand.splice(i, 1)[0]);
         });
-        // 덜 선택된 경우 무작위로 채움
-        const rem = actualN - selected.length;
-        for (let i = 0; i < rem && G.myHand.length > 0; i++) {
+        // 덜 선택된 경우 무작위로 채움 (비공개패 보호 불가)
+        const shortage = remN - selected.length;
+        for (let i = 0; i < shortage && G.myHand.length > 0; i++) {
           G.myGrave.push(G.myHand.splice(Math.floor(Math.random() * G.myHand.length), 1)[0]);
         }
         sendGameState(); renderAll(); checkWinCondition();
       },
       true // forced — 취소 불가
     );
-  }
+  });
 }
 
 // ─────────────────────────────────────────────
