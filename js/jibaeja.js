@@ -39,8 +39,9 @@ let saWonsoMirakType = null;
 let saWonsoMirakUsed = false;
 
 // 지배자/지배룡 효과 발동 시 기적 코스트 체크
-function jibaeMirakCostIfNeeded(callback) {
+function jibaeMirakCostIfNeeded(callback, effectType = null) {
   if (!saWonsoMirakActive) { callback(); return; }
+  if (effectType && saWonsoMirakType && effectType !== saWonsoMirakType) { callback(); return; }
   _forcedDiscardOne('사원소의 기적: 효과 발동 코스트 (패 1장 버리기, 필수)', callback);
 }
 
@@ -255,7 +256,7 @@ function triggerJibaejaJeon2() {
           });
         });
       });
-    });
+    }, 'jibaeja');
   });
 }
 
@@ -276,7 +277,7 @@ function activateJibaeja3(fieldIdx, cardId) {
         sendGameState(); renderAll();
       });
     });
-  });
+  }, 'jibaeja');
 }
 
 // ═══════════════════════════════════════════════════
@@ -345,7 +346,7 @@ function onSentToGraveFromNonHand(cardId) {
           }
           break;
       }
-    });
+    }, 'jibaeryong');
   });
 }
 
@@ -361,7 +362,7 @@ function onJibaeryongDiscarded(cardId) {
     jibaeMirakCostIfNeeded(() => {
       drawOne();
       sendGameState(); renderAll();
-    });
+    }, 'jibaeryong');
   });
 }
 
@@ -394,7 +395,7 @@ function activateJibaeryong3(fieldIdx, cardId) {
       drawOne();
       sendGameState(); renderAll();
     });
-  });
+  }, 'jibaeryong');
 }
 
 // ═══════════════════════════════════════════════════
@@ -416,7 +417,7 @@ function activateSaWonsoJibaeryong1(fieldIdx) {
         sendGameState(); renderAll();
       });
     });
-  });
+  }, 'jibaeryong');
 }
 
 // 사원소의 지배룡 ②: 자신/상대 공격 단계, 내 패 < 상대 패 → 차이만큼 ATK 상승
@@ -433,7 +434,7 @@ function activateSaWonsoJibaeryong2(fieldIdx) {
       log(`사원소의 지배룡 ②: ATK +${diff} → ${G.myField[fi].atk}`, 'mine');
     }
     sendGameState(); renderAll();
-  });
+  }, 'jibaeryong');
 }
 
 // 사원소의 지배룡 ③: 상대 효과 발동 시, 자신 패 5장 이하 → 효과 무효 + 패 2장 버리기 (동일 체인 1번)

@@ -94,29 +94,7 @@ function executeCombat(atkIdx, defIdx) {
     log(`${attacker.name} 묘지. 내 패 ${Math.abs(diff)}장 버리기`, 'mine');
     onSentToGrave(attacker.id);
 
-    const replaced = checkPenguinVillageReplace(Math.abs(diff));
-    if (!replaced) {
-      // 구사일생 체크
-      const guIdx = G.myHand.findIndex(c => c.id === '구사일생');
-      if (guIdx >= 0 && Math.abs(diff) >= G.myHand.length) {
-        gameConfirm(
-          `구사일생 발동?\n전투 데미지 0 + 드로우 1장\n조건: 공격력 차(${Math.abs(diff)}) ≥ 패 수(${G.myHand.length})`,
-          (yes) => {
-            if (!yes) {
-              forceDiscard(Math.abs(diff), true);
-              return;
-            }
-            G.myGrave.push(G.myHand.splice(guIdx, 1)[0]);
-            drawOne();
-            log('구사일생: 전투 데미지 0 + 드로우', 'mine');
-            sendGameState();
-            renderAll();
-          }
-        );
-        return; // 비동기 처리 — 이후 로직은 콜백 안에서
-      }
-      forceDiscard(Math.abs(diff), true);
-    }
+    _resolveForceDiscardWithGuard(Math.abs(diff));
 
   } else {
     // 무승부
