@@ -13,7 +13,7 @@
     --surface:  #13131e;
     --surface2: #1c1c2e;
     --border:   #2a2a45;
-    --accent:   #c8a96e;
+    --accent:   #c8a9
     --accent2:  #7c5cbf;
     --danger:   #c84848;
     --safe:     #4a8c5c;
@@ -680,6 +680,10 @@
   <div class="deck-actions">
     <button class="btn btn-secondary" onclick="loadPreset('펭귄')">펭귄 기본 덱</button>
     <button class="btn btn-secondary" onclick="loadPreset('지배자')">지배자 기본 덱</button>
+    <button class="btn btn-secondary" onclick="loadPreset('라이온')">라이온 기본 덱</button>
+    <button class="btn btn-secondary" onclick="loadPreset('타이거')">타이거 기본 덱</button>
+    <button class="btn btn-secondary" onclick="loadPreset('라이거')">라이거 기본 덱</button>
+    <button class="btn btn-secondary" onclick="loadPreset('크툴루')">크툴루 기본 덱</button>
     <button class="btn btn-secondary" onclick="clearDeck()">초기화</button>
     <button class="btn btn-primary" id="dbConfirmBtn" onclick="confirmDeck()" disabled>덱 확정 →</button>
   </div>
@@ -836,8 +840,12 @@
 <script src="js/effects-core.js"></script>
 <script src="js/effects-chain.js"></script>
 <script src="js/theme-common.js"></script>
+<script src="js/continuous_effects.js"></script>
+<script src="js/lion.js"></script>
+<script src="js/tiger.js"></script>
+<script src="js/liger.js"></script>
 <script src="js/cthulhu.js"></script>
-<script src="js/oldone.js"></script>
+<script src="js/cthulhu.js"></script>
 <script src="js/lion.js"></script>
 <script src="js/tiger.js"></script>
 <script src="js/liger.js"></script>
@@ -845,6 +853,9 @@
 <script src="js/bulgasaui.js"></script>
 <script src="js/effects-theme.js"></script>
 <script src="js/account.js"></script>
+<script src="js/lion_tiger_liger_patch.js"></script>
+<script src="js/index_patch.js"></script>
+<script src="js/cthulhu_index_patch.js"></script
 
 <script>
   /**
