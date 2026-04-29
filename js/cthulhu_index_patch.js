@@ -179,6 +179,7 @@ const CTHULHU_EXILE_TRIGGER_CARDS = new Set([
   if (!_orig) return;
   loadPreset = function (theme) {
     if (theme === '크툴루' || theme === '올드원') {
+      // 메인 40장
       builderMainDeck = {
         '그레이트 올드 원-크툴루':   4,
         '그레이트 올드 원-크투가':   4,
@@ -190,6 +191,8 @@ const CTHULHU_EXILE_TRIGGER_CARDS = new Set([
         '올드_원의 멸망':           4,
         '눈에는 눈':                2,
         '구사일생':                 2,
+        '출입통제':                 2,
+        '유혹의 황금사과':          2,
       };
       builderKeyDeck = {
         '아우터 갓 니알라토텝':     1,
@@ -198,7 +201,7 @@ const CTHULHU_EXILE_TRIGGER_CARDS = new Set([
         '일격필살':                 1,
         '단 한번의 기회':           1,
       };
-      notify('크툴루/올드원 기본 덱 로드!');
+      notify('크툴루/올드원 기본 덱 로드! (메인 40장)');
       renderBuilderDeck();
       filterDeckPool(currentPoolFilter);
     } else {

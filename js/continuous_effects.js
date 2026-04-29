@@ -17,18 +17,7 @@
 //   - opFieldRemove/opFieldExile 수신 시 내성 체크에 사용
 // ─────────────────────────────────────────────
 
-// ─────────────────────────────────────────────
-// G 초기화 확장
-// ─────────────────────────────────────────────
-(function _initEffectLayers() {
-  const _origEnterGame = typeof enterGame === 'function' ? enterGame : null;
-  if (!_origEnterGame) { console.warn('continuous_effects: enterGame not found'); return; }
-  enterGame = function () {
-    _origEnterGame.apply(this, arguments);
-    G.continuousEffects = []; // { cardId, sourceId, effect, negated }
-    G.lingering         = []; // { id, effect, duration, owner }
-  };
-})();
+// G 초기화 — enterGame 후킹은 위의 _patchEnterGameForFieldHook에서 처리
 
 // ─────────────────────────────────────────────
 // 지속효과 등록 / 해제
@@ -241,25 +230,23 @@ function checkFieldRemoveImmunity(cardId, isTargeting) {
 
 // ─────────────────────────────────────────────
 // 지속효과 자동 등록 — 카드가 필드에 올라올 때
+// enterGame 이후에 G.myField를 후킹해야 안전
 // ─────────────────────────────────────────────
 
-// 기존 onCthulhuSummoned, onLionSummoned, onTigerSummoned 등에서
-// 해당 카드의 지속효과를 등록
-(function _patchOnSummonedForContinuous() {
-  const CONTINUOUS_ON_SUMMON = {
-    '아우터 갓-아자토스':       ['azathothImmunity'],
-    '아우터 갓 슈브 니구라스':  ['shubImmunity'],
-    '엘더 갓-히프노스':         ['hypnosProtect'],
-    '타이거 킹':                ['tigerZoneBlock'],
-    '젊은 타이거':              ['tigerZoneBlock'],
-    '에이스 타이거':            ['tigerZoneBlock'],
-  };
+const CONTINUOUS_ON_SUMMON = {
+  '아우터 갓-아자토스':       ['azathothImmunity'],
+  '아우터 갓 슈브 니구라스':  ['shubImmunity'],
+  '엘더 갓-히프노스':         ['hypnosProtect'],
+  '타이거 킹':                ['tigerZoneBlock'],
+  '젊은 타이거':              ['tigerZoneBlock'],
+  '에이스 타이거':            ['tigerZoneBlock'],
+};
 
-  // patch.js의 _fireOnSummoned 이후에도 여기서 처리
-  const _origFireOnSummoned = window._fireOnSummoned;
+function _hookMyFieldForContinuous() {
+  if (!G.myField || typeof G.myField.push !== 'function') return;
+  // 이미 후킹됐으면 스킵
+  if (G.myField._continuousHooked) return;
 
-  // summonFromDeck/summonFromGrave/패에서 소환 모두 커버하기 위해
-  // G.myField.push를 후킹
   const origPush = G.myField.push.bind(G.myField);
   G.myField.push = function (...items) {
     const result = origPush(...items);
@@ -267,29 +254,47 @@ function checkFieldRemoveImmunity(cardId, isTargeting) {
       if (!item?.id) return;
       const effects = CONTINUOUS_ON_SUMMON[item.id];
       if (effects) effects.forEach(e => registerContinuousEffect(item.id, e));
-
-      // 젊은 라이거 ③: 라이온 킹/타이거 킹/라이거 킹 ATK +1
       if (item.id === '젊은 라이거') _applyYoungLigerBonus();
-
-      // 타이거 킹 ④: 다른 몬스터 없으면 묘지로 보내지지 않음
-      // → 지속효과로 등록, sendToGrave 차단에서 처리
     });
     return result;
   };
+  G.myField.push._continuousHooked = true;
 
-  // myField.splice 후킹 — 카드 퇴장 시 지속효과 제거
   const origSplice = G.myField.splice.bind(G.myField);
   G.myField.splice = function (start, deleteCount, ...items) {
-    // 제거될 카드들의 지속효과 정리
     const removed = G.myField.slice(start, start + (deleteCount ?? G.myField.length));
     const result = origSplice(start, deleteCount, ...items);
     removed.forEach(item => {
       if (!item?.id) return;
       removeContinuousEffect(item.id);
-      // 젊은 라이거 ③ 보너스 재계산
-      if (item.id === '젊은 라이거') _revertYoungLigerBonus(item.id);
+      if (item.id === '젊은 라이거') _revertYoungLigerBonus();
     });
     return result;
+  };
+}
+
+// enterGame 후킹 — G.myField 후킹을 게임 시작 후로 지연
+(function _patchEnterGameForFieldHook() {
+  const _orig = typeof enterGame === 'function' ? enterGame : null;
+  if (!_orig) {
+    // enterGame이 아직 로드 안 됐으면 load 이후 재시도
+    window.addEventListener('load', () => {
+      const _orig2 = typeof enterGame === 'function' ? enterGame : null;
+      if (!_orig2) return;
+      enterGame = function () {
+        _orig2.apply(this, arguments);
+        G.continuousEffects = G.continuousEffects || [];
+        G.lingering         = G.lingering         || [];
+        _hookMyFieldForContinuous();
+      };
+    }, { once: true });
+    return;
+  }
+  enterGame = function () {
+    _orig.apply(this, arguments);
+    G.continuousEffects = G.continuousEffects || [];
+    G.lingering         = G.lingering         || [];
+    _hookMyFieldForContinuous();
   };
 })();
 
