@@ -662,15 +662,16 @@ function _aiChainResponse(chainState) {
       if (!activeChainState || !activeChainState.active) return;
       var next = Object.assign({}, activeChainState);
       next.passCount = (next.passCount || 0) + 1;
-      next.priority = myRole; // 플레이어에게 다시
-      log('🤖 체인 패스', 'opponent');
+      next.priority = 'host'; // 플레이어에게 다시
+      log('🤖 AI: "응답 없음(Pass)"', 'opponent');
       activeChainState = next;
-      renderChainActions();
 
       if (next.passCount >= 2) {
         resolveChain(next);
+      } else {
+        renderChainActions();
+        if (typeof openChainResponse === 'function') openChainResponse();
       }
-      // 플레이어가 다시 응답/패스 버튼 보임
     }, 600);
     return;
   }
@@ -699,3 +700,7 @@ function _aiChainResponse(chainState) {
 
 function _aiCanUse(id, n) { return !window.AI.usedFx[id+'_'+n]; }
 function _aiMarkUsed(id, n) { window.AI.usedFx[id+'_'+n] = 1; }
+window._aiChainResponse = _aiChainResponse;
+window._aiRespondToChain = function() {
+  _aiChainResponse(activeChainState);
+};

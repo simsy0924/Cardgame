@@ -27,6 +27,7 @@ function _checkSaWonsoCounterOnOpponentChain() {
 }
 
 function openChainResponse() {
+  console.log('Current Priority:', activeChainState ? activeChainState.priority : null);
   if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
   if (usedKeyFetchInChain[myRole]) {
     notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
@@ -136,36 +137,20 @@ function flushTriggeredEffects() {
 }
 
 function _resolveLocalChainWithAI(chainState) {
-  const next = { ...chainState, links: [...(chainState.links || [])] };
-  const isAIMode = !!(window.AI && window.AI.active);
-  const aiRole = 'guest';
-  const aiHasPriority = next.priority === aiRole;
-  const aiCanChainKeyFetch = !!(isAIMode && aiHasPriority && !usedKeyFetchInChain[aiRole]);
-  if (aiCanChainKeyFetch) {
-    const aiKeyDeck = (G.opKeyDeck || []).filter(c => c && c.id);
-    if (aiKeyDeck.length > 0) {
-      const picked = aiKeyDeck[0];
-      next.links.push({
-        type: 'keyFetch',
-        label: `키 카드 가져오기 (${picked.name || picked.id})`,
-        cardId: picked.id,
-        by: aiRole,
-      });
+  if (!window.AI || !window.AI.active) return;
 
-      const opDeck = Array.isArray(G.opKeyDeck) ? [...G.opKeyDeck] : [];
-      const deckIdx = opDeck.findIndex(c => c && c.id === picked.id);
-      if (deckIdx >= 0) {
-        const [fetchedCard] = opDeck.splice(deckIdx, 1);
-        G.opKeyDeck = opDeck;
-        G.opHand = [...(G.opHand || []), fetchedCard];
-      }
+  activeChainState = { ...chainState, priority: 'guest' };
+  renderChainActions();
 
-      usedKeyFetchInChain[aiRole] = true;
-      log(`체인 ${next.links.length}: 🤖 키 카드 가져오기 (${picked.name || picked.id})`, 'opponent');
+  setTimeout(() => {
+    if (typeof window._aiRespondToChain === 'function') {
+      window._aiRespondToChain();
+      return;
     }
-  }
-  next.passCount = 2;
-  resolveChain(next);
+    if (typeof window._aiChainResponse === 'function') {
+      window._aiChainResponse(activeChainState);
+    }
+  }, 800);
 }
 
 function activateQuickEffect(effect) {
