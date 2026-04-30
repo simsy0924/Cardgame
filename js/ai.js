@@ -582,55 +582,39 @@ setTimeout(_lobby,500);
 setTimeout(_lobby,2000);
 
 // ─────────────────────────────────────────────────────────────
-// beginChain 훅 — AI 모드 체인 처리
+// beginChain/passChainPriority 훅 — AI 모드 체인 처리
+// 핵심: 기존 체인 엔진 로직은 유지하고, AI 응답 트리거만 보강
 // ─────────────────────────────────────────────────────────────
 (function() {
-  var _orig = window.beginChain;
+  var _origBeginChain = window.beginChain;
   window.beginChain = function(effect) {
-    if (!window.AI.active) { _orig.apply(this, arguments); return; }
+    _origBeginChain.apply(this, arguments);
+    if (!window.AI.active) return;
 
-    var starter = (effect && effect.by) ? effect.by : myRole;
-    var chainState = {
-      active: true,
-      startedBy: starter,
-      priority: getOtherRole(starter),
-      passCount: 0,
-      links: [Object.assign({}, effect, { by: starter })],
-    };
-    activeChainState = chainState;
-    if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
-    log('체인 1: ' + effect.label + ' 발동', 'mine');
-    renderChainActions();
+    // 기존 beginChain이 만든 체인 상태를 그대로 사용
+    var live = activeChainState;
+    if (!live || !live.active) return;
+    if (live.priority !== 'guest') return;
 
-    if (chainState.priority === 'guest') {
-      setTimeout(function() { _aiChainResponse(chainState); }, 500);
-    }
-  };
-})();
-
-// passChainPriority 훅 — 플레이어 패스 시 AI도 자동 패스
-(function() {
-  var _orig = window.passChainPriority;
-  window.passChainPriority = function() {
-    if (!window.AI.active) { _orig.apply(this, arguments); return; }
-    if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
-
-    var next = Object.assign({}, activeChainState);
-    next.passCount = (next.passCount || 0) + 1;
-    next.priority  = getOtherRole(myRole);
-    log('체인 패스', 'system');
-    activeChainState = next;
-    renderChainActions();
-
-    if (next.passCount >= 2) {
-      resolveChain(next);
-      return;
-    }
-    // AI 차례 → 응답 가능 여부 판단 후 패스/응답
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) return;
       _aiChainResponse(activeChainState);
-    }, 600);
+    }, 350);
+  };
+
+  var _origPassChainPriority = window.passChainPriority;
+  window.passChainPriority = function() {
+    _origPassChainPriority.apply(this, arguments);
+    if (!window.AI.active) return;
+
+    var live = activeChainState;
+    if (!live || !live.active) return;
+    if (live.priority !== 'guest') return;
+
+    setTimeout(function() {
+      if (!activeChainState || !activeChainState.active) return;
+      _aiChainResponse(activeChainState);
+    }, 350);
   };
 })();
 
@@ -649,12 +633,17 @@ function _aiChainResponse(chainState) {
   // 현재 체인에서 AI가 응답할 카드 없으면 패스
   var canRespond = false;
 
-  // 눈에는 눈 체크 (서치 체인에 응답)
+  // 눈에는 눈 체크
+  // - 기존: keyFetch(서치) 체인에서만 응답
+  // - 개선: 상대가 체인 1을 열었을 때도 즉시 반응 후보로 검토
+  //   (응답 카드가 없으면 명시적으로 Pass 처리)
   var liveChain = activeChainState || chainState;
-  if ((liveChain.links || []).some(function(l) { return l.type === 'keyFetch'; })) {
-    var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
-    if (eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1)) canRespond = true;
-  }
+  var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
+  var hasHostChain = (liveChain.links || []).some(function(l) {
+    var by = l && l.by;
+    return by === myRole || by === 'host';
+  });
+  if (eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1) && hasHostChain) canRespond = true;
 
   if (!canRespond) {
     // 패스
@@ -669,6 +658,13 @@ function _aiChainResponse(chainState) {
       if (next.passCount >= 2) {
         resolveChain(next);
       } else {
+        // 플레이어가 응답 수단이 없으면 체인이 멈춘 것처럼 보일 수 있어 즉시 해결
+        if (!_playerCanRespondInChain(next)) {
+          next.passCount = 2;
+          activeChainState = next;
+          resolveChain(next);
+          return;
+        }
         renderChainActions();
         if (typeof openChainResponse === 'function') openChainResponse();
       }
@@ -696,6 +692,14 @@ function _aiChainResponse(chainState) {
     // 플레이어 응답 기회
     // 플레이어가 패스하면 resolveChain
   }
+}
+
+
+function _playerCanRespondInChain(state) {
+  if (!state || !state.active) return false;
+  if (state.priority !== 'host') return false;
+  if (usedKeyFetchInChain && usedKeyFetchInChain.host) return false;
+  return Array.isArray(G.myKeyDeck) && G.myKeyDeck.length > 0;
 }
 
 function _aiCanUse(id, n) { return !window.AI.usedFx[id+'_'+n]; }
