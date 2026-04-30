@@ -1,22 +1,16 @@
 // patch.js — 라이온/타이거/라이거/크툴루 공통 패치
 // ─────────────────────────────────────────────
-// 1. CHAIN_RESOLVERS에 themeEffect 등록 (effects-chain.js에 이미 있지만 보강)
-// 2. handleOpponentAction 확장
-// 3. summonFromDeck/summonFromGrave 소환 트리거
-// 4. enterGame/resetTurnEffects 초기화
-// 5. 덱 프리셋
+// 1. handleOpponentAction 확장
+// 2. summonFromDeck/summonFromGrave 소환 트리거 + 버그 수정
+// 3. enterGame/resetTurnEffects 초기화
+// 4. 덱 프리셋
 // ─────────────────────────────────────────────
 
-// 1. CHAIN_RESOLVERS.themeEffect 등록 확인
-// (effects-chain.js에 이미 themeEffect → resolveThemeEffect 가 있으므로 중복 불필요)
-// theme-common.js의 resolveThemeEffect가 handler.resolveLink를 호출함
-
-// 2. handleOpponentAction 확장
+// 1. handleOpponentAction 확장
 (function _patchHandleOp() {
   const _orig = typeof handleOpponentAction === 'function' ? handleOpponentAction : null;
   if (!_orig) return;
   handleOpponentAction = function(action) {
-    // 테마 핸들러 위임
     const handlers = Object.values(window.THEME_EFFECT_HANDLERS || {});
     for (const h of handlers) { if (typeof h.handleOpAction === 'function') h.handleOpAction(action); }
 
@@ -52,7 +46,6 @@
       case 'opGraveMassExile':
       case 'tigerZoneBan':
       case 'opExtraSlots':
-        // 각 테마 핸들러에서 처리
         return;
       default:
         break;
@@ -85,31 +78,63 @@
   };
 })();
 
-// 3. summonFromDeck/summonFromGrave 소환 트리거 브로드캐스트
+// 2. summonFromDeck/summonFromGrave/summonFromHand 소환 트리거 + 버그 수정
+// ★ 버그 수정 1: 존 꽉찬 경우 소환 차단 (maxFieldSlots 체크)
+// ★ 버그 수정 2: 재소환 시 attackedMonstersThisTurn에서 제거 (재공격 허용)
 (function _patchSummonTriggers() {
   const _fire = (cardId) => {
     const card = CARDS[cardId];
     if (!card?.theme) return;
     const handler = window.THEME_EFFECT_HANDLERS?.[card.theme];
     if (handler?.onSummoned) setTimeout(() => handler.onSummoned(cardId), 50);
+    // ★ 재소환 시 공격 기록 초기화 (묘지→재소환된 카드는 다시 공격 가능)
+    if (typeof attackedMonstersThisTurn !== 'undefined') {
+      attackedMonstersThisTurn.delete(cardId);
+    }
   };
+
+  // summonFromDeck
   const _origFromDeck = typeof summonFromDeck === 'function' ? summonFromDeck : null;
   if (_origFromDeck) {
     summonFromDeck = function(cardId) {
-      if (G.ligerKingBanSummon) { notify('라이거 킹 ④: 이 턴 소환 불가'); return; }
-      _origFromDeck(cardId); _fire(cardId);
+      // ★ 존 슬롯 체크
+      const slots = typeof maxFieldSlots === 'function' ? maxFieldSlots() : 5 + (G.myExtraSlots||0);
+      if (G.myField.length >= slots) { notify('몬스터 존이 가득 찼습니다.'); return false; }
+      if (G.ligerKingBanSummon) { notify('라이거 킹 ④: 이 턴 소환 불가'); return false; }
+      const result = _origFromDeck(cardId);
+      if (result !== false) _fire(cardId);
+      return result;
     };
   }
+
+  // summonFromGrave
   const _origFromGrave = typeof summonFromGrave === 'function' ? summonFromGrave : null;
   if (_origFromGrave) {
     summonFromGrave = function(cardId) {
-      if (G.ligerKingBanSummon) { notify('라이거 킹 ④: 이 턴 소환 불가'); return; }
-      _origFromGrave(cardId); _fire(cardId);
+      // ★ 존 슬롯 체크
+      const slots = typeof maxFieldSlots === 'function' ? maxFieldSlots() : 5 + (G.myExtraSlots||0);
+      if (G.myField.length >= slots) { notify('몬스터 존이 가득 찼습니다.'); return false; }
+      if (G.ligerKingBanSummon) { notify('라이거 킹 ④: 이 턴 소환 불가'); return false; }
+      const result = _origFromGrave(cardId);
+      if (result !== false) _fire(cardId);
+      return result;
+    };
+  }
+
+  // summonFromHand — 슬롯 체크는 원본에 있지만 재소환 트리거 추가
+  const _origFromHand = typeof summonFromHand === 'function' ? summonFromHand : null;
+  if (_origFromHand) {
+    summonFromHand = function(handIdx) {
+      if (G.ligerKingBanSummon) { notify('라이거 킹 ④: 이 턴 소환 불가'); return false; }
+      const cardId = G.myHand[handIdx]?.id;
+      const result = _origFromHand(handIdx);
+      if (result !== false && cardId) _fire(cardId);
+      return result;
     };
   }
 })();
 
-// 4. enterGame / resetTurnEffects 초기화
+// 3. enterGame / resetTurnEffects 초기화
 (function _patchEnterGame() {
   const _orig = typeof enterGame === 'function' ? enterGame : null;
   if (!_orig) return;
@@ -119,7 +144,7 @@
     G.tigerZonePermanent = false;
     G.ligerKingBanSummon = false;
     G.myExtraSlots       = G.myExtraSlots || 0;
-    // ★ AI 모드: enterGame 완료 직후 AI 세팅
+    // ★ AI 모드: enterGame 완료 직후 AI 세팅 신호
     if (window.AI && window.AI.active) {
       window.AI._pendingSetup = true;
     }
@@ -135,7 +160,7 @@
   };
 })();
 
-// 5. 덱 프리셋
+// 4. 덱 프리셋
 (function _patchLoadPreset() {
   const _orig = typeof loadPreset === 'function' ? loadPreset : null;
   if (!_orig) return;
@@ -184,59 +209,4 @@
     }
     renderBuilderDeck(); filterDeckPool(currentPoolFilter);
   };
-})();
-
-// ─────────────────────────────────────────────
-// 6. AI 훅 — patch.js 마지막에서 등록 (가장 나중에 실행 보장)
-// ─────────────────────────────────────────────
-(function _patchAI() {
-
-  // confirmDeck: AI 덱 빌드
-  const _origConfirm = typeof confirmDeck === 'function' ? confirmDeck : null;
-  if (_origConfirm) {
-    confirmDeck = function() {
-      if (window.AI && window.AI.active) {
-        if (typeof _buildAIDeck === 'function') _buildAIDeck();
-      }
-      _origConfirm.apply(this, arguments);
-    };
-  }
-
-  // _startNewGame: 완료 직후 AI 세팅 (가장 중요)
-  const _origSNG = typeof _startNewGame === 'function' ? _startNewGame : null;
-  if (_origSNG) {
-    _startNewGame = function() {
-      _origSNG.apply(this, arguments);
-      if (window.AI && window.AI.active) {
-        // 동기적으로 즉시 실행 — setTimeout 없이
-        if (typeof _setupAI === 'function') _setupAI();
-      }
-    };
-  }
-
-  // endTurn: AI 턴 시작
-  const _origEndTurn = typeof endTurn === 'function' ? endTurn : null;
-  if (_origEndTurn) {
-    endTurn = function() {
-      _origEndTurn.apply(this, arguments);
-      if (window.AI && window.AI.active && !isMyTurn) {
-        setTimeout(function() {
-          if (typeof _aiStartTurn === 'function') _aiStartTurn();
-        }, 700);
-      }
-    };
-  }
-
-  // checkWinCondition: AI 패 0 = 플레이어 승리
-  const _origCheckWin = typeof checkWinCondition === 'function' ? checkWinCondition : null;
-  if (_origCheckWin) {
-    checkWinCondition = function() {
-      _origCheckWin.apply(this, arguments);
-      if (!window.AI || !window.AI.active) return;
-      if (G.opHand.length === 0 && !isMyTurn) {
-        setTimeout(function() { showGameOver(true); }, 300);
-      }
-    };
-  }
-
 })();
