@@ -33,6 +33,24 @@ function drawCards(n) {
 
 function endDeploy() {
   if (!isMyTurn || currentPhase !== 'deploy') return;
+
+  if (activeChainState && activeChainState.active) {
+    notify('체인 처리 중에는 전개 단계를 종료할 수 없습니다.');
+    return;
+  }
+
+  const priorityOwner = (typeof getPriorityOwner === 'function') ? getPriorityOwner() : myRole;
+  if (priorityOwner !== myRole) {
+    notify('우선권이 있을 때만 전개 단계를 종료할 수 있습니다.');
+    return;
+  }
+
+  if (pendingTriggerEffects.length > 0) {
+    notify('전개 단계 종료 전, 유발 즉시 효과의 발동 여부를 먼저 확인합니다.');
+    flushTriggeredEffects();
+    return;
+  }
+
   if (G.turn === 1 && myRole === 'host') {
     advancePhase('end');
     log('선공 1턴은 공격 단계를 건너뜁니다.', 'system');
