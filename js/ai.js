@@ -1,16 +1,17 @@
 // ============================================================
-// ai.js — AI 대전 모듈 (Groq API 무료 버전)
+// ai.js — AI 대전 모듈 (Cloudflare Worker 프록시 버전)
 // ============================================================
 // 설치:
-//   1. https://console.groq.com 에서 API 키 발급 (무료, 이메일만 필요)
-//   2. 아래 _GROQ_KEY 에 키 입력
+//   1. worker.js 를 Cloudflare Workers 에 배포
+//   2. 아래 _WORKER_URL 에 Worker URL 입력
 //   3. index.html 의 <script src="js/patch.js"></script> 뒤에
 //      <script src="js/ai.js"></script> 추가
 // ============================================================
 'use strict';
 
-// ★ 여기에 Groq API 키 입력
-var _GROQ_KEY = '';
+// ★ Cloudflare Worker URL 입력 (키가 아니라 URL이라 노출돼도 안전)
+// 예) 'https://cardgame-ai.홍길동.workers.dev'
+var _WORKER_URL = '';
 
 // ─────────────────────────────────────────────────────────────
 window.AI = {
@@ -288,10 +289,10 @@ async function _aiStartTurn() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Groq API 호출
+// Groq API 호출 (Cloudflare Worker 경유)
 // ─────────────────────────────────────────────────────────────
 async function _groqPlan() {
-  if (!_GROQ_KEY) throw new Error('Groq 키 없음');
+  if (!_WORKER_URL) throw new Error('Worker URL 없음 — 폴백으로 전환');
 
   var state = {
     turn: G.turn,
@@ -326,34 +327,34 @@ async function _groqPlan() {
     '반드시 JSON 만 반환. 마크다운 없이.',
   ].join('\n');
 
-  var resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  // Cloudflare Worker로 요청 (키는 Worker 서버에만 있음)
+  var resp = await fetch(_WORKER_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + _GROQ_KEY,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'llama-3.1-8b-instant',
       temperature: 0.2,
       max_tokens: 500,
-      response_format: { type: 'json_object' }, // JSON 모드 강제
+      response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: systemPrompt },
         {
           role: 'user',
-          content: '현재 게임 상태:\n' + JSON.stringify(state) + '\n\n최적의 행동을 JSON으로 반환:\n{"thinking":"전략 한 줄 (한국어)","deploy":[{"action":"summonFromHand","cardId":"ID"}],"attack":[{"action":"attack","attackerId":"ID","targetIdx":0}]}',
+          content: '현재 게임 상태:\n' + JSON.stringify(state) +
+            '\n\n최적의 행동을 JSON으로 반환:\n' +
+            '{"thinking":"전략 한 줄 (한국어)",' +
+            '"deploy":[{"action":"summonFromHand","cardId":"ID"}],' +
+            '"attack":[{"action":"attack","attackerId":"ID","targetIdx":0}]}',
         },
       ],
     }),
   });
 
-  if (!resp.ok) {
-    var err = await resp.json().catch(function() { return {}; });
-    throw new Error('Groq ' + resp.status + ': ' + (err.error && err.error.message || ''));
-  }
+  if (!resp.ok) throw new Error('Worker ' + resp.status);
 
   var data = await resp.json();
-  var text = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content || '{}';
+  var text = data.choices && data.choices[0] &&
+             data.choices[0].message && data.choices[0].message.content || '{}';
   var clean = text.replace(/```json|```/g, '').trim();
   var match = clean.match(/\{[\s\S]*\}/);
   if (match) clean = match[0];
@@ -361,7 +362,7 @@ async function _groqPlan() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 폴백 (키 없거나 API 실패 시)
+// 폴백 (Worker URL 없거나 실패 시)
 // ─────────────────────────────────────────────────────────────
 function _fallback() {
   var plan = { thinking: '기본 전략', deploy: [], attack: [] };
@@ -562,7 +563,7 @@ function _patchLobby() {
   card.style.cssText = 'border-color:#ea580c;background:linear-gradient(160deg,#1a0a00,#2d1500);';
   card.innerHTML =
     '<h2 style="color:#fb923c;display:flex;align-items:center;gap:.5rem">🤖 AI 대전 <span style="font-size:.65rem;color:#ea580c;border:1px solid #ea580c;padding:.1rem .4rem;border-radius:3px">Groq AI</span></h2>' +
-    '<p style="font-size:.82rem;color:#9090b0;line-height:1.65;margin:.25rem 0 .8rem">Groq의 초고속 Llama AI가 전황을 분석해 전략적으로 플레이합니다.<br>내가 선공, AI가 후공으로 시작합니다.<br><span style="color:#fb923c;font-size:.75rem">※ ai.js 상단의 _GROQ_KEY 에 키를 입력하세요</span></p>' +
+    '<p style="font-size:.82rem;color:#9090b0;line-height:1.65;margin:.25rem 0 .8rem">Groq AI가 전황을 분석해 전략적으로 플레이합니다.<br>내가 선공, AI가 후공으로 시작합니다.</p>' +
     '<button style="width:100%;padding:.8rem;background:linear-gradient(135deg,#431407,#9a3412);color:#fed7aa;border:1px solid #ea580c;border-radius:6px;font-family:Black Han Sans,sans-serif;font-size:1rem;letter-spacing:.12em;cursor:pointer;box-shadow:0 0 20px #ea580c33;" ' +
     'onmouseover="this.style.background=\'linear-gradient(135deg,#7c2d12,#c2410c)\'" ' +
     'onmouseout="this.style.background=\'linear-gradient(135deg,#431407,#9a3412)\'" ' +
