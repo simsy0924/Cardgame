@@ -11,7 +11,7 @@
 
 // ★ Cloudflare Worker URL 입력 (키가 아니라 URL이라 노출돼도 안전)
 // 예) 'https://cardgame-ai.홍길동.workers.dev'
-var _WORKER_URL = '';
+var _WORKER_URL = 'https://workers-ai.simsy0924.workers.dev';
 
 // ─────────────────────────────────────────────────────────────
 window.AI = {
