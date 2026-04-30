@@ -137,7 +137,11 @@ function flushTriggeredEffects() {
 }
 
 function _resolveLocalChainWithAI(chainState) {
-  if (!window.AI || !window.AI.active) return;
+  if (!window.AI || !window.AI.active) {
+    const localState = { ...chainState, passCount: 2 };
+    resolveChain(localState);
+    return;
+  }
 
   activeChainState = { ...chainState, priority: 'guest' };
   renderChainActions();
@@ -149,7 +153,11 @@ function _resolveLocalChainWithAI(chainState) {
     }
     if (typeof window._aiChainResponse === 'function') {
       window._aiChainResponse(activeChainState);
+      return;
     }
+
+    // 안전장치: AI 응답 함수가 없는 경우 로컬 체인이 멈추지 않도록 즉시 해결
+    resolveChain({ ...activeChainState, passCount: 2 });
   }, 800);
 }
 
