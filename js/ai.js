@@ -1,48 +1,267 @@
 // ============================================================
-// ai.js — 진짜 AI 대전 모듈 (Claude API 기반)
+// ai.js — AI 대전 모듈 (engine.js 구조 기반)
 // ============================================================
-// 설치 방법:
-//   1. 이 파일을 js/ai.js 로 저장
-//   2. index.html 의 <script src="js/patch.js"></script> 바로 뒤에 추가:
-//      <script src="js/ai.js"></script>
+// 설치: index.html 의 <script src="js/patch.js"></script> 뒤에
+//       <script src="js/ai.js"></script> 추가
 // ============================================================
 'use strict';
 
-// ─────────────────────────────────────────────────────────────
-// 전역 상태
-// ─────────────────────────────────────────────────────────────
 window.AI = {
-  active:       false,   // AI 모드 ON/OFF
-  thinking:     false,   // AI 생각 중
-  turnCount:    0,       // AI 턴 횟수
-  deckPreset:   null,    // AI 덱 프리셋 이름
-  opDeck:       [],      // AI 메인덱 (셔플된 배열)
-  usedEffects:  {},      // {cardId_effectNum: true} AI 사용 효과 추적
-  attackedThis: new Set(), // 이번 AI 공격 단계 공격한 몬스터 id
+  active:      false,
+  thinking:    false,
+  opDeck:      [],   // AI 메인덱 (shuffled)
+  deckPreset:  null,
+  usedFx:      {},   // {cardId_n: count}
+  attacked:    new Set(),
 };
 
 // ─────────────────────────────────────────────────────────────
-// 유틸
+// 훅 등록 — DOM 로드 전에 선언해서 나중에 연결
 // ─────────────────────────────────────────────────────────────
-const _sleep = ms => new Promise(r => setTimeout(r, ms));
 
-function _aiLog(msg) { log('🤖 ' + msg, 'opponent'); }
+// 1) initDecks 훅 — AI 모드일 때 op쪽 초기화를 막는다
+(function() {
+  // initDecks 는 engine.js에서 전역으로 선언되어 있음
+  // effects-theme.js 로드 후에도 같은 함수가 쓰임
+  // → DOM 완전 로드 후 덮어쓰기
+  function _patchInitDecks() {
+    var _orig = window.initDecks;
+    if (!_orig) return;
+    window.initDecks = function() {
+      _orig.apply(this, arguments);
+      // AI 모드면 op 존 초기화를 되돌린다
+      if (window.AI.active) {
+        G.opHand      = [];
+        G.opField     = [];
+        G.opGrave     = [];
+        G.opExile     = [];
+        G.opFieldCard = null;
+        G.opKeyDeck   = [];
+        G.opDeckCount = window.AI.opDeck ? window.AI.opDeck.length : 0;
+      }
+    };
+    window._initDeckPatched = true;
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { setTimeout(_patchInitDecks, 0); });
+  } else {
+    setTimeout(_patchInitDecks, 0);
+  }
+})();
 
-function _aiCanUseEffect(cardId, num) { return !window.AI.usedEffects[cardId + '_' + num]; }
-function _aiMarkUsed(cardId, num)     { window.AI.usedEffects[cardId + '_' + num] = true; }
+// 2) enterGame 훅 — AI 게임 초기화를 enterGame() 완료 직후에 실행
+(function() {
+  function _patchEnterGame() {
+    var _orig = window.enterGame;
+    if (!_orig) return;
+    window.enterGame = function() {
+      _orig.apply(this, arguments);
+      if (window.AI.active) {
+        // enterGame/_startNewGame/initDecks 가 모두 끝난 뒤
+        // (drawN 호출까지 동기 완료) 실행
+        setTimeout(_setupAIAfterEnterGame, 0);
+      }
+    };
+    window._enterGamePatched = true;
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { setTimeout(_patchEnterGame, 50); });
+  } else {
+    setTimeout(_patchEnterGame, 50);
+  }
+})();
 
-function _aiResetTurnEffects() {
-  window.AI.usedEffects = {};
-  window.AI.attackedThis = new Set();
+// 3) endTurn 훅
+(function() {
+  function _patchEndTurn() {
+    var _orig = window.endTurn;
+    if (!_orig) return;
+    window.endTurn = function() {
+      _orig.apply(this, arguments);
+      // endTurn 안에서 isMyTurn = false 가 설정된 뒤
+      if (window.AI.active && !isMyTurn) {
+        setTimeout(_aiStartTurn, 700);
+      }
+    };
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { setTimeout(_patchEndTurn, 100); });
+  } else {
+    setTimeout(_patchEndTurn, 100);
+  }
+})();
+
+// 4) checkWinCondition 훅 — AI 패 0 = 플레이어 승리
+(function() {
+  function _patchCheckWin() {
+    var _orig = window.checkWinCondition;
+    if (!_orig) return;
+    window.checkWinCondition = function() {
+      _orig.apply(this, arguments);
+      if (!window.AI.active) return;
+      if (G.opHand.length === 0 && !isMyTurn) {
+        setTimeout(function() {
+          if (typeof showGameOver === 'function') showGameOver(true);
+        }, 300);
+      }
+    };
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { setTimeout(_patchCheckWin, 100); });
+  } else {
+    setTimeout(_patchCheckWin, 100);
+  }
+})();
+
+// ─────────────────────────────────────────────────────────────
+// 로비 진입
+// ─────────────────────────────────────────────────────────────
+window.startAIMode = function() {
+  window.AI.active = true;
+  // Firebase 사용 안 함
+  window.roomRef  = null;
+  window.myRole   = 'host';
+
+  var btn = document.getElementById('dbConfirmBtn');
+  if (btn) btn.textContent = 'AI 대전 시작 →';
+
+  document.getElementById('lobby').style.display = 'none';
+  document.getElementById('deckBuilder').style.display = 'flex';
+  if (typeof filterDeckPool  === 'function') filterDeckPool('전체');
+  if (typeof renderBuilderDeck === 'function') renderBuilderDeck();
+};
+
+// ─────────────────────────────────────────────────────────────
+// AI 덱 빌드 (enterGame 전에 호출)
+// ─────────────────────────────────────────────────────────────
+function _buildAIDeck() {
+  var pd = window._confirmedDeck || [];
+  var tc = {};
+  pd.forEach(function(id) {
+    var t = CARDS[id] && CARDS[id].theme;
+    if (t) tc[t] = (tc[t] || 0) + 1;
+  });
+  var top = '펭귄', topN = 0;
+  Object.keys(tc).forEach(function(t) { if (tc[t] > topN) { topN = tc[t]; top = t; } });
+
+  var cm = { '펭귄':'크툴루', '올드원':'펭귄', '라이온':'타이거', '타이거':'라이온',
+             '라이거':'펭귄', '지배자':'크툴루', '마피아':'펭귄', '불가사의':'펭귄' };
+  window.AI.deckPreset = cm[top] || '펭귄';
+
+  var list = _presetMain(window.AI.deckPreset).filter(function(id) { return CARDS[id]; });
+  while (list.length < 40) list.push('구사일생');
+  list = list.slice(0, 60);
+
+  // shuffle — engine.js의 shuffle() 사용
+  window.AI.opDeck = shuffle(list.map(function(id) {
+    return { id: id, name: (CARDS[id] ? CARDS[id].name : id) };
+  }));
+  window.AI.usedFx  = {};
+  window.AI.attacked = new Set();
 }
 
-// AI 덱에서 n장 드로우
+function _presetMain(theme) {
+  var r = function(id, n) { var a = []; for (var i = 0; i < n; i++) a.push(id); return a; };
+  var p = {
+    '펭귄':   r('펭귄 마을',4).concat(r('꼬마 펭귄',4),r('펭귄 부부',4),r('현자 펭귄',4),
+              r('수문장 펭귄',4),r('펭귄!돌격!',4),r('펭귄의 영광',4),
+              r('펭귄이여 영원하라',4),r('펭귄 마법사',4),
+              ['구사일생','구사일생','눈에는 눈','눈에는 눈']),
+    '크툴루': r('그레이트 올드 원-크툴루',4).concat(r('그레이트 올드 원-크투가',4),
+              r('그레이트 올드 원-크아이가',4),r('그레이트 올드 원-과타노차',4),
+              r('엘더 갓-노덴스',4),r('엘더 갓-크타니트',4),r('엘더 갓-히프노스',4),
+              r('올드_원의 멸망',4),['구사일생','구사일생','눈에는 눈','눈에는 눈']),
+    '라이온': r('베이비 라이온',4).concat(r('젊은 라이온',4),r('에이스 라이온',4),
+              r('사자의 포효',4),r('사자의 사냥',4),r('사자의 발톱',4),
+              r('사자의 일격',4),r('진정한 사자',4),
+              ['구사일생','구사일생','눈에는 눈','눈에는 눈','출입통제','출입통제']),
+    '타이거': r('베이비 타이거',4).concat(r('젊은 타이거',4),r('에이스 타이거',4),
+              r('호랑이의 포효',4),r('호랑이의 사냥',4),r('호랑이의 발톱',4),
+              r('진정한 호랑이',4),r('호랑이의 일격',4),
+              ['구사일생','구사일생','눈에는 눈','눈에는 눈','출입통제','출입통제']),
+    '지배자': r('수원소의 지배자',4).concat(r('화원소의 지배자',4),r('전원소의 지배자',4),
+              r('풍원소의 지배자',4),r('수원소의 지배룡',4),r('화원소의 지배룡',4),
+              r('전원소의 지배룡',4),r('풍원소의 지배룡',4),
+              ['지배의 사슬','지배의 사슬','지배룡과 지배자','지배룡과 지배자',
+               '눈에는 눈','눈에는 눈','출입통제','출입통제']),
+  };
+  return (p[theme] || p['펭귄']).slice();
+}
+
+function _presetKey(theme) {
+  var k = {
+    '펭귄':   ['펭귄 용사','펭귄의 일격','펭귄의 전설','일격필살','단 한번의 기회'],
+    '크툴루': ['아우터 갓 니알라토텝','아우터 갓-아자토스','아우터 갓 슈브 니구라스','일격필살','단 한번의 기회'],
+    '라이온': ['라이온 킹','고고한 사자','일격필살','단 한번의 기회'],
+    '타이거': ['타이거 킹','고고한 호랑이','일격필살','단 한번의 기회'],
+    '지배자': ['사원소의 지배룡','사원소의 지배자','일격필살','단 한번의 기회'],
+  };
+  return (k[theme] || k['펭귄']).filter(function(id) { return CARDS[id]; });
+}
+
+// ─────────────────────────────────────────────────────────────
+// confirmDeck → enterGameWithDeck 직전에 AI 덱 빌드
+// ─────────────────────────────────────────────────────────────
+(function() {
+  function _patchConfirmDeck() {
+    var _orig = window.confirmDeck;
+    if (!_orig) return;
+    window.confirmDeck = function() {
+      if (window.AI.active) _buildAIDeck(); // 덱 빌드 먼저
+      _orig.apply(this, arguments);
+    };
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { setTimeout(_patchConfirmDeck, 50); });
+  } else {
+    setTimeout(_patchConfirmDeck, 50);
+  }
+})();
+
+// ─────────────────────────────────────────────────────────────
+// enterGame 완료 후 AI 상태 세팅
+// (_startNewGame → initDecks → drawN 이 모두 끝난 다음)
+// ─────────────────────────────────────────────────────────────
+function _setupAIAfterEnterGame() {
+  if (!window.AI.active) return;
+
+  // 혹시 덱이 아직 안 만들어졌으면 지금 만든다
+  if (!window.AI.opDeck || window.AI.opDeck.length === 0) _buildAIDeck();
+
+  // op 상태 덮어쓰기
+  G.opHand      = [];
+  G.opField     = [];
+  G.opGrave     = [];
+  G.opExile     = [];
+  G.opFieldCard = null;
+  G.opKeyDeck   = _presetKey(window.AI.deckPreset).map(function(id) {
+    return { id: id, name: (CARDS[id] ? CARDS[id].name : id) };
+  });
+  G.opDeckCount = window.AI.opDeck.length;
+
+  // AI 초기 드로우 7장 (guest 기준)
+  _aiDraw(7);
+
+  // 헤더 이름
+  document.getElementById('hdrOpName').textContent   = '🤖 AI (' + window.AI.deckPreset + ')';
+  document.getElementById('opNameLabel').textContent = '🤖 AI';
+
+  // 배너
+  _injectBanner();
+  log('🤖 AI (' + window.AI.deckPreset + ') 참전! 패 ' + G.opHand.length + '장', 'system');
+
+  renderAll();
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI 카드 조작 (모두 handleOpponentAction 경유로 플레이어 화면 갱신)
+// ─────────────────────────────────────────────────────────────
+
 function _aiDraw(n) {
-  n = n || 1;
-  for (let i = 0; i < n; i++) {
-    if (window.AI.opDeck.length === 0) {
-      _aiLog('덱 아웃!');
-      showGameOver(true);
+  for (var i = 0; i < n; i++) {
+    if (!window.AI.opDeck.length) {
+      log('🤖 AI 덱 아웃!', 'system');
+      if (typeof showGameOver === 'function') showGameOver(true);
       return false;
     }
     var c = window.AI.opDeck.shift();
@@ -52,591 +271,449 @@ function _aiDraw(n) {
   return true;
 }
 
-// AI 패에서 카드 제거
-function _aiRemoveFromHand(cardId) {
+function _aiRemoveHand(cardId) {
   var i = G.opHand.findIndex(function(c) { return c.id === cardId; });
   if (i >= 0) G.opHand.splice(i, 1);
 }
 
-// AI 몬스터 필드 소환
-function _aiSummon(cardId) {
+// 몬스터 소환 — handleOpponentAction('summon')을 호출해서
+// 플레이어 화면의 goldenApple 드로우 등 부수 효과까지 자동 처리
+function _aiSummonMonster(cardId) {
   var card = CARDS[cardId];
   if (!card || card.cardType !== 'monster') return false;
-  _aiRemoveFromHand(cardId);
-  G.opField.push({ id: cardId, name: card.name, atk: card.atk != null ? card.atk : 0, atkBase: card.atk != null ? card.atk : 0 });
-  _aiLog('소환: ' + card.name + ' (ATK ' + (card.atk != null ? card.atk : 0) + ')');
+  _aiRemoveHand(cardId);
+  G.opField.push({ id: cardId, name: card.name,
+                   atk: card.atk != null ? card.atk : 0,
+                   atkBase: card.atk != null ? card.atk : 0 });
+  log('🤖 소환: ' + card.name + ' ATK' + (card.atk != null ? card.atk : 0), 'opponent');
   handleOpponentAction({ type: 'summon', cardId: cardId, by: 'guest', ts: Date.now() });
   return true;
 }
 
-// AI 패 버리기
+function _aiSummonFromDeck(cardId) {
+  var idx = window.AI.opDeck.findIndex(function(c) { return c.id === cardId; });
+  if (idx < 0) return false;
+  window.AI.opDeck.splice(idx, 1);
+  G.opDeckCount = window.AI.opDeck.length;
+  var card = CARDS[cardId] || {};
+  G.opField.push({ id: cardId, name: card.name || cardId,
+                   atk: card.atk != null ? card.atk : 0,
+                   atkBase: card.atk != null ? card.atk : 0 });
+  log('🤖 덱에서 소환: ' + (card.name || cardId), 'opponent');
+  handleOpponentAction({ type: 'summon', cardId: cardId, by: 'guest', ts: Date.now() });
+  return true;
+}
+
+function _aiSummonFromGrave(cardId) {
+  var idx = G.opGrave.findIndex(function(c) { return c.id === cardId; });
+  if (idx < 0) return false;
+  G.opGrave.splice(idx, 1);
+  var card = CARDS[cardId] || {};
+  G.opField.push({ id: cardId, name: card.name || cardId,
+                   atk: card.atk != null ? card.atk : 0,
+                   atkBase: card.atk != null ? card.atk : 0 });
+  log('🤖 묘지에서 소환: ' + (card.name || cardId), 'opponent');
+  handleOpponentAction({ type: 'summon', cardId: cardId, by: 'guest', ts: Date.now() });
+  return true;
+}
+
 function _aiDiscard(cardId) {
-  _aiRemoveFromHand(cardId);
+  _aiRemoveHand(cardId);
   G.opGrave.push({ id: cardId, name: (CARDS[cardId] ? CARDS[cardId].name : cardId) });
   handleOpponentAction({ type: 'discard', cardId: cardId, by: 'guest', ts: Date.now() });
 }
 
-// AI 덱에서 서치 → opHand
-function _aiSearchFromDeck(cardId) {
-  var i = window.AI.opDeck.findIndex(function(c) { return c.id === cardId; });
-  if (i < 0) return false;
-  window.AI.opDeck.splice(i, 1);
+function _aiSearchDeck(cardId) {
+  var idx = window.AI.opDeck.findIndex(function(c) { return c.id === cardId; });
+  if (idx < 0) return false;
+  window.AI.opDeck.splice(idx, 1);
   G.opHand.push({ id: cardId, name: (CARDS[cardId] ? CARDS[cardId].name : cardId) });
   G.opDeckCount = window.AI.opDeck.length;
-  _aiLog('서치: ' + (CARDS[cardId] ? CARDS[cardId].name : cardId));
+  log('🤖 서치: ' + (CARDS[cardId] ? CARDS[cardId].name : cardId), 'opponent');
+  // 눈에는 눈 트리거
   handleOpponentAction({ type: 'search', cardName: (CARDS[cardId] ? CARDS[cardId].name : cardId), by: 'guest', ts: Date.now() });
   return true;
 }
 
-// AI 덱에서 소환
-function _aiSummonFromDeck(cardId) {
-  var i = window.AI.opDeck.findIndex(function(c) { return c.id === cardId; });
-  if (i < 0) return false;
-  window.AI.opDeck.splice(i, 1);
-  G.opDeckCount = window.AI.opDeck.length;
-  var card = CARDS[cardId] || {};
-  G.opField.push({ id: cardId, name: card.name || cardId, atk: card.atk != null ? card.atk : 0, atkBase: card.atk != null ? card.atk : 0 });
-  _aiLog('덱에서 소환: ' + (card.name || cardId));
-  handleOpponentAction({ type: 'summon', cardId: cardId, by: 'guest', ts: Date.now() });
-  return true;
-}
+// 전투 — handleOpponentAction('combat')으로 위임
+// → handleOpponentCombat이 플레이어 피해(forceDiscard, 구사일생 등)를 자동 처리
+function _aiAttack(atkId, defIdx) {
+  if (window.AI.attacked.has(atkId)) return false;
+  var atkFI = G.opField.findIndex(function(c) { return c.id === atkId; });
+  if (atkFI < 0) return false;
+  var def = G.myField[defIdx];
+  if (!def) return false;
 
-// AI 묘지에서 소환
-function _aiSummonFromGrave(cardId) {
-  var i = G.opGrave.findIndex(function(c) { return c.id === cardId; });
-  if (i < 0) return false;
-  G.opGrave.splice(i, 1);
-  var card = CARDS[cardId] || {};
-  G.opField.push({ id: cardId, name: card.name || cardId, atk: card.atk != null ? card.atk : 0, atkBase: card.atk != null ? card.atk : 0 });
-  _aiLog('묘지에서 소환: ' + (card.name || cardId));
-  handleOpponentAction({ type: 'summon', cardId: cardId, by: 'guest', ts: Date.now() });
-  return true;
-}
+  window.AI.attacked.add(atkId);
+  var atk = G.opField[atkFI];
+  var diff = atk.atk - def.atk;
 
-// AI 공격
-function _aiAttack(atkCardId, defIdx) {
-  var atkIdx = G.opField.findIndex(function(c) { return c.id === atkCardId; });
-  if (atkIdx < 0 || window.AI.attackedThis.has(atkCardId)) return false;
-  var defender = G.myField[defIdx];
-  if (!defender) return false;
+  log('🤖 공격: ' + atk.name + '(' + atk.atk + ') → ' + def.name + '(' + def.atk + ')', 'opponent');
 
-  window.AI.attackedThis.add(atkCardId);
-  var attacker = G.opField[atkIdx];
-  var diff = attacker.atk - defender.atk;
-
-  _aiLog('공격: ' + attacker.name + '(' + attacker.atk + ') → ' + defender.name + '(' + defender.atk + ')');
-
+  // 플레이어 화면 피해 처리 (forceDiscard, 구사일생 포함)
   handleOpponentAction({
     type: 'combat',
-    atkCard: { id: attacker.id, name: attacker.name, atk: attacker.atk },
-    defCard: { id: defender.id, name: defender.name, atk: defender.atk },
+    atkCard: { id: atk.id, name: atk.name, atk: atk.atk },
+    defCard: { id: def.id, name: def.name, atk: def.atk },
     by: 'guest', ts: Date.now(),
   });
 
-  // AI 몬스터가 진 경우 opField에서 제거
-  if (diff < 0 && attacker.atk !== 0) {
-    var di = G.opField.findIndex(function(c) { return c.id === atkCardId; });
-    if (di >= 0) { G.opGrave.push(G.opField.splice(di, 1)[0]); }
-  } else if (diff === 0 && attacker.atk !== 0) {
-    var di2 = G.opField.findIndex(function(c) { return c.id === atkCardId; });
-    if (di2 >= 0) { G.opGrave.push(G.opField.splice(di2, 1)[0]); }
+  // AI 몬스터 패배 처리
+  if (atk.atk !== 0) {
+    if (diff <= 0) {
+      var ri = G.opField.findIndex(function(c) { return c.id === atkId; });
+      if (ri >= 0) G.opGrave.push(G.opField.splice(ri, 1)[0]);
+    }
   }
   return true;
 }
 
-// AI 직접 공격
-function _aiDirectAttack(atkCardId) {
-  if (G.myField.length > 0) return false;
-  var atkIdx = G.opField.findIndex(function(c) { return c.id === atkCardId; });
-  if (atkIdx < 0 || window.AI.attackedThis.has(atkCardId)) return false;
-
-  window.AI.attackedThis.add(atkCardId);
-  var attacker = G.opField[atkIdx];
-  _aiLog('직접 공격: ' + attacker.name + '(' + attacker.atk + ')');
-
+function _aiDirectAttack(atkId) {
+  if (G.myField.length > 0 || window.AI.attacked.has(atkId)) return false;
+  var fi = G.opField.findIndex(function(c) { return c.id === atkId; });
+  if (fi < 0) return false;
+  var atk = G.opField[fi];
+  window.AI.attacked.add(atkId);
+  log('🤖 직접 공격: ' + atk.name + '(' + atk.atk + ')', 'opponent');
   handleOpponentAction({
     type: 'directAttack',
-    card: { id: attacker.id, name: attacker.name, atk: attacker.atk },
+    card: { id: atk.id, name: atk.name, atk: atk.atk },
     by: 'guest', ts: Date.now(),
   });
   return true;
 }
 
 // ─────────────────────────────────────────────────────────────
-// AI 모드 진입
+// AI 턴 흐름
 // ─────────────────────────────────────────────────────────────
-function startAIMode() {
-  window.AI.active = true;
-  window.roomRef   = null;
-  window.myRole    = 'host';
+var _sleep = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
 
-  var btn = document.getElementById('dbConfirmBtn');
-  if (btn) btn.textContent = 'AI 대전 시작 →';
-
-  document.getElementById('lobby').style.display = 'none';
-  document.getElementById('deckBuilder').style.display = 'flex';
-  if (typeof filterDeckPool === 'function') filterDeckPool('전체');
-  if (typeof renderBuilderDeck === 'function') renderBuilderDeck();
-}
-
-// confirmDeck → enterGameWithDeck 훅
-(function() {
-  var _orig = window.enterGameWithDeck;
-  window.enterGameWithDeck = function() {
-    if (typeof _orig === 'function') _orig.apply(this, arguments);
-    if (window.AI.active) setTimeout(_initAIGame, 150);
-  };
-})();
-
-// ─────────────────────────────────────────────────────────────
-// AI 게임 초기화
-// ─────────────────────────────────────────────────────────────
-function _initAIGame() {
-  // 플레이어 테마 분석 → 카운터 덱 선택
-  var playerDeck = window._confirmedDeck || [];
-  var themeCount = {};
-  playerDeck.forEach(function(id) {
-    var t = CARDS[id] && CARDS[id].theme;
-    if (t) themeCount[t] = (themeCount[t] || 0) + 1;
-  });
-  var topTheme = '펭귄';
-  var topCount = 0;
-  Object.keys(themeCount).forEach(function(t) { if (themeCount[t] > topCount) { topCount = themeCount[t]; topTheme = t; } });
-
-  var counterMap = { '펭귄':'크툴루','올드원':'펭귄','라이온':'타이거','타이거':'라이온','라이거':'펭귄','지배자':'크툴루','마피아':'펭귄','불가사의':'펭귄' };
-  window.AI.deckPreset = counterMap[topTheme] || '펭귄';
-
-  // 덱 구성
-  var deckList = _getAIPresetDeck(window.AI.deckPreset);
-  window.AI.opDeck = shuffle(deckList.map(function(id) { return { id: id, name: (CARDS[id] ? CARDS[id].name : id) }; }));
-  window.AI.usedEffects = {};
-  window.AI.turnCount = 0;
-
-  // G 상태 초기화
-  G.opHand      = [];
-  G.opField     = [];
-  G.opGrave     = [];
-  G.opExile     = [];
-  G.opFieldCard = null;
-  G.opKeyDeck   = _getAIPresetKeyDeck(window.AI.deckPreset).map(function(id) { return { id: id, name: (CARDS[id] ? CARDS[id].name : id) }; });
-  G.opDeckCount = window.AI.opDeck.length;
-
-  // AI 초기 드로우 (guest: 7장)
-  _aiDraw(7);
-
-  document.getElementById('hdrOpName').textContent  = '🤖 AI (' + window.AI.deckPreset + ')';
-  document.getElementById('opNameLabel').textContent = '🤖 AI';
-
-  _injectAIBanner();
-  _aiLog(window.AI.deckPreset + ' 덱으로 참전! 패 ' + G.opHand.length + '장');
-  renderAll();
-}
-
-// ─────────────────────────────────────────────────────────────
-// AI 덱 프리셋
-// ─────────────────────────────────────────────────────────────
-function _getAIPresetDeck(theme) {
-  var x4 = function(id) { return [id,id,id,id]; };
-  var presets = {
-    '펭귄': x4('펭귄 마을').concat(x4('꼬마 펭귄'),x4('펭귄 부부'),x4('현자 펭귄'),x4('수문장 펭귄'),x4('펭귄!돌격!'),x4('펭귄의 영광'),x4('펭귄이여 영원하라'),x4('펭귄 마법사'),['구사일생','구사일생','눈에는 눈','눈에는 눈']),
-    '크툴루': x4('그레이트 올드 원-크툴루').concat(x4('그레이트 올드 원-크투가'),x4('그레이트 올드 원-크아이가'),x4('그레이트 올드 원-과타노차'),x4('엘더 갓-노덴스'),x4('엘더 갓-크타니트'),x4('엘더 갓-히프노스'),x4('올드_원의 멸망'),['구사일생','구사일생','눈에는 눈','눈에는 눈']),
-    '라이온': x4('베이비 라이온').concat(x4('젊은 라이온'),x4('에이스 라이온'),x4('사자의 포효'),x4('사자의 사냥'),x4('사자의 발톱'),x4('사자의 일격'),x4('진정한 사자'),['구사일생','구사일생','눈에는 눈','눈에는 눈','출입통제','출입통제']),
-    '타이거': x4('베이비 타이거').concat(x4('젊은 타이거'),x4('에이스 타이거'),x4('호랑이의 포효'),x4('호랑이의 사냥'),x4('호랑이의 발톱'),x4('진정한 호랑이'),x4('호랑이의 일격'),['구사일생','구사일생','눈에는 눈','눈에는 눈','출입통제','출입통제']),
-    '지배자': x4('수원소의 지배자').concat(x4('화원소의 지배자'),x4('전원소의 지배자'),x4('풍원소의 지배자'),x4('수원소의 지배룡'),x4('화원소의 지배룡'),x4('전원소의 지배룡'),x4('풍원소의 지배룡'),['지배의 사슬','지배의 사슬','지배룡과 지배자','지배룡과 지배자','눈에는 눈','눈에는 눈','출입통제','출입통제']),
-  };
-  var raw = [].concat(presets[theme] || presets['펭귄']).filter(function(id) { return CARDS[id]; });
-  while (raw.length < 40) raw.push('구사일생');
-  return raw.slice(0, 60);
-}
-
-function _getAIPresetKeyDeck(theme) {
-  var keys = {
-    '펭귄':   ['펭귄 용사','펭귄의 일격','펭귄의 전설','일격필살','단 한번의 기회'],
-    '크툴루': ['아우터 갓 니알라토텝','아우터 갓-아자토스','아우터 갓 슈브 니구라스','일격필살','단 한번의 기회'],
-    '라이온': ['라이온 킹','고고한 사자','일격필살','단 한번의 기회'],
-    '타이거': ['타이거 킹','고고한 호랑이','일격필살','단 한번의 기회'],
-    '지배자': ['사원소의 지배룡','사원소의 지배자','사원소의 기적','일격필살','단 한번의 기회'],
-  };
-  return (keys[theme] || keys['펭귄']).filter(function(id) { return CARDS[id]; });
-}
-
-// ─────────────────────────────────────────────────────────────
-// endTurn 훅 — 플레이어 턴 종료 감지
-// ─────────────────────────────────────────────────────────────
-(function() {
-  var _orig = window.endTurn;
-  window.endTurn = function() {
-    if (typeof _orig === 'function') _orig.apply(this, arguments);
-    if (window.AI.active && !isMyTurn) {
-      setTimeout(_aiStartTurn, 600);
-    }
-  };
-})();
-
-// ─────────────────────────────────────────────────────────────
-// AI 턴 메인 흐름
-// ─────────────────────────────────────────────────────────────
 async function _aiStartTurn() {
-  if (!window.AI.active || isMyTurn) return;
-  if (window.AI.thinking) return;
-
+  if (!window.AI.active || isMyTurn || window.AI.thinking) return;
   window.AI.thinking = true;
-  window.AI.turnCount++;
-  _aiResetTurnEffects();
-  _updateBanner('🤖 AI 드로우 중...');
+  window.AI.usedFx  = {};
+  window.AI.attacked = new Set();
+  _setBanner('🤖 드로우 중...');
 
-  // ── 1. 드로우 ──
-  if (currentPhase === 'draw') {
-    var ok = _aiDraw(1);
-    if (!ok) { window.AI.thinking = false; return; }
-    _aiLog('드로우 (패: ' + G.opHand.length + '장, 덱: ' + window.AI.opDeck.length + '장)');
-    advancePhase('deploy');
-    await _sleep(500);
-    renderAll();
-  }
-
-  // ── 2. Claude API로 전략 계산 ──
-  _updateBanner('🤖 AI 전략 계산 중...');
-  await _sleep(300);
-
-  var plan;
   try {
-    plan = await _askClaudeForPlan();
-  } catch(e) {
-    console.warn('[AI] Claude API 실패, 폴백:', e);
-    plan = _buildFallbackPlan();
-  }
+    // ── 드로우 단계 ──
+    if (currentPhase === 'draw') {
+      if (!_aiDraw(1)) { window.AI.thinking = false; return; }
+      log('🤖 드로우 (패:' + G.opHand.length + ' 덱:' + window.AI.opDeck.length + ')', 'opponent');
+      advancePhase('deploy');
+      await _sleep(400);
+      renderAll();
+    }
 
-  if (plan.thinking) {
-    _aiLog('"' + plan.thinking + '"');
-    await _sleep(400);
-  }
+    // ── Claude API 전략 ──
+    _setBanner('🤖 전략 계산 중...');
+    await _sleep(200);
+    var plan;
+    try { plan = await _claudePlan(); }
+    catch(e) {
+      console.warn('[AI] Claude API 실패:', e.message);
+      plan = _fallback();
+    }
+    if (plan.thinking) { log('🤖 "' + plan.thinking + '"', 'opponent'); await _sleep(300); }
 
-  // ── 3. 전개 단계 ──
-  _updateBanner('🤖 AI 전개 중...');
-  await _executeDeployPlan(plan.deploy || []);
-  advancePhase('attack');
-  await _sleep(400);
-  renderAll();
-
-  // ── 4. 선공 1턴 공격 없음 ──
-  if (G.turn <= 2 && myRole === 'host') {
-    _aiLog('선공 1턴 — 공격 없음');
-    advancePhase('end');
+    // ── 전개 단계 ──
+    _setBanner('🤖 전개 중...');
+    await _execDeploy(plan.deploy || []);
+    advancePhase('attack');
     await _sleep(300);
+    renderAll();
+
+    // ── 선공 1턴 공격 없음 ──
+    if (G.turn <= 2 && myRole === 'host') {
+      log('🤖 선공 1턴 — 공격 없음', 'opponent');
+      advancePhase('end');
+      await _sleep(200);
+      _aiEndTurn();
+      return;
+    }
+
+    // ── 공격 단계 ──
+    _setBanner('🤖 공격 중...');
+    await _execAttack(plan.attack || []);
+    advancePhase('end');
+    await _sleep(200);
     _aiEndTurn();
-    return;
+
+  } catch(e) {
+    console.error('[AI] 턴 오류:', e);
+    try { advancePhase('end'); } catch(_) {}
+    _aiEndTurn();
   }
-
-  // ── 5. 공격 단계 ──
-  _updateBanner('🤖 AI 공격 중...');
-  await _executeAttackPlan(plan.attack || []);
-  advancePhase('end');
-  await _sleep(300);
-
-  _aiEndTurn();
 }
 
 // ─────────────────────────────────────────────────────────────
-// Claude API 호출 — 전략 계획 수립
+// Claude API
 // ─────────────────────────────────────────────────────────────
-async function _askClaudeForPlan() {
-  // 게임 상태 스냅샷
+async function _claudePlan() {
   var state = {
     turn: G.turn,
     ai: {
       hand: G.opHand.map(function(c) {
         var cd = CARDS[c.id] || {};
-        return { id: c.id, name: c.name, cardType: cd.cardType, atk: cd.atk, theme: cd.theme, effects: cd.effects };
+        return { id: c.id, name: c.name, cardType: cd.cardType, atk: cd.atk,
+                 theme: cd.theme, effects: cd.effects };
       }),
       field: G.opField.map(function(c) { return { id: c.id, name: c.name, atk: c.atk }; }),
       grave: G.opGrave.map(function(c) { return c.id; }),
-      keyDeck: G.opKeyDeck.map(function(c) { return c.id; }),
       deckCount: window.AI.opDeck.length,
     },
     player: {
       handCount: G.myHand.length,
       field: G.myField.map(function(c) { return { id: c.id, name: c.name, atk: c.atk }; }),
-      grave: G.myGrave.map(function(c) { return c.id; }),
       deckCount: G.myDeckCount,
     },
   };
 
-  var systemPrompt = `당신은 카드 게임 "핸드 배틀 TCG"의 최강 AI 플레이어입니다.
-
-목표: 상대(플레이어)의 패(hand)를 0장으로 만들기.
-
-핵심 규칙:
-- 패가 0장 = 패배
-- 전투: 내 ATK > 상대 ATK → 상대 몬스터 제거 + 차이만큼 상대 패 손실
-- 전투: 내 ATK < 상대 ATK → 내 몬스터 제거 + 차이만큼 내 패 손실  
-- 직접 공격(상대 필드 비었을 때): ATK만큼 상대 패 손실
-- 전개 단계: 카드 효과로 몬스터 소환
-
-전략 원칙:
-1. ATK 높은 몬스터를 최대한 많이 소환해서 필드 장악
-2. 상대 필드 비면 전체 직접 공격으로 패를 대량 털기
-3. ATK 불리한 전투는 피하기 (내 패도 손실됨)
-4. 유리한 전투(이길 수 있는 것)만 선택적 공격
-
-반드시 아래 JSON 형식으로만 응답 (설명 없이, 마크다운 없이):
-{
-  "thinking": "이번 턴 핵심 전략 한 줄 (한국어)",
-  "deploy": [
-    { "action": "summonFromHand", "cardId": "카드ID", "reason": "이유" }
-  ],
-  "attack": [
-    { "action": "attack", "attackerId": "내필드카드ID", "targetIdx": 0, "reason": "이유" },
-    { "action": "directAttack", "attackerId": "내필드카드ID", "reason": "이유" }
-  ]
-}
-
-주의사항:
-- deploy의 cardId는 반드시 ai.hand에 있는 카드의 id여야 함
-- attack의 attackerId는 반드시 ai.field(전개 후)에 있을 카드의 id여야 함
-- targetIdx는 player.field 배열의 인덱스 (0부터 시작)
-- 상대 필드가 비었으면 attack 대신 directAttack 사용
-- 몬스터만 summonFromHand 가능`;
-
-  var userContent = '현재 게임 상태 (AI 시점):\n' + JSON.stringify(state, null, 2) + '\n\n최적의 전략을 JSON으로 알려주세요.';
+  var sys = [
+    '당신은 카드 게임 "핸드 배틀 TCG"의 AI 플레이어입니다.',
+    '목표: 상대(플레이어)의 패(hand)를 0장으로 만들기.',
+    '',
+    '전투 규칙:',
+    '- 내ATK > 상대ATK: 상대 몬스터 제거 + 차이만큼 상대 패 손실',
+    '- 내ATK < 상대ATK: 내 몬스터 제거 + 차이만큼 내 패 손실',
+    '- 상대 필드 비었을 때 직접 공격: ATK만큼 상대 패 손실',
+    '',
+    '전략 원칙:',
+    '1. ATK 높은 몬스터를 최대한 소환',
+    '2. 상대 필드가 비면 전원 직접 공격',
+    '3. 이길 수 있는(ATK 우위) 전투만 선택',
+    '4. summonFromHand는 monster 카드만 가능',
+    '',
+    '중요: 아래 JSON만 응답. 마크다운 없이.',
+    '{',
+    '  "thinking": "전략 한 줄 (한국어)",',
+    '  "deploy": [',
+    '    { "action": "summonFromHand", "cardId": "카드ID" }',
+    '  ],',
+    '  "attack": [',
+    '    { "action": "attack", "attackerId": "내필드ID", "targetIdx": 0 },',
+    '    { "action": "directAttack", "attackerId": "내필드ID" }',
+    '  ]',
+    '}',
+    '',
+    '주의:',
+    '- deploy.cardId: ai.hand에 있는 monster 카드 id만',
+    '- attack.attackerId: ai.field 또는 deploy 후 필드에 있을 id',
+    '- attack.targetIdx: player.field 인덱스 (0~)',
+    '- 상대 필드 비었으면 attack 아닌 directAttack 사용',
+  ].join('\n');
 
   var resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 800,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userContent }],
+      max_tokens: 600,
+      system: sys,
+      messages: [{ role: 'user', content: JSON.stringify(state) }],
     }),
   });
-
-  if (!resp.ok) throw new Error('API ' + resp.status);
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
   var data = await resp.json();
-  var raw  = (data.content || []).map(function(b) { return b.text || ''; }).join('');
-  var clean = raw.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
+  var text = (data.content || []).map(function(b) { return b.text || ''; }).join('');
+  return JSON.parse(text.replace(/```json|```/g, '').trim());
 }
 
 // ─────────────────────────────────────────────────────────────
-// 폴백 전략 (API 실패 시)
+// 폴백 (API 실패)
 // ─────────────────────────────────────────────────────────────
-function _buildFallbackPlan() {
+function _fallback() {
   var plan = { thinking: '기본 전략: 강한 몬스터 소환 후 공격', deploy: [], attack: [] };
 
   // ATK 높은 몬스터 최대 3장 소환
-  var monsters = G.opHand
+  var mons = G.opHand
     .filter(function(c) { return CARDS[c.id] && CARDS[c.id].cardType === 'monster'; })
-    .map(function(c) { return { id: c.id, atk: CARDS[c.id] ? (CARDS[c.id].atk || 0) : 0 }; })
-    .sort(function(a,b) { return b.atk - a.atk; })
+    .map(function(c) { return { id: c.id, atk: CARDS[c.id].atk || 0 }; })
+    .sort(function(a, b) { return b.atk - a.atk; })
     .slice(0, 3);
+  mons.forEach(function(c) {
+    plan.deploy.push({ action: 'summonFromHand', cardId: c.id });
+  });
 
-  monsters.forEach(function(c) { plan.deploy.push({ action: 'summonFromHand', cardId: c.id, reason: 'ATK 순위' }); });
+  // 공격 계획 (예상 필드 = 현재 opField + 지금 소환할 것들)
+  var expectedField = G.opField.concat(mons.map(function(c) {
+    return { id: c.id, atk: CARDS[c.id] ? (CARDS[c.id].atk || 0) : 0 };
+  }));
 
-  // 공격 계획
-  var willField = G.opField.concat(monsters).filter(function(c) { return c.id; });
   if (G.myField.length === 0) {
-    willField.forEach(function(c) { plan.attack.push({ action: 'directAttack', attackerId: c.id }); });
+    expectedField.forEach(function(c) {
+      plan.attack.push({ action: 'directAttack', attackerId: c.id });
+    });
   } else {
-    willField.forEach(function(att) {
+    expectedField.forEach(function(att) {
       var bestIdx = -1, bestGain = 0;
       G.myField.forEach(function(def, di) {
         var gain = (att.atk || 0) - (def.atk || 0);
         if (gain > bestGain) { bestGain = gain; bestIdx = di; }
       });
-      if (bestIdx >= 0) plan.attack.push({ action: 'attack', attackerId: att.id, targetIdx: bestIdx });
+      if (bestIdx >= 0) {
+        plan.attack.push({ action: 'attack', attackerId: att.id, targetIdx: bestIdx });
+      }
     });
   }
-
   return plan;
 }
 
 // ─────────────────────────────────────────────────────────────
-// 전개 계획 실행
+// 전개 실행
 // ─────────────────────────────────────────────────────────────
-async function _executeDeployPlan(actions) {
+async function _execDeploy(actions) {
   for (var i = 0; i < actions.length; i++) {
     var act = actions[i];
-    if (!act || !act.action) continue;
+    if (!act || !act.action || !act.cardId) continue;
 
     if (act.action === 'summonFromHand') {
+      // 패에 있는지 확인
       if (!G.opHand.find(function(c) { return c.id === act.cardId; })) continue;
-      var card = CARDS[act.cardId];
-      if (!card) continue;
+      var cd = CARDS[act.cardId];
+      if (!cd || cd.cardType !== 'monster') continue;
 
-      if (card.cardType === 'monster') {
-        _aiSummon(act.cardId);
-        await _sleep(500);
-        renderAll();
-        await _handleAISummonTrigger(act.cardId);
-      } else {
-        await _handleAIActivate(act.cardId);
-        await _sleep(400);
-        renderAll();
-      }
-    } else if (act.action === 'discardFromHand') {
-      if (G.opHand.find(function(c) { return c.id === act.cardId; })) {
-        _aiDiscard(act.cardId);
-        await _sleep(300);
-        renderAll();
-      }
+      _aiSummonMonster(act.cardId);
+      await _sleep(500);
+      // 소환 유발 효과
+      await _aiSummonTrigger(act.cardId);
+      renderAll();
     }
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// 공격 계획 실행
+// 공격 실행
 // ─────────────────────────────────────────────────────────────
-async function _executeAttackPlan(actions) {
+async function _execAttack(actions) {
   for (var i = 0; i < actions.length; i++) {
     var act = actions[i];
     if (!act || !act.action) continue;
 
     if (act.action === 'attack') {
-      var defIdx = typeof act.targetIdx === 'number' ? act.targetIdx : 0;
-      if (defIdx >= G.myField.length) continue;
+      var di = typeof act.targetIdx === 'number' ? act.targetIdx : 0;
+      if (di >= G.myField.length) continue;
       if (!G.opField.find(function(c) { return c.id === act.attackerId; })) continue;
-      _aiAttack(act.attackerId, defIdx);
-      await _sleep(700);
+      _aiAttack(act.attackerId, di);
+      await _sleep(800);
       renderAll();
+
     } else if (act.action === 'directAttack') {
       if (G.myField.length > 0) continue;
       if (!G.opField.find(function(c) { return c.id === act.attackerId; })) continue;
       _aiDirectAttack(act.attackerId);
-      await _sleep(700);
+      await _sleep(800);
       renderAll();
     }
 
-    if (G.myHand.length === 0) break;
+    if (G.myHand.length === 0) break; // 이미 승리
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// AI 소환 유발 효과 (핵심 카드)
+// 소환 유발 효과
 // ─────────────────────────────────────────────────────────────
-async function _handleAISummonTrigger(cardId) {
-  // 꼬마 펭귄 ②: 덱에서 펭귄 몬스터 소환
-  if (cardId === '꼬마 펭귄' && _aiCanUseEffect(cardId, 2)) {
-    var t = window.AI.opDeck.find(function(c) { return CARDS[c.id] && CARDS[c.id].theme === '펭귄' && CARDS[c.id].cardType === 'monster'; });
+async function _aiSummonTrigger(cardId) {
+  var AI = window.AI;
+
+  // 꼬마 펭귄 ②: 소환 시 덱에서 펭귄 몬스터 소환
+  if (cardId === '꼬마 펭귄' && !(AI.usedFx['꼬마 펭귄_2'])) {
+    var t = AI.opDeck.find(function(c) {
+      return CARDS[c.id] && CARDS[c.id].theme === '펭귄' && CARDS[c.id].cardType === 'monster';
+    });
     if (t) {
-      _aiMarkUsed(cardId, 2);
-      _aiLog('꼬마 펭귄 ②: 덱에서 소환');
+      AI.usedFx['꼬마 펭귄_2'] = 1;
       _aiSummonFromDeck(t.id);
       await _sleep(400);
       renderAll();
     }
   }
-  // 수문장 펭귄 ①: ATK+1 + 서로 패 1장 버리기
-  if (cardId === '수문장 펭귄' && _aiCanUseEffect(cardId, 1)) {
+
+  // 수문장 펭귄 ①: ATK+1, 서로 패 1장 버리기
+  if (cardId === '수문장 펭귄' && !(AI.usedFx['수문장 펭귄_1'])) {
     var fi = G.opField.findIndex(function(c) { return c.id === '수문장 펭귄'; });
     if (fi >= 0 && G.opHand.length > 0) {
-      _aiMarkUsed(cardId, 1);
+      AI.usedFx['수문장 펭귄_1'] = 1;
       G.opField[fi].atk += 1;
-      _aiLog('수문장 펭귄 ①: ATK+1');
-      var lowest = G.opHand.reduce(function(a,b) { return (CARDS[a.id] ? (CARDS[a.id].atk||99) : 99) < (CARDS[b.id] ? (CARDS[b.id].atk||99) : 99) ? a : b; });
-      _aiDiscard(lowest.id);
+      log('🤖 수문장 펭귄 ①: ATK+1', 'opponent');
+      // AI 패 1장 버리기 (제일 낮은 ATK)
+      var wk = G.opHand.reduce(function(a, b) {
+        return (CARDS[a.id] ? (CARDS[a.id].atk || 0) : 0) <= (CARDS[b.id] ? (CARDS[b.id].atk || 0) : 0) ? a : b;
+      });
+      _aiDiscard(wk.id);
+      // 플레이어도 1장 버리게
       handleOpponentAction({ type: 'forceDiscard', count: 1, reason: '수문장 펭귄 ①', by: 'guest', ts: Date.now() });
       await _sleep(300);
     }
   }
+
   // 젊은 라이온 ②: 사자 카드 서치
-  if (cardId === '젊은 라이온' && _aiCanUseEffect(cardId, 2)) {
-    var tt = window.AI.opDeck.find(function(c) { return c.id.includes('사자') || (CARDS[c.id] && CARDS[c.id].theme === '라이온'); });
-    if (tt) { _aiMarkUsed(cardId, 2); _aiSearchFromDeck(tt.id); await _sleep(300); }
+  if (cardId === '젊은 라이온' && !(AI.usedFx['젊은 라이온_2'])) {
+    var t2 = AI.opDeck.find(function(c) {
+      return c.id.includes('사자') || (CARDS[c.id] && CARDS[c.id].theme === '라이온');
+    });
+    if (t2) {
+      AI.usedFx['젊은 라이온_2'] = 1;
+      _aiSearchDeck(t2.id);
+      await _sleep(300);
+    }
   }
-  // 젊은 타이거 ②: 타이거 몬스터 소환
-  if (cardId === '젊은 타이거' && _aiCanUseEffect(cardId, 2)) {
-    var tt2 = window.AI.opDeck.find(function(c) { return CARDS[c.id] && CARDS[c.id].theme === '타이거' && CARDS[c.id].cardType === 'monster'; });
-    if (tt2) {
-      _aiMarkUsed(cardId, 2);
-      _aiLog('젊은 타이거 ②: 덱에서 소환');
-      _aiSummonFromDeck(tt2.id);
+
+  // 베이비 라이온 ①: 서치 + 소환
+  if (cardId === '베이비 라이온' && !(AI.usedFx['베이비 라이온_1'])) {
+    var tL = AI.opDeck.find(function(c) { return CARDS[c.id] && CARDS[c.id].theme === '라이온'; });
+    var tS = AI.opDeck.find(function(c) { return c.id.includes('사자'); });
+    if (tL || tS) {
+      AI.usedFx['베이비 라이온_1'] = 1;
+      if (tL) _aiSearchDeck(tL.id);
+      if (tS) _aiSearchDeck(tS.id);
+      await _sleep(300);
+    }
+  }
+
+  // 젊은 타이거 ②: 덱에서 타이거 몬스터 소환
+  if (cardId === '젊은 타이거' && !(AI.usedFx['젊은 타이거_2'])) {
+    var t3 = AI.opDeck.find(function(c) {
+      return CARDS[c.id] && CARDS[c.id].theme === '타이거' && CARDS[c.id].cardType === 'monster';
+    });
+    if (t3) {
+      AI.usedFx['젊은 타이거_2'] = 1;
+      _aiSummonFromDeck(t3.id);
       await _sleep(400);
       renderAll();
     }
   }
-  // 베이비 타이거 ①: 서치 + 소환 + 제외
-  if (cardId === '베이비 타이거' && _aiCanUseEffect(cardId, 1)) {
-    var t1 = window.AI.opDeck.find(function(c) { return CARDS[c.id] && CARDS[c.id].theme === '타이거'; });
-    var t2 = window.AI.opDeck.find(function(c) { return c.id.includes('호랑이'); });
-    if (t1) { _aiMarkUsed(cardId, 1); _aiSearchFromDeck(t1.id); }
-    if (t2) _aiSearchFromDeck(t2.id);
+
+  // 베이비 타이거 ①: 서치 + 상대 패 1장 버리기
+  if (cardId === '베이비 타이거' && !(AI.usedFx['베이비 타이거_1'])) {
+    AI.usedFx['베이비 타이거_1'] = 1;
+    var t4 = AI.opDeck.find(function(c) { return CARDS[c.id] && CARDS[c.id].theme === '타이거'; });
+    var t5 = AI.opDeck.find(function(c) { return c.id.includes('호랑이'); });
+    if (t4) _aiSearchDeck(t4.id);
+    if (t5) _aiSearchDeck(t5.id);
     // 자신 제외
-    var bi = G.opField.findIndex(function(c) { return c.id === '베이비 타이거'; });
-    if (bi >= 0) { G.opExile.push(G.opField.splice(bi, 1)[0]); }
-    // 제외 효과 ②: 상대 패 1장 버리기
+    var bti = G.opField.findIndex(function(c) { return c.id === '베이비 타이거'; });
+    if (bti >= 0) { G.opExile.push(G.opField.splice(bti, 1)[0]); }
+    // 상대 패 1장 버리기
     handleOpponentAction({ type: 'forceDiscard', count: 1, reason: '베이비 타이거 ②', by: 'guest', ts: Date.now() });
     await _sleep(400);
     renderAll();
   }
-  // 그레이트 올드 원-크툴루 ①: 소환 시 르뤼에 필드 세팅
-  if (cardId === '그레이트 올드 원-크툴루' && _aiCanUseEffect(cardId, 1)) {
-    if (!G.opFieldCard) {
-      _aiMarkUsed(cardId, 1);
-      var rlyeh = window.AI.opDeck.find(function(c) { return c.id === '태평양 속 르뤼에'; });
-      if (rlyeh) {
-        var ri = window.AI.opDeck.findIndex(function(c) { return c.id === '태평양 속 르뤼에'; });
-        window.AI.opDeck.splice(ri, 1);
-        G.opFieldCard = { id: '태평양 속 르뤼에', name: '태평양 속 르뤼에' };
-        handleOpponentAction({ type: 'fieldCard', cardId: '태평양 속 르뤼에', by: 'guest', ts: Date.now() });
-        _aiLog('르뤼에 필드 발동!');
-        G.opDeckCount = window.AI.opDeck.length;
-        await _sleep(300);
-        renderAll();
-      }
-    }
-  }
-}
 
-// ─────────────────────────────────────────────────────────────
-// AI 마법/함정 발동 처리
-// ─────────────────────────────────────────────────────────────
-async function _handleAIActivate(cardId) {
-  var card = CARDS[cardId];
-  if (!card) return;
-
-  if (cardId === '펭귄!돌격!') {
-    var t = window.AI.opDeck.find(function(c) { return CARDS[c.id] && CARDS[c.id].theme === '펭귄' && CARDS[c.id].cardType === 'monster' && (CARDS[c.id].atk || 0) >= 3; });
-    if (!t) t = window.AI.opDeck.find(function(c) { return CARDS[c.id] && CARDS[c.id].theme === '펭귄' && CARDS[c.id].cardType === 'monster'; });
-    if (t) {
-      _aiDiscard(cardId);
-      _aiSummonFromDeck(t.id);
-      _aiLog('펭귄!돌격! ①: ' + (CARDS[t.id] ? CARDS[t.id].name : t.id) + ' 소환');
+  // 크툴루: r뤼에 필드 발동
+  if (cardId === '그레이트 올드 원-크툴루' && !(AI.usedFx['크툴루_1']) && !G.opFieldCard) {
+    var rl = AI.opDeck.find(function(c) { return c.id === '태평양 속 르뤼에'; });
+    if (rl) {
+      AI.usedFx['크툴루_1'] = 1;
+      var rli = AI.opDeck.findIndex(function(c) { return c.id === '태평양 속 르뤼에'; });
+      AI.opDeck.splice(rli, 1);
+      G.opDeckCount = AI.opDeck.length;
+      G.opFieldCard = { id: '태평양 속 르뤼에', name: '태평양 속 르뤼에' };
+      handleOpponentAction({ type: 'fieldCard', cardId: '태평양 속 르뤼에', by: 'guest', ts: Date.now() });
+      log('🤖 태평양 속 르뤼에 필드 발동', 'opponent');
+      await _sleep(300);
+      renderAll();
     }
-  } else if (cardId === '올드_원의 멸망') {
-    var exile = window.AI.opDeck.find(function(c) { return c.id.includes('엘더 갓'); });
-    var target = window.AI.opDeck.find(function(c) { return c.id.includes('그레이트 올드 원'); });
-    if (exile && target) {
-      _aiDiscard(cardId);
-      var ei = window.AI.opDeck.findIndex(function(c) { return c.id === exile.id; });
-      if (ei >= 0) { window.AI.opDeck.splice(ei, 1); G.opExile.push(exile); }
-      _aiSummonFromDeck(target.id);
-      _aiLog('올드_원의 멸망: ' + (CARDS[target.id] ? CARDS[target.id].name : target.id) + ' 소환');
-    }
-  } else if (cardId === '사자의 포효') {
-    // 덱에서 라이온 몬스터 묘지로
-    var t2 = window.AI.opDeck.find(function(c) { return CARDS[c.id] && CARDS[c.id].theme === '라이온' && CARDS[c.id].cardType === 'monster' && (CARDS[c.id].atk || 0) >= 4; });
-    if (t2) {
-      _aiDiscard(cardId);
-      var ti = window.AI.opDeck.findIndex(function(c) { return c.id === t2.id; });
-      if (ti >= 0) { window.AI.opDeck.splice(ti, 1); G.opGrave.push(t2); }
-      G.opDeckCount = window.AI.opDeck.length;
-      _aiLog('사자의 포효: ' + t2.name + ' 묘지로');
-    }
-  } else if (cardId === '호랑이의 포효') {
-    // 덱에서 타이거 묘지로
-    var t3 = window.AI.opDeck.find(function(c) { return CARDS[c.id] && CARDS[c.id].theme === '타이거' && CARDS[c.id].cardType === 'monster'; });
-    if (t3) {
-      _aiDiscard(cardId);
-      var ti2 = window.AI.opDeck.findIndex(function(c) { return c.id === t3.id; });
-      if (ti2 >= 0) { window.AI.opDeck.splice(ti2, 1); G.opGrave.push(t3); }
-      G.opDeckCount = window.AI.opDeck.length;
-      _aiLog('호랑이의 포효: ' + t3.name + ' 묘지로');
-    }
-  } else {
-    // 그 외 일반/마법: 발동 처리 (버리기)
-    _aiDiscard(cardId);
-    _aiLog(card.name + ' 발동');
   }
 }
 
@@ -646,48 +723,47 @@ async function _handleAIActivate(cardId) {
 function _aiEndTurn() {
   if (isMyTurn) { window.AI.thinking = false; return; }
 
+  // engine.js의 resetTurnEffects 사용
   if (typeof resetTurnEffects === 'function') resetTurnEffects();
-  _aiResetTurnEffects();
+  window.AI.usedFx  = {};
+  window.AI.attacked = new Set();
 
   G.turn++;
   isMyTurn = true;
-  if (typeof attackedMonstersThisTurn !== 'undefined') attackedMonstersThisTurn.clear();
-  advancePhase('draw');
+  if (typeof attackedMonstersThisTurn !== 'undefined') {
+    try { attackedMonstersThisTurn.clear(); } catch(e) {}
+  }
+  if (typeof advancePhase === 'function') advancePhase('draw');
 
-  _aiLog('턴 종료 — 플레이어 턴');
-  _updateBanner('');
+  _setBanner('');
   window.AI.thinking = false;
 
-  renderAll();
-  notify('🎮 당신의 턴! 드로우 버튼을 눌러주세요.');
+  if (typeof renderAll === 'function') renderAll();
+  if (typeof notify  === 'function')  notify('🎮 내 턴! 드로우 버튼을 눌러주세요.');
 }
 
 // ─────────────────────────────────────────────────────────────
-// 승패 체크 훅
+// 배너 UI
 // ─────────────────────────────────────────────────────────────
-(function() {
-  var _orig = window.checkWinCondition;
-  window.checkWinCondition = function() {
-    if (typeof _orig === 'function') _orig.apply(this, arguments);
-    if (!window.AI.active) return;
-    if (G.opHand.length === 0 && !isMyTurn) {
-      setTimeout(function() { showGameOver(true); }, 300);
-    }
-  };
-})();
-
-// ─────────────────────────────────────────────────────────────
-// AI 상태 배너
-// ─────────────────────────────────────────────────────────────
-function _injectAIBanner() {
+function _injectBanner() {
   if (document.getElementById('_aiBanner')) return;
   var el = document.createElement('div');
   el.id = '_aiBanner';
-  el.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);background:linear-gradient(90deg,#12003a,#2a007a,#12003a);color:#c8a96e;padding:.35rem 1.6rem;border:1px solid #7c5cbf;border-top:none;border-radius:0 0 10px 10px;font-family:Black Han Sans,sans-serif;font-size:.8rem;letter-spacing:.1em;z-index:3000;box-shadow:0 4px 20px #7c5cbf55;pointer-events:none;transition:opacity .25s;opacity:0;';
+  el.style.cssText = [
+    'position:fixed', 'top:0', 'left:50%', 'transform:translateX(-50%)',
+    'background:linear-gradient(90deg,#12003a,#2a007a,#12003a)',
+    'color:#c8a96e', 'padding:.35rem 1.6rem',
+    'border:1px solid #7c5cbf', 'border-top:none',
+    'border-radius:0 0 10px 10px',
+    'font-family:Black Han Sans,sans-serif', 'font-size:.8rem',
+    'letter-spacing:.1em', 'z-index:3000',
+    'box-shadow:0 4px 20px #7c5cbf55',
+    'pointer-events:none', 'transition:opacity .25s', 'opacity:0',
+  ].join(';');
   document.body.appendChild(el);
 }
 
-function _updateBanner(msg) {
+function _setBanner(msg) {
   var el = document.getElementById('_aiBanner');
   if (!el) return;
   el.textContent = msg;
@@ -695,35 +771,37 @@ function _updateBanner(msg) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 로비에 AI 대전 카드 추가
+// 로비 패치 — "AI와 대전하기" 카드 삽입
 // ─────────────────────────────────────────────────────────────
 function _patchLobby() {
   var lobby = document.getElementById('lobby');
-  if (!lobby || document.getElementById('_aiLobbyCard')) return;
+  if (!lobby || document.getElementById('_aiCard')) return;
 
   var card = document.createElement('div');
-  card.id = '_aiLobbyCard';
+  card.id = '_aiCard';
   card.className = 'lobby-card';
-  card.style.borderColor = '#7c5cbf';
-  card.style.background = 'linear-gradient(160deg,#0e0e1f 0%,#1a0a35 100%)';
+  card.style.cssText = 'border-color:#7c5cbf;background:linear-gradient(160deg,#0e0e1f,#1a0a35);';
   card.innerHTML =
     '<h2 style="color:#9c7cdf;display:flex;align-items:center;gap:.5rem">' +
-      '<span style="font-size:1.2rem">🤖</span> AI 대전 ' +
-      '<span style="font-size:.65rem;color:#7c5cbf;border:1px solid #7c5cbf;padding:.1rem .4rem;border-radius:3px;letter-spacing:.06em">Claude AI</span>' +
+      '🤖 AI 대전 <span style="font-size:.65rem;color:#7c5cbf;border:1px solid #7c5cbf;padding:.1rem .4rem;border-radius:3px">Claude AI</span>' +
     '</h2>' +
     '<p style="font-size:.82rem;color:#9090b0;line-height:1.65;margin:.25rem 0 .8rem">' +
-      'Claude AI가 카드 효과를 분석하고 전략적으로 플레이합니다.<br>' +
-      '내 덱을 구성하면 AI가 카운터 덱으로 상대합니다.' +
+      'Claude AI가 카드 효과와 전황을 분석해 전략적으로 플레이합니다.<br>' +
+      '내 덱을 구성하면 AI가 카운터 덱을 자동 선택합니다.' +
     '</p>' +
-    '<button id="_aiStartBtn" ' +
-      'style="width:100%;padding:.8rem;background:linear-gradient(135deg,#2a0060,#5a10b0);color:#e0c8ff;border:1px solid #7c5cbf;border-radius:6px;font-family:Black Han Sans,sans-serif;font-size:1rem;letter-spacing:.12em;cursor:pointer;transition:all .2s;box-shadow:0 0 20px #7c5cbf33;" ' +
-      'onmouseover="this.style.background=\'linear-gradient(135deg,#3a0080,#7a20d0)\';this.style.boxShadow=\'0 0 30px #9c7cdf55\'" ' +
-      'onmouseout="this.style.background=\'linear-gradient(135deg,#2a0060,#5a10b0)\';this.style.boxShadow=\'0 0 20px #7c5cbf33\'" ' +
-      'onclick="startAIMode()"' +
-    '>⚔️ AI와 대전하기</button>';
+    '<button style="width:100%;padding:.8rem;' +
+      'background:linear-gradient(135deg,#2a0060,#5a10b0);' +
+      'color:#e0c8ff;border:1px solid #7c5cbf;border-radius:6px;' +
+      'font-family:Black Han Sans,sans-serif;font-size:1rem;' +
+      'letter-spacing:.12em;cursor:pointer;box-shadow:0 0 20px #7c5cbf33;" ' +
+      'onmouseover="this.style.background=\'linear-gradient(135deg,#3a0080,#7a20d0)\'" ' +
+      'onmouseout="this.style.background=\'linear-gradient(135deg,#2a0060,#5a10b0)\'" ' +
+      'onclick="startAIMode()">' +
+      '⚔️ AI와 대전하기' +
+    '</button>';
 
-  var cards = lobby.querySelectorAll('.lobby-card');
-  var last  = cards[cards.length - 1];
+  var all = lobby.querySelectorAll('.lobby-card');
+  var last = all[all.length - 1];
   if (last) last.after(card);
   else lobby.appendChild(card);
 }
@@ -734,4 +812,4 @@ if (document.readyState === 'loading') {
   _patchLobby();
 }
 setTimeout(_patchLobby, 500);
-setTimeout(_patchLobby, 1500);
+setTimeout(_patchLobby, 2000);
