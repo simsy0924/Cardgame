@@ -582,55 +582,54 @@ setTimeout(_lobby,500);
 setTimeout(_lobby,2000);
 
 // ─────────────────────────────────────────────────────────────
-// beginChain 훅 — AI 모드 체인 처리
+// beginChain/passChainPriority 훅 — AI 모드 체인 처리
+// 핵심: 기존 체인 엔진 로직은 유지하고, AI 응답 트리거만 보강
 // ─────────────────────────────────────────────────────────────
 (function() {
-  var _orig = window.beginChain;
+  var _origBeginChain = window.beginChain;
   window.beginChain = function(effect) {
-    if (!window.AI.active) { _orig.apply(this, arguments); return; }
+    _origBeginChain.apply(this, arguments);
+    if (!window.AI.active) return;
 
-    var starter = (effect && effect.by) ? effect.by : myRole;
-    var chainState = {
-      active: true,
-      startedBy: starter,
-      priority: getOtherRole(starter),
-      passCount: 0,
-      links: [Object.assign({}, effect, { by: starter })],
-    };
-    activeChainState = chainState;
-    if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
-    log('체인 1: ' + effect.label + ' 발동', 'mine');
-    renderChainActions();
+    // 기존 beginChain이 만든 체인 상태를 그대로 사용
+    var live = activeChainState;
+    if (!live || !live.active) return;
+    if (live.priority !== 'guest') return;
 
-    if (chainState.priority === 'guest') {
-      setTimeout(function() { _aiChainResponse(chainState); }, 500);
-    }
-  };
-})();
-
-// passChainPriority 훅 — 플레이어 패스 시 AI도 자동 패스
-(function() {
-  var _orig = window.passChainPriority;
-  window.passChainPriority = function() {
-    if (!window.AI.active) { _orig.apply(this, arguments); return; }
-    if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
-
-    var next = Object.assign({}, activeChainState);
-    next.passCount = (next.passCount || 0) + 1;
-    next.priority  = getOtherRole(myRole);
-    log('체인 패스', 'system');
-    activeChainState = next;
-    renderChainActions();
-
-    if (next.passCount >= 2) {
-      resolveChain(next);
-      return;
-    }
-    // AI 차례 → 응답 가능 여부 판단 후 패스/응답
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) return;
       _aiChainResponse(activeChainState);
-    }, 600);
+    }, 350);
+  };
+
+  var _origPassChainPriority = window.passChainPriority;
+  window.passChainPriority = function() {
+    if (!window.AI.active) {
+      _origPassChainPriority.apply(this, arguments);
+      return;
+    }
+
+    var liveBefore = activeChainState;
+    var shouldHandleLocalAIPass = !roomRef && liveBefore && liveBefore.active && liveBefore.priority === myRole;
+
+    if (shouldHandleLocalAIPass) {
+      var next = Object.assign({}, liveBefore);
+      next.passCount = (next.passCount || 0) + 1;
+      next.priority = 'guest';
+      activeChainState = next;
+      log('체인 패스', 'system');
+    } else {
+      _origPassChainPriority.apply(this, arguments);
+    }
+
+    var live = activeChainState;
+    if (!live || !live.active) return;
+    if (live.priority !== 'guest') return;
+
+    setTimeout(function() {
+      if (!activeChainState || !activeChainState.active) return;
+      _aiChainResponse(activeChainState);
+    }, 350);
   };
 })();
 
