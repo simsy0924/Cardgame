@@ -134,6 +134,15 @@ function _resolveLocalChainWithAI(chainState) {
         cardId: picked.id,
         by: aiRole,
       });
+
+      const opDeck = Array.isArray(G.opKeyDeck) ? [...G.opKeyDeck] : [];
+      const deckIdx = opDeck.findIndex(c => c && c.id === picked.id);
+      if (deckIdx >= 0) {
+        const [fetchedCard] = opDeck.splice(deckIdx, 1);
+        G.opKeyDeck = opDeck;
+        G.opHand = [...(G.opHand || []), fetchedCard];
+      }
+
       usedKeyFetchInChain[aiRole] = true;
       log(`체인 ${next.links.length}: 🤖 키 카드 가져오기 (${picked.name || picked.id})`, 'opponent');
     }
