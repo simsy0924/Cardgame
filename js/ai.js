@@ -316,8 +316,40 @@ async function _aiTurn() {
 // ─────────────────────────────────────────────────────────────
 // Groq API
 // ─────────────────────────────────────────────────────────────
-async function _groq() {
+async function _groq(request) {
   if (!_WORKER_URL) throw new Error('Worker URL 없음');
+
+  if (request && request.type === 'chainDecision') {
+    var legalOptionIds = (request.options || []).map(function(opt) { return opt.id; });
+    var chainPayload = {
+      phase: currentPhase,
+      priority: request.chainState.priority,
+      links: (request.chainState.links || []).map(function(l) { return { type: l.type, label: l.label, by: l.by, cardId: l.cardId }; }),
+      ai: { handCount: G.opHand.length, deckCount: window.AI.opDeck.length, keyDeckCount: (G.opKeyDeck || []).length },
+      options: legalOptionIds,
+    };
+    var cResp = await fetch(_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama-3.1-8b-instant', temperature: 0.1, max_tokens: 180,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: '당신은 카드게임 체인 응답 AI. 반드시 룰을 지키고 options 안에서만 1개 선택. JSON만 반환: {"action":"pass|respond","optionId":"id|none","reason":"짧게"}' },
+          { role: 'user', content: JSON.stringify(chainPayload) },
+        ],
+      }),
+    });
+    if (!cResp.ok) throw new Error('Worker ' + cResp.status);
+    var cd = await cResp.json();
+    var ct = (cd.choices && cd.choices[0] && cd.choices[0].message && cd.choices[0].message.content) || '{}';
+    var cm = ct.replace(/```json|```/g,'').trim().match(/\{[\s\S]*\}/);
+    var cParsed = JSON.parse(cm ? cm[0] : '{}');
+    var optionId = legalOptionIds.indexOf(cParsed.optionId) >= 0 ? cParsed.optionId : 'none';
+    var action = cParsed.action === 'respond' && optionId !== 'none' ? 'respond' : 'pass';
+    return { action: action, optionId: optionId, reason: cParsed.reason || '' };
+  }
+
   var state = {
     turn: G.turn,
     ai: {
@@ -637,7 +669,7 @@ setTimeout(_lobby,2000);
 // ─────────────────────────────────────────────────────────────
 // AI 체인 응답 판단
 // ─────────────────────────────────────────────────────────────
-function _aiChainResponse(chainState) {
+async function _aiChainResponse(chainState) {
   if (!window.AI.active) return;
   if (!activeChainState || !activeChainState.active) return;
 
@@ -646,17 +678,21 @@ function _aiChainResponse(chainState) {
   // 2. 눈에는 눈: 플레이어 서치 시 자동 트리거
   // 3. 키카드 중 응답 가능한 것
 
-  // 현재 체인에서 AI가 응답할 카드 없으면 패스
-  var canRespond = false;
-
-  // 눈에는 눈 체크 (서치 체인에 응답)
+  // 현재 체인에서 AI가 선택 가능한 응답 옵션 구성
   var liveChain = activeChainState || chainState;
-  if ((liveChain.links || []).some(function(l) { return l.type === 'keyFetch'; })) {
-    var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
-    if (eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1)) canRespond = true;
+  var responseOptions = _buildAIChainResponseOptions(liveChain);
+  var canRespond = responseOptions.length > 0;
+
+  var decision = { action: canRespond ? 'respond' : 'pass', optionId: canRespond ? responseOptions[0].id : 'none' };
+  if (canRespond) {
+    try {
+      decision = await _groq({ type: 'chainDecision', chainState: liveChain, options: responseOptions });
+    } catch (e) {
+      console.warn('[AI][chain-decision]', e.message);
+    }
   }
 
-  if (!canRespond) {
+  if (!canRespond || decision.action === 'pass') {
     // 패스
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) return;
@@ -678,23 +714,68 @@ function _aiChainResponse(chainState) {
   // AI가 응답 결정
   log('🤖 체인 응답!', 'opponent');
   var next = Object.assign({}, activeChainState);
-  // 눈에는 눈 발동
-  var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
-  if (eyeIdx >= 0) {
-    _aiMarkUsed('눈에는 눈', 1);
-    _aiDiscard('눈에는 눈');
-    _aiDrawN(2);
-    log('🤖 눈에는 눈: 드로우 2장', 'opponent');
-    next.links.push({ type: 'aiEye', label: '눈에는 눈', by: getOtherRole(myRole) });
-    next.passCount = 0;
-    next.priority = myRole;
-    activeChainState = next;
-    renderChainActions();
-    renderAll();
+  var picked = responseOptions.find(function(opt) { return opt.id === decision.optionId; }) || responseOptions[0];
 
-    // 플레이어 응답 기회
-    // 플레이어가 패스하면 resolveChain
+  if (!picked || typeof picked.apply !== 'function') {
+    log('🤖 체인 판단: 유효한 응답 옵션 없음, 패스', 'opponent');
+    var passNext = Object.assign({}, activeChainState);
+    passNext.passCount = (passNext.passCount || 0) + 1;
+    passNext.priority = myRole;
+    activeChainState = passNext;
+    renderChainActions();
+    if (passNext.passCount >= 2) resolveChain(passNext);
+    return;
   }
+
+  picked.apply(next);
+
+  next.passCount = 0;
+  next.priority = myRole;
+  activeChainState = next;
+  renderChainActions();
+  renderAll();
+
+  // 플레이어 응답 기회
+  // 플레이어가 패스하면 resolveChain
+}
+
+
+function _buildAIChainResponseOptions(chainState) {
+  var opts = [];
+  var hasKeyFetchLink = (chainState.links || []).some(function(l) { return l.type === 'keyFetch'; });
+
+  var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
+  if (hasKeyFetchLink && eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1)) {
+    opts.push({
+      id: 'hand_eye',
+      label: '눈에는 눈',
+      apply: function(next) {
+        _aiMarkUsed('눈에는 눈', 1);
+        _aiDiscard('눈에는 눈');
+        _aiDrawN(2);
+        log('🤖 눈에는 눈: 드로우 2장', 'opponent');
+        next.links.push({ type: 'aiEye', label: '눈에는 눈', by: 'guest' });
+      },
+    });
+  }
+
+  var canKeyFetch = (chainState.priority === 'guest') && !usedKeyFetchInChain.guest && Array.isArray(G.opKeyDeck) && G.opKeyDeck.length > 0;
+  if (canKeyFetch) {
+    opts.push({
+      id: 'chain_key_fetch',
+      label: '키 카드 가져오기',
+      apply: function(next) {
+        var picked = G.opKeyDeck[0];
+        G.opKeyDeck.splice(0, 1);
+        if (picked && picked.id) G.opHand.push({ id: picked.id, name: picked.name || (CARDS[picked.id] ? CARDS[picked.id].name : picked.id) });
+        usedKeyFetchInChain.guest = true;
+        log('🤖 체인 키카드: ' + (picked && (picked.name || picked.id) || '선택 없음'), 'opponent');
+        next.links.push({ type: 'keyFetch', label: '키 카드 가져오기 (' + (picked && (picked.name || picked.id) || '카드') + ')', cardId: picked && picked.id, by: 'guest' });
+      },
+    });
+  }
+
+  return opts;
 }
 
 function _aiCanUse(id, n) { return !window.AI.usedFx[id+'_'+n]; }
