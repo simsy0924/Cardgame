@@ -649,12 +649,17 @@ function _aiChainResponse(chainState) {
   // 현재 체인에서 AI가 응답할 카드 없으면 패스
   var canRespond = false;
 
-  // 눈에는 눈 체크 (서치 체인에 응답)
+  // 눈에는 눈 체크
+  // - 기존: keyFetch(서치) 체인에서만 응답
+  // - 개선: 상대가 체인 1을 열었을 때도 즉시 반응 후보로 검토
+  //   (응답 카드가 없으면 명시적으로 Pass 처리)
   var liveChain = activeChainState || chainState;
-  if ((liveChain.links || []).some(function(l) { return l.type === 'keyFetch'; })) {
-    var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
-    if (eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1)) canRespond = true;
-  }
+  var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
+  var hasHostChain = (liveChain.links || []).some(function(l) {
+    var by = l && l.by;
+    return by === myRole || by === 'host';
+  });
+  if (eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1) && hasHostChain) canRespond = true;
 
   if (!canRespond) {
     // 패스
