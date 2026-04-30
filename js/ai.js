@@ -589,7 +589,7 @@ setTimeout(_lobby,2000);
   window.beginChain = function(effect) {
     if (!window.AI.active) { _orig.apply(this, arguments); return; }
 
-    var starter = (effect && effect.by) ? effect.by : myRole;
+    var starter = (effect && effect.by) ? effect.by : (isMyTurn ? myRole : getOtherRole(myRole));
     var chainState = {
       active: true,
       startedBy: starter,
