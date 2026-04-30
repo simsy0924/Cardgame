@@ -410,12 +410,13 @@ async function _attack(actions) {
 
 function _aiStartChainEffect(effect, afterResolve) {
   if (!window.AI.active) { if (typeof afterResolve === 'function') afterResolve(); return; }
+  var localEffect = (!roomRef && effect) ? { ...effect, by: myRole } : effect;
   if (activeChainState && activeChainState.active) {
-    if (typeof addChainLink === 'function') addChainLink(effect);
+    if (typeof addChainLink === 'function') addChainLink(localEffect);
     if (typeof afterResolve === 'function') setTimeout(afterResolve, 200);
     return;
   }
-  if (typeof beginChain === 'function') beginChain(effect);
+  if (typeof beginChain === 'function') beginChain(localEffect);
   setTimeout(function waitChainDone() {
     if (activeChainState && activeChainState.active) { setTimeout(waitChainDone, 150); return; }
     if (typeof afterResolve === 'function') afterResolve();
