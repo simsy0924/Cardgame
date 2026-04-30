@@ -1,11 +1,18 @@
 // ============================================================
-// ai.js — AI 대전 모듈 (engine.js 구조 기반)
+// ai.js — AI 대전 모듈 (Groq API 무료 버전)
 // ============================================================
-// 설치: index.html 의 <script src="js/patch.js"></script> 뒤에
-//       <script src="js/ai.js"></script> 추가
+// 설치:
+//   1. https://console.groq.com 에서 API 키 발급 (무료, 이메일만 필요)
+//   2. 아래 _GROQ_KEY 에 키 입력
+//   3. index.html 의 <script src="js/patch.js"></script> 뒤에
+//      <script src="js/ai.js"></script> 추가
 // ============================================================
 'use strict';
 
+// ★ 여기에 Groq API 키 입력
+var _GROQ_KEY = '';
+
+// ─────────────────────────────────────────────────────────────
 window.AI = {
   active:     false,
   thinking:   false,
@@ -18,80 +25,67 @@ window.AI = {
 var _sleep = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
 
 // ─────────────────────────────────────────────────────────────
-// 훅 패치 — setTimeout(0) 으로 모든 js 로드 후 덮어쓰기
+// 훅 패치
 // ─────────────────────────────────────────────────────────────
-window.addEventListener('load', function() {
+setTimeout(function _patchAll() {
 
-  // ── initDecks 훅: AI 모드일 때 op쪽 초기화를 덮어쓴다 ──
-  var _origInitDecks = window.initDecks;
-  window.initDecks = function() {
-    _origInitDecks.apply(this, arguments);
-    if (!window.AI.active) return;
-    // initDecks가 G.opHand=[] 등을 초기화하므로 즉시 복원
-    G.opHand      = [];
-    G.opField     = [];
-    G.opGrave     = [];
-    G.opExile     = [];
-    G.opFieldCard = null;
-    G.opKeyDeck   = _presetKey(window.AI.deckPreset || '크툴루');
-    G.opDeckCount = window.AI.opDeck.length;
-  };
+  var _origConfirm = window.confirmDeck;
+  if (_origConfirm) {
+    window.confirmDeck = function() {
+      if (window.AI.active) _buildAIDeck();
+      _origConfirm.apply(this, arguments);
+    };
+  }
 
-  // ── enterGame 훅: _startNewGame 완료 후 AI 세팅 ──
+  var _origStartNewGame = window._startNewGame;
+  if (_origStartNewGame) {
+    window._startNewGame = function() {
+      _origStartNewGame.apply(this, arguments);
+      if (window.AI.active) _setupAI();
+    };
+  }
+
   var _origEnterGame = window.enterGame;
-  window.enterGame = function() {
-    _origEnterGame.apply(this, arguments);
-    if (!window.AI.active) return;
-    // _startNewGame → initDecks → drawN 까지 동기 완료된 뒤 실행
-    setTimeout(_setupAI, 0);
-  };
+  if (_origEnterGame) {
+    window.enterGame = function() {
+      _origEnterGame.apply(this, arguments);
+      if (window.AI.active && !window._startNewGame) setTimeout(_setupAI, 0);
+    };
+  }
 
-  // ── endTurn 훅: 플레이어 턴 종료 → AI 턴 시작 ──
   var _origEndTurn = window.endTurn;
-  window.endTurn = function() {
-    _origEndTurn.apply(this, arguments);
-    // endTurn 내부에서 isMyTurn = false 가 된 뒤
-    if (window.AI.active && !isMyTurn) {
-      setTimeout(_aiStartTurn, 700);
-    }
-  };
+  if (_origEndTurn) {
+    window.endTurn = function() {
+      _origEndTurn.apply(this, arguments);
+      if (window.AI.active && !isMyTurn) setTimeout(_aiStartTurn, 700);
+    };
+  }
 
-  // ── checkWinCondition 훅: AI 패 0 = 플레이어 승리 ──
   var _origCheckWin = window.checkWinCondition;
-  window.checkWinCondition = function() {
-    _origCheckWin.apply(this, arguments);
-    if (!window.AI.active) return;
-    if (G.opHand.length === 0 && !isMyTurn) {
-      setTimeout(function() { showGameOver(true); }, 300);
-    }
-  };
+  if (_origCheckWin) {
+    window.checkWinCondition = function() {
+      _origCheckWin.apply(this, arguments);
+      if (!window.AI.active) return;
+      if (G.opHand.length === 0 && !isMyTurn) setTimeout(function() { showGameOver(true); }, 300);
+    };
+  }
 
-  // ── confirmDeck 훅: 덱 확정 직전에 AI 덱 빌드 ──
-  var _origConfirmDeck = window.confirmDeck;
-  window.confirmDeck = function() {
-    if (window.AI.active) _buildAIDeck();
-    _origConfirmDeck.apply(this, arguments);
-  };
-
-});
+}, 0);
 
 // ─────────────────────────────────────────────────────────────
-// AI 모드 진입 (로비 버튼)
+// AI 모드 진입
 // ─────────────────────────────────────────────────────────────
 window.startAIMode = function() {
   window.AI.active = true;
-
-  // ★ 핵심: 플레이어 = host(선공), AI = guest(후공)
-  // myRole = 'host' → 플레이어가 선공, isMyTurn = true 로 시작
-  window.roomRef = null;
-  window.myRole  = 'host';
+  window.roomRef   = null;
+  window.myRole    = 'host';
 
   var btn = document.getElementById('dbConfirmBtn');
   if (btn) btn.textContent = 'AI 대전 시작 →';
 
   document.getElementById('lobby').style.display = 'none';
   document.getElementById('deckBuilder').style.display = 'flex';
-  if (typeof filterDeckPool   === 'function') filterDeckPool('전체');
+  if (typeof filterDeckPool    === 'function') filterDeckPool('전체');
   if (typeof renderBuilderDeck === 'function') renderBuilderDeck();
 };
 
@@ -115,21 +109,20 @@ function _buildAIDeck() {
   var list = _presetMain(window.AI.deckPreset).filter(function(id) { return CARDS[id]; });
   while (list.length < 40) list.push('구사일생');
 
-  window.AI.opDeck  = shuffle(list.map(function(id) {
+  window.AI.opDeck   = shuffle(list.map(function(id) {
     return { id: id, name: (CARDS[id] ? CARDS[id].name : id) };
   }));
-  window.AI.usedFx  = {};
+  window.AI.usedFx   = {};
   window.AI.attacked = new Set();
 }
 
 // ─────────────────────────────────────────────────────────────
-// enterGame 완료 후 AI 상태 세팅
+// 게임 시작 후 AI 상태 세팅
 // ─────────────────────────────────────────────────────────────
 function _setupAI() {
   if (!window.AI.active) return;
-  if (!window.AI.opDeck || window.AI.opDeck.length === 0) _buildAIDeck();
+  if (!window.AI.opDeck || !window.AI.opDeck.length) _buildAIDeck();
 
-  // op 존 덮어쓰기
   G.opHand      = [];
   G.opField     = [];
   G.opGrave     = [];
@@ -138,9 +131,6 @@ function _setupAI() {
   G.opKeyDeck   = _presetKey(window.AI.deckPreset);
   G.opDeckCount = window.AI.opDeck.length;
 
-  // ★ 선공(host=플레이어)이므로 AI는 7장 드로우
-  // _startNewGame에서 host는 6장을 이미 drawN(6) 했고
-  // isMyTurn = true, phase = deploy 로 세팅된 상태
   _aiDraw(7);
 
   document.getElementById('hdrOpName').textContent   = '🤖 AI (' + window.AI.deckPreset + ')';
@@ -149,13 +139,10 @@ function _setupAI() {
   _injectBanner();
   log('🤖 AI (' + window.AI.deckPreset + ') 후공 참전! 패 ' + G.opHand.length + '장', 'system');
   renderAll();
-
-  // ★ 첫 턴: 플레이어가 선공이므로 AI 턴은 플레이어가 endTurn 후에 시작됨
-  // 별도 트리거 불필요
 }
 
 // ─────────────────────────────────────────────────────────────
-// AI 내부 카드 조작
+// AI 카드 조작
 // ─────────────────────────────────────────────────────────────
 function _aiDraw(n) {
   for (var i = 0; i < n; i++) {
@@ -176,7 +163,6 @@ function _aiRemoveHand(cardId) {
   if (i >= 0) G.opHand.splice(i, 1);
 }
 
-// 소환 — handleOpponentAction('summon') 경유 → 황금사과 등 부수효과 자동
 function _aiSummon(cardId) {
   var card = CARDS[cardId];
   if (!card || card.cardType !== 'monster') return false;
@@ -220,17 +206,14 @@ function _aiSearch(cardId) {
   return true;
 }
 
-// 전투 — handleOpponentAction('combat') 경유 → forceDiscard/구사일생 자동
 function _aiAttack(atkId, defIdx) {
   if (window.AI.attacked.has(atkId)) return false;
   var atkFI = G.opField.findIndex(function(c) { return c.id === atkId; });
   if (atkFI < 0 || !G.myField[defIdx]) return false;
-
   window.AI.attacked.add(atkId);
   var atk  = G.opField[atkFI];
   var def  = G.myField[defIdx];
   var diff = atk.atk - def.atk;
-
   log('🤖 공격: ' + atk.name + '(' + atk.atk + ') → ' + def.name + '(' + def.atk + ')', 'opponent');
   handleOpponentAction({
     type: 'combat',
@@ -238,8 +221,6 @@ function _aiAttack(atkId, defIdx) {
     defCard: { id: def.id, name: def.name, atk: def.atk },
     by: 'guest', ts: Date.now(),
   });
-
-  // AI 몬스터 패배 처리
   if (atk.atk !== 0 && diff <= 0) {
     var ri = G.opField.findIndex(function(c) { return c.id === atkId; });
     if (ri >= 0) G.opGrave.push(G.opField.splice(ri, 1)[0]);
@@ -272,7 +253,6 @@ async function _aiStartTurn() {
   _setBanner('🤖 드로우 중...');
 
   try {
-    // ── 드로우 ──
     if (currentPhase === 'draw') {
       if (!_aiDraw(1)) { window.AI.thinking = false; return; }
       log('🤖 드로우 (패:' + G.opHand.length + ' 덱:' + window.AI.opDeck.length + ')', 'opponent');
@@ -281,23 +261,19 @@ async function _aiStartTurn() {
       renderAll();
     }
 
-    // ── Claude API 전략 ──
     _setBanner('🤖 전략 계산 중...');
     await _sleep(200);
     var plan;
-    try   { plan = await _claudePlan(); }
-    catch (e) { console.warn('[AI] API 실패:', e.message); plan = _fallback(); }
+    try   { plan = await _groqPlan(); }
+    catch (e) { console.warn('[AI] Groq 실패:', e.message); plan = _fallback(); }
     if (plan.thinking) { log('🤖 "' + plan.thinking + '"', 'opponent'); await _sleep(300); }
 
-    // ── 전개 ──
     _setBanner('🤖 전개 중...');
     await _execDeploy(plan.deploy || []);
     advancePhase('attack');
     await _sleep(300);
     renderAll();
 
-    // ── 후공 2턴째부터 공격 (선공 1턴 금지는 플레이어 측 규칙, AI는 후공이라 관계없음) ──
-    // 단, G.turn === 1 이면 아직 첫 라운드(플레이어가 아직 안 끝낸 경우)이므로 공격 가능
     _setBanner('🤖 공격 중...');
     await _execAttack(plan.attack || []);
     advancePhase('end');
@@ -312,9 +288,11 @@ async function _aiStartTurn() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Claude API
+// Groq API 호출
 // ─────────────────────────────────────────────────────────────
-async function _claudePlan() {
+async function _groqPlan() {
+  if (!_GROQ_KEY) throw new Error('Groq 키 없음');
+
   var state = {
     turn: G.turn,
     ai: {
@@ -333,41 +311,57 @@ async function _claudePlan() {
     },
   };
 
-  var sys = [
+  var systemPrompt = [
     '당신은 카드 게임 "핸드 배틀 TCG"의 AI 플레이어입니다.',
     '목표: 상대 패를 0장으로 만들기.',
     '전투: 내ATK > 상대ATK → 상대 몬스터 제거 + 차이만큼 상대 패 손실.',
     '전투: 내ATK < 상대ATK → 내 몬스터 제거 + 차이만큼 내 패 손실.',
     '상대 필드 비었을 때 직접 공격 → ATK만큼 상대 패 손실.',
-    'summonFromHand는 monster 카드만 가능.',
-    'deploy.cardId는 ai.hand에 있는 monster id만.',
-    'attack.attackerId는 ai.field 또는 deploy 후 있을 id.',
-    'attack.targetIdx는 player.field 인덱스(0~).',
-    '상대 필드 비었으면 directAttack 사용.',
-    '전략: ATK 높은 몬스터 소환 → 필드 비면 직접 공격, 아니면 ATK 유리한 전투만.',
-    '',
-    '아래 JSON만 반환. 마크다운 없이:',
-    '{"thinking":"한 줄 전략","deploy":[{"action":"summonFromHand","cardId":"ID"}],"attack":[{"action":"attack","attackerId":"ID","targetIdx":0},{"action":"directAttack","attackerId":"ID"}]}',
+    '전략: ATK 높은 몬스터 최대 소환 → 필드 비면 전원 직접 공격, 아니면 유리한 전투만.',
+    'summonFromHand: monster 카드만 가능.',
+    'deploy.cardId: ai.hand 에 있는 monster id 만 사용.',
+    'attack.attackerId: ai.field 또는 deploy 후 필드에 있을 id.',
+    'attack.targetIdx: player.field 인덱스 (0부터 시작).',
+    '상대 필드 비었으면 attack 대신 directAttack 사용.',
+    '반드시 JSON 만 반환. 마크다운 없이.',
   ].join('\n');
 
-  var resp = await fetch('https://api.anthropic.com/v1/messages', {
+  var resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + _GROQ_KEY,
+    },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'llama-3.1-8b-instant',
+      temperature: 0.2,
       max_tokens: 500,
-      system: sys,
-      messages: [{ role: 'user', content: JSON.stringify(state) }],
+      response_format: { type: 'json_object' }, // JSON 모드 강제
+      messages: [
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: '현재 게임 상태:\n' + JSON.stringify(state) + '\n\n최적의 행동을 JSON으로 반환:\n{"thinking":"전략 한 줄 (한국어)","deploy":[{"action":"summonFromHand","cardId":"ID"}],"attack":[{"action":"attack","attackerId":"ID","targetIdx":0}]}',
+        },
+      ],
     }),
   });
-  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+  if (!resp.ok) {
+    var err = await resp.json().catch(function() { return {}; });
+    throw new Error('Groq ' + resp.status + ': ' + (err.error && err.error.message || ''));
+  }
+
   var data = await resp.json();
-  var text = (data.content || []).map(function(b) { return b.text || ''; }).join('');
-  return JSON.parse(text.replace(/```json|```/g, '').trim());
+  var text = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content || '{}';
+  var clean = text.replace(/```json|```/g, '').trim();
+  var match = clean.match(/\{[\s\S]*\}/);
+  if (match) clean = match[0];
+  return JSON.parse(clean);
 }
 
 // ─────────────────────────────────────────────────────────────
-// 폴백 플랜
+// 폴백 (키 없거나 API 실패 시)
 // ─────────────────────────────────────────────────────────────
 function _fallback() {
   var plan = { thinking: '기본 전략', deploy: [], attack: [] };
@@ -406,7 +400,6 @@ async function _execDeploy(actions) {
     if (!G.opHand.find(function(c) { return c.id === act.cardId; })) continue;
     var cd = CARDS[act.cardId];
     if (!cd || cd.cardType !== 'monster') continue;
-
     _aiSummon(act.cardId);
     await _sleep(500);
     await _aiTrigger(act.cardId);
@@ -441,9 +434,8 @@ async function _execAttack(actions) {
 // ─────────────────────────────────────────────────────────────
 async function _aiTrigger(cardId) {
   var AI = window.AI;
-  var key = function(id, n) { return id + '_' + n; };
-  var used = function(id, n) { return !!AI.usedFx[key(id, n)]; };
-  var mark = function(id, n) { AI.usedFx[key(id, n)] = 1; };
+  var used = function(id, n) { return !!AI.usedFx[id + '_' + n]; };
+  var mark = function(id, n) { AI.usedFx[id + '_' + n] = 1; };
 
   if (cardId === '꼬마 펭귄' && !used(cardId, 2)) {
     var t = AI.opDeck.find(function(c) { return CARDS[c.id] && CARDS[c.id].theme === '펭귄' && CARDS[c.id].cardType === 'monster'; });
@@ -454,7 +446,9 @@ async function _aiTrigger(cardId) {
     if (fi >= 0) {
       mark(cardId, 1);
       G.opField[fi].atk += 1;
-      var wk = G.opHand.reduce(function(a, b) { return (CARDS[a.id] ? CARDS[a.id].atk || 0 : 0) <= (CARDS[b.id] ? CARDS[b.id].atk || 0 : 0) ? a : b; });
+      var wk = G.opHand.reduce(function(a, b) {
+        return (CARDS[a.id] ? CARDS[a.id].atk || 0 : 0) <= (CARDS[b.id] ? CARDS[b.id].atk || 0 : 0) ? a : b;
+      });
       _aiDiscard(wk.id);
       handleOpponentAction({ type: 'forceDiscard', count: 1, reason: '수문장 펭귄', by: 'guest', ts: Date.now() });
       await _sleep(300);
@@ -504,7 +498,7 @@ function _aiEndTurn() {
   G.turn++;
   isMyTurn = true;
   try { attackedMonstersThisTurn.clear(); } catch(e) {}
-  if (typeof advancePhase === 'function') advancePhase('draw');
+  advancePhase('draw');
   _setBanner('');
   window.AI.thinking = false;
   renderAll();
@@ -546,7 +540,7 @@ function _injectBanner() {
   if (document.getElementById('_aiBanner')) return;
   var el = document.createElement('div');
   el.id = '_aiBanner';
-  el.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);background:linear-gradient(90deg,#12003a,#2a007a,#12003a);color:#c8a96e;padding:.35rem 1.6rem;border:1px solid #7c5cbf;border-top:none;border-radius:0 0 10px 10px;font-family:Black Han Sans,sans-serif;font-size:.8rem;letter-spacing:.1em;z-index:3000;box-shadow:0 4px 20px #7c5cbf55;pointer-events:none;transition:opacity .25s;opacity:0;';
+  el.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);background:linear-gradient(90deg,#1a0a00,#7c3400,#1a0a00);color:#fb923c;padding:.35rem 1.6rem;border:1px solid #ea580c;border-top:none;border-radius:0 0 10px 10px;font-family:Black Han Sans,sans-serif;font-size:.8rem;letter-spacing:.1em;z-index:3000;box-shadow:0 4px 20px #ea580c44;pointer-events:none;transition:opacity .25s;opacity:0;';
   document.body.appendChild(el);
 }
 function _setBanner(msg) {
@@ -565,13 +559,13 @@ function _patchLobby() {
   var card = document.createElement('div');
   card.id = '_aiCard';
   card.className = 'lobby-card';
-  card.style.cssText = 'border-color:#7c5cbf;background:linear-gradient(160deg,#0e0e1f,#1a0a35);';
+  card.style.cssText = 'border-color:#ea580c;background:linear-gradient(160deg,#1a0a00,#2d1500);';
   card.innerHTML =
-    '<h2 style="color:#9c7cdf;display:flex;align-items:center;gap:.5rem">🤖 AI 대전 <span style="font-size:.65rem;color:#7c5cbf;border:1px solid #7c5cbf;padding:.1rem .4rem;border-radius:3px">Claude AI</span></h2>' +
-    '<p style="font-size:.82rem;color:#9090b0;line-height:1.65;margin:.25rem 0 .8rem">Claude AI가 카드 효과와 전황을 분석해 전략적으로 플레이합니다.<br>내 덱을 구성하면 AI가 카운터 덱으로 후공 참전합니다.</p>' +
-    '<button style="width:100%;padding:.8rem;background:linear-gradient(135deg,#2a0060,#5a10b0);color:#e0c8ff;border:1px solid #7c5cbf;border-radius:6px;font-family:Black Han Sans,sans-serif;font-size:1rem;letter-spacing:.12em;cursor:pointer;box-shadow:0 0 20px #7c5cbf33;" ' +
-    'onmouseover="this.style.background=\'linear-gradient(135deg,#3a0080,#7a20d0)\'" ' +
-    'onmouseout="this.style.background=\'linear-gradient(135deg,#2a0060,#5a10b0)\'" ' +
+    '<h2 style="color:#fb923c;display:flex;align-items:center;gap:.5rem">🤖 AI 대전 <span style="font-size:.65rem;color:#ea580c;border:1px solid #ea580c;padding:.1rem .4rem;border-radius:3px">Groq AI</span></h2>' +
+    '<p style="font-size:.82rem;color:#9090b0;line-height:1.65;margin:.25rem 0 .8rem">Groq의 초고속 Llama AI가 전황을 분석해 전략적으로 플레이합니다.<br>내가 선공, AI가 후공으로 시작합니다.<br><span style="color:#fb923c;font-size:.75rem">※ ai.js 상단의 _GROQ_KEY 에 키를 입력하세요</span></p>' +
+    '<button style="width:100%;padding:.8rem;background:linear-gradient(135deg,#431407,#9a3412);color:#fed7aa;border:1px solid #ea580c;border-radius:6px;font-family:Black Han Sans,sans-serif;font-size:1rem;letter-spacing:.12em;cursor:pointer;box-shadow:0 0 20px #ea580c33;" ' +
+    'onmouseover="this.style.background=\'linear-gradient(135deg,#7c2d12,#c2410c)\'" ' +
+    'onmouseout="this.style.background=\'linear-gradient(135deg,#431407,#9a3412)\'" ' +
     'onclick="startAIMode()">⚔️ AI와 대전하기 (내가 선공)</button>';
   var all = lobby.querySelectorAll('.lobby-card');
   var last = all[all.length - 1];
