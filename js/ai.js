@@ -626,13 +626,10 @@ setTimeout(_lobby,2000);
       resolveChain(next);
       return;
     }
-    // AI 차례 → 자동 패스
+    // AI 차례 → 응답 가능 여부 판단 후 패스/응답
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) return;
-      var fin = Object.assign({}, activeChainState);
-      fin.passCount = 2;
-      log('🤖 체인 패스', 'opponent');
-      resolveChain(fin);
+      _aiChainResponse(activeChainState);
     }, 600);
   };
 })();
@@ -653,7 +650,8 @@ function _aiChainResponse(chainState) {
   var canRespond = false;
 
   // 눈에는 눈 체크 (서치 체인에 응답)
-  if (chainState.links.some(function(l) { return l.type === 'keyFetch'; })) {
+  var liveChain = activeChainState || chainState;
+  if ((liveChain.links || []).some(function(l) { return l.type === 'keyFetch'; })) {
     var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
     if (eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1)) canRespond = true;
   }
