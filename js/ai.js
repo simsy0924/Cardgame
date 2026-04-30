@@ -1,16 +1,11 @@
 // ============================================================
 // ai.js — AI 대전 모듈 (Cloudflare Worker 프록시 버전)
 // ============================================================
-// 설치:
-//   1. worker.js 를 Cloudflare Workers 에 배포
-//   2. 아래 _WORKER_URL 에 Worker URL 입력
-//   3. index.html 의 <script src="js/patch.js"></script> 뒤에
-//      <script src="js/ai.js"></script> 추가
+// 훅은 patch.js 맨 아래에 등록됨 — 이 파일은 순수 AI 로직만
 // ============================================================
 'use strict';
 
-// ★ Cloudflare Worker URL 입력 (키가 아니라 URL이라 노출돼도 안전)
-// 예) 'https://cardgame-ai.홍길동.workers.dev'
+// ★ Cloudflare Worker URL 입력
 var _WORKER_URL = 'https://workers-ai.simsy0924.workers.dev';
 
 // ─────────────────────────────────────────────────────────────
@@ -26,60 +21,12 @@ window.AI = {
 var _sleep = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
 
 // ─────────────────────────────────────────────────────────────
-// 훅 패치
-// ─────────────────────────────────────────────────────────────
-setTimeout(function _patchAll() {
-
-  var _origConfirm = window.confirmDeck;
-  if (_origConfirm) {
-    window.confirmDeck = function() {
-      if (window.AI.active) _buildAIDeck();
-      _origConfirm.apply(this, arguments);
-    };
-  }
-
-  var _origStartNewGame = window._startNewGame;
-  if (_origStartNewGame) {
-    window._startNewGame = function() {
-      _origStartNewGame.apply(this, arguments);
-      if (window.AI.active) _setupAI();
-    };
-  }
-
-  var _origEnterGame = window.enterGame;
-  if (_origEnterGame) {
-    window.enterGame = function() {
-      _origEnterGame.apply(this, arguments);
-      if (window.AI.active && !window._startNewGame) setTimeout(_setupAI, 0);
-    };
-  }
-
-  var _origEndTurn = window.endTurn;
-  if (_origEndTurn) {
-    window.endTurn = function() {
-      _origEndTurn.apply(this, arguments);
-      if (window.AI.active && !isMyTurn) setTimeout(_aiStartTurn, 700);
-    };
-  }
-
-  var _origCheckWin = window.checkWinCondition;
-  if (_origCheckWin) {
-    window.checkWinCondition = function() {
-      _origCheckWin.apply(this, arguments);
-      if (!window.AI.active) return;
-      if (G.opHand.length === 0 && !isMyTurn) setTimeout(function() { showGameOver(true); }, 300);
-    };
-  }
-
-}, 0);
-
-// ─────────────────────────────────────────────────────────────
 // AI 모드 진입
 // ─────────────────────────────────────────────────────────────
 window.startAIMode = function() {
   window.AI.active = true;
   window.roomRef   = null;
-  window.myRole    = 'host';
+  window.myRole    = 'host'; // 플레이어=선공, AI=후공
 
   var btn = document.getElementById('dbConfirmBtn');
   if (btn) btn.textContent = 'AI 대전 시작 →';
@@ -91,7 +38,7 @@ window.startAIMode = function() {
 };
 
 // ─────────────────────────────────────────────────────────────
-// AI 덱 빌드
+// AI 덱 빌드 (patch.js의 confirmDeck 훅에서 호출)
 // ─────────────────────────────────────────────────────────────
 function _buildAIDeck() {
   var pd = window._confirmedDeck || [];
@@ -118,12 +65,13 @@ function _buildAIDeck() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 게임 시작 후 AI 상태 세팅
+// _startNewGame 완료 후 AI 상태 세팅 (patch.js에서 동기 호출)
 // ─────────────────────────────────────────────────────────────
 function _setupAI() {
   if (!window.AI.active) return;
   if (!window.AI.opDeck || !window.AI.opDeck.length) _buildAIDeck();
 
+  // op 존 덮어쓰기
   G.opHand      = [];
   G.opField     = [];
   G.opGrave     = [];
@@ -132,10 +80,15 @@ function _setupAI() {
   G.opKeyDeck   = _presetKey(window.AI.deckPreset);
   G.opDeckCount = window.AI.opDeck.length;
 
+  // AI 초기 드로우 7장 (후공)
   _aiDraw(7);
 
+  // 헤더
   document.getElementById('hdrOpName').textContent   = '🤖 AI (' + window.AI.deckPreset + ')';
   document.getElementById('opNameLabel').textContent = '🤖 AI';
+
+  // 시간은 roomRef 없을 때도 돌아가도록 클럭 강제 시작
+  gameClock = { host: 500, guest: 500, runningFor: 'host', lastUpdated: Date.now() };
 
   _injectBanner();
   log('🤖 AI (' + window.AI.deckPreset + ') 후공 참전! 패 ' + G.opHand.length + '장', 'system');
@@ -243,7 +196,7 @@ function _aiDirectAttack(atkId) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// AI 턴 메인 흐름
+// AI 턴 메인 흐름 (patch.js의 endTurn 훅에서 호출)
 // ─────────────────────────────────────────────────────────────
 async function _aiStartTurn() {
   if (!window.AI.active || isMyTurn || window.AI.thinking) return;
@@ -254,6 +207,7 @@ async function _aiStartTurn() {
   _setBanner('🤖 드로우 중...');
 
   try {
+    // 드로우
     if (currentPhase === 'draw') {
       if (!_aiDraw(1)) { window.AI.thinking = false; return; }
       log('🤖 드로우 (패:' + G.opHand.length + ' 덱:' + window.AI.opDeck.length + ')', 'opponent');
@@ -262,6 +216,7 @@ async function _aiStartTurn() {
       renderAll();
     }
 
+    // Groq 전략
     _setBanner('🤖 전략 계산 중...');
     await _sleep(200);
     var plan;
@@ -269,12 +224,14 @@ async function _aiStartTurn() {
     catch (e) { console.warn('[AI] Groq 실패:', e.message); plan = _fallback(); }
     if (plan.thinking) { log('🤖 "' + plan.thinking + '"', 'opponent'); await _sleep(300); }
 
+    // 전개
     _setBanner('🤖 전개 중...');
     await _execDeploy(plan.deploy || []);
     advancePhase('attack');
     await _sleep(300);
     renderAll();
 
+    // 공격
     _setBanner('🤖 공격 중...');
     await _execAttack(plan.attack || []);
     advancePhase('end');
@@ -289,10 +246,10 @@ async function _aiStartTurn() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Groq API 호출 (Cloudflare Worker 경유)
+// Groq API (Cloudflare Worker 경유)
 // ─────────────────────────────────────────────────────────────
 async function _groqPlan() {
-  if (!_WORKER_URL) throw new Error('Worker URL 없음 — 폴백으로 전환');
+  if (!_WORKER_URL) throw new Error('Worker URL 없음');
 
   var state = {
     turn: G.turn,
@@ -327,7 +284,6 @@ async function _groqPlan() {
     '반드시 JSON 만 반환. 마크다운 없이.',
   ].join('\n');
 
-  // Cloudflare Worker로 요청 (키는 Worker 서버에만 있음)
   var resp = await fetch(_WORKER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -351,7 +307,6 @@ async function _groqPlan() {
   });
 
   if (!resp.ok) throw new Error('Worker ' + resp.status);
-
   var data = await resp.json();
   var text = data.choices && data.choices[0] &&
              data.choices[0].message && data.choices[0].message.content || '{}';
@@ -362,7 +317,7 @@ async function _groqPlan() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 폴백 (Worker URL 없거나 실패 시)
+// 폴백
 // ─────────────────────────────────────────────────────────────
 function _fallback() {
   var plan = { thinking: '기본 전략', deploy: [], attack: [] };
@@ -500,6 +455,8 @@ function _aiEndTurn() {
   isMyTurn = true;
   try { attackedMonstersThisTurn.clear(); } catch(e) {}
   advancePhase('draw');
+  // 클럭을 플레이어 턴으로 전환
+  gameClock = { host: gameClock.host, guest: gameClock.guest, runningFor: 'host', lastUpdated: Date.now() };
   _setBanner('');
   window.AI.thinking = false;
   renderAll();

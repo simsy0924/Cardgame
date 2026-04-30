@@ -119,6 +119,10 @@
     G.tigerZonePermanent = false;
     G.ligerKingBanSummon = false;
     G.myExtraSlots       = G.myExtraSlots || 0;
+    // ★ AI 모드: enterGame 완료 직후 AI 세팅
+    if (window.AI && window.AI.active) {
+      window.AI._pendingSetup = true;
+    }
   };
 })();
 
@@ -180,4 +184,59 @@
     }
     renderBuilderDeck(); filterDeckPool(currentPoolFilter);
   };
+})();
+
+// ─────────────────────────────────────────────
+// 6. AI 훅 — patch.js 마지막에서 등록 (가장 나중에 실행 보장)
+// ─────────────────────────────────────────────
+(function _patchAI() {
+
+  // confirmDeck: AI 덱 빌드
+  const _origConfirm = typeof confirmDeck === 'function' ? confirmDeck : null;
+  if (_origConfirm) {
+    confirmDeck = function() {
+      if (window.AI && window.AI.active) {
+        if (typeof _buildAIDeck === 'function') _buildAIDeck();
+      }
+      _origConfirm.apply(this, arguments);
+    };
+  }
+
+  // _startNewGame: 완료 직후 AI 세팅 (가장 중요)
+  const _origSNG = typeof _startNewGame === 'function' ? _startNewGame : null;
+  if (_origSNG) {
+    _startNewGame = function() {
+      _origSNG.apply(this, arguments);
+      if (window.AI && window.AI.active) {
+        // 동기적으로 즉시 실행 — setTimeout 없이
+        if (typeof _setupAI === 'function') _setupAI();
+      }
+    };
+  }
+
+  // endTurn: AI 턴 시작
+  const _origEndTurn = typeof endTurn === 'function' ? endTurn : null;
+  if (_origEndTurn) {
+    endTurn = function() {
+      _origEndTurn.apply(this, arguments);
+      if (window.AI && window.AI.active && !isMyTurn) {
+        setTimeout(function() {
+          if (typeof _aiStartTurn === 'function') _aiStartTurn();
+        }, 700);
+      }
+    };
+  }
+
+  // checkWinCondition: AI 패 0 = 플레이어 승리
+  const _origCheckWin = typeof checkWinCondition === 'function' ? checkWinCondition : null;
+  if (_origCheckWin) {
+    checkWinCondition = function() {
+      _origCheckWin.apply(this, arguments);
+      if (!window.AI || !window.AI.active) return;
+      if (G.opHand.length === 0 && !isMyTurn) {
+        setTimeout(function() { showGameOver(true); }, 300);
+      }
+    };
+  }
+
 })();
