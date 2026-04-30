@@ -1,3 +1,4 @@
+
 // ============================================================
 // ai.js — AI 대전 모듈
 // index.html 로드 순서: patch.js → ai.js (맨 마지막)
@@ -584,6 +585,8 @@ setTimeout(_lobby,2000);
 // ─────────────────────────────────────────────────────────────
 // beginChain/passChainPriority 훅 — AI 모드 체인 처리
 // 핵심: 기존 체인 엔진 로직은 유지하고, AI 응답 트리거만 보강
+// 수정: passChainPriority 훅에서 AI 응답 트리거 제거 (이중 발동 방지)
+//       AI 응답은 beginChain 훅에서만 트리거
 // ─────────────────────────────────────────────────────────────
 (function() {
   var _origBeginChain = window.beginChain;
@@ -618,18 +621,16 @@ setTimeout(_lobby,2000);
       next.priority = 'guest';
       activeChainState = next;
       log('체인 패스', 'system');
+      // passCount >= 2 이면 즉시 해결 (AI 응답 트리거 없음)
+      if (next.passCount >= 2) {
+        resolveChain(next);
+      }
+      // passCount < 2 이면 AI 응답을 기다림 — beginChain 훅이 이미 트리거했으므로 여기서는 하지 않음
     } else {
       _origPassChainPriority.apply(this, arguments);
     }
-
-    var live = activeChainState;
-    if (!live || !live.active) return;
-    if (live.priority !== 'guest') return;
-
-    setTimeout(function() {
-      if (!activeChainState || !activeChainState.active) return;
-      _aiChainResponse(activeChainState);
-    }, 350);
+    // ★ AI 응답 트리거 제거: passChainPriority에서는 AI를 다시 트리거하지 않음
+    // AI 응답은 beginChain 훅에서만 처리 → 이중 발동 방지
   };
 })();
 

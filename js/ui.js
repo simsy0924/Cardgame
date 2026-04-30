@@ -1,3 +1,4 @@
+
 // ui.js — UI 렌더링, 모달, 카드 픽커, 덱 빌더
 // CARD RENDERING
 // ─────────────────────────────────────────────
@@ -272,146 +273,12 @@ function startKeyFetchEffect() {
   });
 }
 
-function beginChain(effect) {
-  const chainState = {
-    active: true,
-    startedBy: myRole,
-    priority: myRole === 'host' ? 'guest' : 'host',
-    passCount: 0,
-    links: [{ ...effect, by: myRole }],
-  };
-  activeChainState = chainState;
-  if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
-  log(`체인 1: ${effect.label} 발동`, 'mine');
-
-  if (!roomRef) {
-    // 로컬/데모: 상대 자동 패스 → 즉시 해결
-    const localState = { ...chainState, passCount: 2 };
-    resolveChain(localState);
-    return;
-  }
-
-  roomRef.child('chainState').set(chainState);
-  syncClockRunState(chainState.priority);
-}
-
-function openChainResponse() {
-  if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
-  if (usedKeyFetchInChain[myRole]) {
-    notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
-    return;
-  }
-  const options = (G.myKeyDeck || []).map(c => ({ id: c.id, name: c.name }));
-  if (options.length === 0) {
-    notify('키 카드 덱에 발동 가능한 카드가 없습니다. 패스하세요.');
-    return;
-  }
-  openCardPicker(options, '체인 응답: 키 카드 가져오기 (유발 즉시)', 1, (sel) => {
-    if (!sel || sel.length === 0) return; // 취소 시 무시
-    const picked = options[sel[0]];
-    if (!picked) return;
-    addChainLink({
-      type: 'keyFetch',
-      label: `키 카드 가져오기 (${picked.name})`,
-      cardId: picked.id,
-    });
-  });
-}
-
-function passChainPriority() {
-  if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
-
-  const next = { ...activeChainState };
-  next.passCount = (next.passCount || 0) + 1;
-  next.priority = myRole === 'host' ? 'guest' : 'host';
-  log('체인 패스', 'system');
-
-  if (next.passCount >= 2) {
-    resolveChain(next);
-    return;
-  }
-
-  if (!roomRef) {
-    // 로컬/데모: 상대도 자동 패스 → 즉시 해결
-    next.passCount = 2;
-    resolveChain(next);
-    return;
-  }
-
-  activeChainState = next;
-  roomRef.child('chainState').set(next);
-  syncClockRunState(next.priority);
-}
-
-function addChainLink(effect) {
-  if (!activeChainState || !activeChainState.active) return;
-  if (effect.type === 'keyFetch' && usedKeyFetchInChain[myRole]) {
-    notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
-    return;
-  }
-  const next = { ...activeChainState };
-  next.links = [...(next.links || []), { ...effect, by: myRole }];
-  next.priority = myRole === 'host' ? 'guest' : 'host';
-  next.passCount = 0;
-  activeChainState = next;
-  if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
-  log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
-
-  if (!roomRef) {
-    // 로컬: 상대 패스 자동 처리 → 즉시 해결
-    next.passCount = 2;
-    resolveChain(next);
-    return;
-  }
-  roomRef.child('chainState').set(next);
-  syncClockRunState(next.priority);
-}
-
-function enqueueTriggeredEffect(effect) {
-  pendingTriggerEffects.push(effect);
-  setTimeout(flushTriggeredEffects, 0);
-}
-
-function flushTriggeredEffects() {
-  if (pendingTriggerEffects.length === 0) return;
-  if (activeChainState && activeChainState.active) return;
-
-  const queued = [...pendingTriggerEffects];
-  pendingTriggerEffects = [];
-
-  if (!roomRef) {
-    const links = queued.map(e => ({ ...e, by: myRole }));
-    executeChainLocally(links.reverse());
-    return;
-  }
-
-  beginChain(queued[0]);
-  queued.slice(1).forEach(e => addChainLink(e));
-}
-
-function activateQuickEffect(effect) {
-  if (activeChainState && activeChainState.active) {
-    if (activeChainState.priority !== myRole) {
-      notify('현재 체인 우선권은 상대에게 있습니다. (체인 시작 직후에는 상대가 먼저 응답)');
-      return;
-    }
-    addChainLink(effect);
-    return;
-  }
-  beginChain(effect);
-}
-
-function activateIgnitionEffect(effect) {
-  if (activeChainState && activeChainState.active) {
-    if (activeChainState.priority !== myRole) {
-      notify('현재 체인 우선권은 상대에게 있습니다. (체인 시작 직후에는 상대가 먼저 응답)');
-      return;
-    }
-    addChainLink(effect);
-    return;
-  }
-  beginChain(effect);
-}
+// ─────────────────────────────────────────────
+// 체인 시스템 함수들은 effects-chain.js에 정의됨
+// beginChain, passChainPriority, addChainLink, flushTriggeredEffects,
+// activateQuickEffect, activateIgnitionEffect — 모두 effects-chain.js에서 관리
+// activateQuickEffect와 activateIgnitionEffect는 effects-chain.js에 정의됨
+// 이 파일에서 재정의하지 않음 — 기동효과는 체인 1로만 발동 가능
 
 function ensureCardInstanceId(card) {
   if (!card) return null;
@@ -844,7 +711,8 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                   // ② 묘지에서 발동
                   break;
               }
-              addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
+              // 지배자/지배룡 카드는 ①효과 자체가 이 카드를 버리는 코스트이므로
+              // 별도 "패에서 버리기" 버튼은 필요하지 않음
             }
           } else if (['크툴루', '올드 원', '올드원', '라이온', '타이거', '라이거', '마피아', '불가사의'].includes(card.theme)) {
             const effectText = card.effects || '';

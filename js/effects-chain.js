@@ -1,3 +1,4 @@
+
 // effects-chain.js — 체인/유발/퀵 이펙트 처리
 function beginChain(effect) {
   const chainState = {
@@ -126,12 +127,9 @@ function flushTriggeredEffects() {
   const queued = [...pendingTriggerEffects];
   pendingTriggerEffects = [];
 
-  if (!roomRef) {
-    const links = queued.map(e => ({ ...e, by: myRole }));
-    executeChainLocally(links.reverse());
-    return;
-  }
-
+  // 로컬/Firebase 모두 beginChain 경로를 타도록 통일
+  // roomRef 없으면 beginChain 내부에서 _resolveLocalChainWithAI가 호출되므로
+  // 체인블록이 형성된 후 즉시 해결됨 (유발효과도 정식 체인블록을 형성)
   beginChain(queued[0]);
   queued.slice(1).forEach(e => addChainLink(e));
 }
