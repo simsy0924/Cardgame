@@ -143,10 +143,18 @@ function _setupAI() {
   _aiBanner();
   log('🤖 AI (' + window.AI.deckPreset + ') 후공 참전! 패 ' + G.opHand.length + '장', 'system');
 
-  // 플레이어=host=선공 → 강제 세팅
+  // 플레이어=host=선공 → 즉시 + 100ms 후 이중 강제 세팅
+  // sendGameState() 등 비동기 콜백이 덮어쓸 수 있으므로 두 번 세팅
   isMyTurn = true;
   advancePhase('deploy');
   renderAll();
+
+  setTimeout(function() {
+    if (!window.AI.active) return;
+    isMyTurn = true;
+    advancePhase('deploy');
+    renderAll();
+  }, 150);
 }
 
 // ─────────────────────────────────────────────────────────────
