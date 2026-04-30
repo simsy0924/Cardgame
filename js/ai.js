@@ -18,6 +18,15 @@ window.AI = {
 
 var _s = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
 
+
+function _safeHook(name, wrapper) {
+  var orig = window[name];
+  if (typeof orig !== 'function') return false;
+  window[name] = wrapper(orig);
+  return true;
+}
+
+
 // ─────────────────────────────────────────────────────────────
 // 훅 — ai.js가 맨 마지막 로드되므로 즉시 등록 가능
 // ─────────────────────────────────────────────────────────────
@@ -25,34 +34,29 @@ var _s = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); 
 // ★ 핵심: enterGameWithDeck 훅
 // confirmDeck() → enterGameWithDeck() → enterGame() → _startNewGame()
 // 이 전체 흐름이 동기적으로 완료된 뒤 _setupAI() 실행
-var _origEGWD = window.enterGameWithDeck;
-window.enterGameWithDeck = function() {
-  _origEGWD.apply(this, arguments);
-  if (window.AI.active) {
-    // enterGame() → _startNewGame() → initDecks() → drawCards() → renderAll()
-    // 모두 동기 완료됨 → 바로 세팅
-    _setupAI();
-  }
-};
+_safeHook('enterGameWithDeck', function(_origEGWD) {
+  return function() {
+    _origEGWD.apply(this, arguments);
+    if (window.AI.active) _setupAI();
+  };
+});
 
-// endTurn 훅
-var _origET = window.endTurn;
-window.endTurn = function() {
-  _origET.apply(this, arguments);
-  if (window.AI.active && !isMyTurn) {
-    setTimeout(_aiTurn, 700);
-  }
-};
+_safeHook('endTurn', function(_origET) {
+  return function() {
+    _origET.apply(this, arguments);
+    if (window.AI.active && !isMyTurn) setTimeout(_aiTurn, 700);
+  };
+});
 
-// checkWinCondition 훅
-var _origCWC = window.checkWinCondition;
-window.checkWinCondition = function() {
-  _origCWC.apply(this, arguments);
-  if (!window.AI.active) return;
-  if (G.opHand.length === 0 && !isMyTurn) {
-    setTimeout(function() { showGameOver(true); }, 300);
-  }
-};
+_safeHook('checkWinCondition', function(_origCWC) {
+  return function() {
+    _origCWC.apply(this, arguments);
+    if (!window.AI.active) return;
+    if (G.opHand.length === 0 && !isMyTurn) {
+      setTimeout(function() { showGameOver(true); }, 300);
+    }
+  };
+});
 
 // ─────────────────────────────────────────────────────────────
 // AI 모드 진입
@@ -541,6 +545,16 @@ function _setBanner(msg) {
   var el=document.getElementById('_aiBanner'); if(!el) return;
   el.textContent=msg; el.style.opacity=msg?'1':'0';
 }
+
+
+// enterGame 직후 플래그 기반 안전 세팅 (patch.js 연동)
+setInterval(function() {
+  if (!window.AI || !window.AI.active) return;
+  if (!window.AI._pendingSetup) return;
+  if (!window.G || !Array.isArray(G.myHand) || typeof advancePhase !== 'function') return;
+  window.AI._pendingSetup = false;
+  _setupAI();
+}, 200);
 
 // ─────────────────────────────────────────────────────────────
 // 로비 패치
