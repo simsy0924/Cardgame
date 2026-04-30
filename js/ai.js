@@ -407,6 +407,21 @@ async function _attack(actions) {
   }
 }
 
+
+function _aiStartChainEffect(effect, afterResolve) {
+  if (!window.AI.active) { if (typeof afterResolve === 'function') afterResolve(); return; }
+  if (activeChainState && activeChainState.active) {
+    if (typeof addChainLink === 'function') addChainLink(effect);
+    if (typeof afterResolve === 'function') setTimeout(afterResolve, 200);
+    return;
+  }
+  if (typeof beginChain === 'function') beginChain(effect);
+  setTimeout(function waitChainDone() {
+    if (activeChainState && activeChainState.active) { setTimeout(waitChainDone, 150); return; }
+    if (typeof afterResolve === 'function') afterResolve();
+  }, 200);
+}
+
 // ─────────────────────────────────────────────────────────────
 // 소환 유발
 // ─────────────────────────────────────────────────────────────
@@ -424,7 +439,9 @@ async function _trigger(cardId) {
     if(fi>=0){ m(cardId,1); G.opField[fi].atk+=1;
       var wk=G.opHand.reduce(function(a,b){ return (CARDS[a.id]?CARDS[a.id].atk||0:0)<=(CARDS[b.id]?CARDS[b.id].atk||0:0)?a:b; });
       _aiDiscard(wk.id);
-      handleOpponentAction({type:'forceDiscard',count:1,reason:'수문장 펭귄',by:'guest',ts:Date.now()});
+      await new Promise(function(done){
+        _aiStartChainEffect({ type:'aiForceDiscard', label:'수문장 펭귄 ①', count:1, by:'guest' }, done);
+      });
       await _s(300);
     }
   }
@@ -443,7 +460,9 @@ async function _trigger(cardId) {
     if(t4) _aiSearch(t4.id); if(t5) _aiSearch(t5.id);
     var bti=G.opField.findIndex(function(c){ return c.id==='베이비 타이거'; });
     if(bti>=0) G.opExile.push(G.opField.splice(bti,1)[0]);
-    handleOpponentAction({type:'forceDiscard',count:1,reason:'베이비 타이거 ②',by:'guest',ts:Date.now()});
+    await new Promise(function(done){
+      _aiStartChainEffect({ type:'aiForceDiscard', label:'베이비 타이거 ②', count:1, by:'guest' }, done);
+    });
     await _s(400); renderAll();
   }
   if (cardId==='그레이트 올드 원-크툴루' && !u(cardId,1) && !G.opFieldCard) {
@@ -555,21 +574,22 @@ setTimeout(_lobby,2000);
   window.beginChain = function(effect) {
     if (!window.AI.active) { _orig.apply(this, arguments); return; }
 
-    // 체인 상태 세팅
+    var starter = (effect && effect.by) ? effect.by : myRole;
     var chainState = {
       active: true,
-      startedBy: myRole,
-      priority: getOtherRole(myRole),
+      startedBy: starter,
+      priority: getOtherRole(starter),
       passCount: 0,
-      links: [Object.assign({}, effect, { by: myRole })],
+      links: [Object.assign({}, effect, { by: starter })],
     };
     activeChainState = chainState;
     if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
     log('체인 1: ' + effect.label + ' 발동', 'mine');
     renderChainActions();
 
-    // 플레이어가 시작 → AI가 응답할지 판단
-    setTimeout(function() { _aiChainResponse(chainState); }, 500);
+    if (chainState.priority === 'guest') {
+      setTimeout(function() { _aiChainResponse(chainState); }, 500);
+    }
   };
 })();
 

@@ -97,8 +97,25 @@ function addChainLink(effect) {
 }
 
 function enqueueTriggeredEffect(effect) {
-  pendingTriggerEffects.push(effect);
+  const normalized = normalizeTriggeredEffect(effect);
+  if (!normalized) return;
+  if (normalized.optional) {
+    gameConfirm(`${normalized.label}\n이 유발효과를 발동하시겠습니까?`, (yes) => {
+      if (!yes) return;
+      pendingTriggerEffects.push(normalized);
+      setTimeout(flushTriggeredEffects, 0);
+    });
+    return;
+  }
+  pendingTriggerEffects.push(normalized);
   setTimeout(flushTriggeredEffects, 0);
+}
+
+function normalizeTriggeredEffect(effect) {
+  if (!effect || !effect.type) return null;
+  const speed = effect.speed || (String(effect.type).startsWith('quick') ? 'quick' : 'trigger');
+  const timing = effect.timing || (speed === 'quick' ? 'response' : 'queued');
+  return { mandatory: false, optional: false, ...effect, speed, timing };
 }
 
 function flushTriggeredEffects() {
@@ -214,6 +231,7 @@ function resolveChain(chainState) {
 const CHAIN_RESOLVERS = {
   // 공용
   keyFetch:                  (link) => resolveKeyFetch(link.cardId),
+  aiForceDiscard:            (link) => forceDiscard(Math.max(1, Number(link.count) || 1)),
   // 펭귄 마을
   penguinVillage1:           ()     => resolvePenguinVillage1(),
   // 꼬마 펭귄
