@@ -649,12 +649,17 @@ function _aiChainResponse(chainState) {
   // 현재 체인에서 AI가 응답할 카드 없으면 패스
   var canRespond = false;
 
-  // 눈에는 눈 체크 (서치 체인에 응답)
+  // 눈에는 눈 체크
+  // - 기존: keyFetch(서치) 체인에서만 응답
+  // - 개선: 상대가 체인 1을 열었을 때도 즉시 반응 후보로 검토
+  //   (응답 카드가 없으면 명시적으로 Pass 처리)
   var liveChain = activeChainState || chainState;
-  if ((liveChain.links || []).some(function(l) { return l.type === 'keyFetch'; })) {
-    var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
-    if (eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1)) canRespond = true;
-  }
+  var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
+  var hasHostChain = (liveChain.links || []).some(function(l) {
+    var by = l && l.by;
+    return by === myRole || by === 'host';
+  });
+  if (eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1) && hasHostChain) canRespond = true;
 
   if (!canRespond) {
     // 패스
@@ -669,6 +674,13 @@ function _aiChainResponse(chainState) {
       if (next.passCount >= 2) {
         resolveChain(next);
       } else {
+        // 플레이어가 응답 수단이 없으면 체인이 멈춘 것처럼 보일 수 있어 즉시 해결
+        if (!_playerCanRespondInChain(next)) {
+          next.passCount = 2;
+          activeChainState = next;
+          resolveChain(next);
+          return;
+        }
         renderChainActions();
         if (typeof openChainResponse === 'function') openChainResponse();
       }
@@ -696,6 +708,14 @@ function _aiChainResponse(chainState) {
     // 플레이어 응답 기회
     // 플레이어가 패스하면 resolveChain
   }
+}
+
+
+function _playerCanRespondInChain(state) {
+  if (!state || !state.active) return false;
+  if (state.priority !== 'host') return false;
+  if (usedKeyFetchInChain && usedKeyFetchInChain.host) return false;
+  return Array.isArray(G.myKeyDeck) && G.myKeyDeck.length > 0;
 }
 
 function _aiCanUse(id, n) { return !window.AI.usedFx[id+'_'+n]; }
