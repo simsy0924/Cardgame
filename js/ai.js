@@ -604,8 +604,23 @@ setTimeout(_lobby,2000);
 
   var _origPassChainPriority = window.passChainPriority;
   window.passChainPriority = function() {
-    _origPassChainPriority.apply(this, arguments);
-    if (!window.AI.active) return;
+    if (!window.AI.active) {
+      _origPassChainPriority.apply(this, arguments);
+      return;
+    }
+
+    var liveBefore = activeChainState;
+    var shouldHandleLocalAIPass = !roomRef && liveBefore && liveBefore.active && liveBefore.priority === myRole;
+
+    if (shouldHandleLocalAIPass) {
+      var next = Object.assign({}, liveBefore);
+      next.passCount = (next.passCount || 0) + 1;
+      next.priority = 'guest';
+      activeChainState = next;
+      log('체인 패스', 'system');
+    } else {
+      _origPassChainPriority.apply(this, arguments);
+    }
 
     var live = activeChainState;
     if (!live || !live.active) return;
