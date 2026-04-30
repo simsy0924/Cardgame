@@ -646,26 +646,15 @@ async function _aiChainResponse(chainState) {
   // 2. 눈에는 눈: 플레이어 서치 시 자동 트리거
   // 3. 키카드 중 응답 가능한 것
 
-  // 현재 체인에서 AI가 응답할 카드 없으면 패스
-  var canRespond = false;
-  var canEye = false;
-  var canKeyFetch = false;
-
-  // 눈에는 눈 체크 (서치 체인에 응답)
+  // 현재 체인에서 AI가 선택 가능한 응답 옵션 구성
   var liveChain = activeChainState || chainState;
-  if ((liveChain.links || []).some(function(l) { return l.type === 'keyFetch'; })) {
-    var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
-    canEye = eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1);
-  }
+  var responseOptions = _buildAIChainResponseOptions(liveChain);
+  var canRespond = responseOptions.length > 0;
 
-  // AI 키 카드 가져오기 응답
-  canKeyFetch = (liveChain.priority === 'guest') && !usedKeyFetchInChain.guest && Array.isArray(G.opKeyDeck) && G.opKeyDeck.length > 0;
-  canRespond = canEye || canKeyFetch;
-
-  var decision = { action: canRespond ? 'respond' : 'pass', use: canEye ? 'eye' : (canKeyFetch ? 'keyFetch' : 'none') };
+  var decision = { action: canRespond ? 'respond' : 'pass', optionId: canRespond ? responseOptions[0].id : 'none' };
   if (canRespond) {
     try {
-      decision = await _groqChainDecision(liveChain, { canEye: canEye, canKeyFetch: canKeyFetch });
+      decision = await _groqChainDecision(liveChain, responseOptions);
     } catch (e) {
       console.warn('[AI][chain-decision]', e.message);
     }
@@ -693,29 +682,10 @@ async function _aiChainResponse(chainState) {
   // AI가 응답 결정
   log('🤖 체인 응답!', 'opponent');
   var next = Object.assign({}, activeChainState);
+  var picked = responseOptions.find(function(opt) { return opt.id === decision.optionId; }) || responseOptions[0];
 
-  if (decision.use === 'eye' && canEye) {
-    _aiMarkUsed('눈에는 눈', 1);
-    _aiDiscard('눈에는 눈');
-    _aiDrawN(2);
-    log('🤖 눈에는 눈: 드로우 2장', 'opponent');
-    next.links.push({ type: 'aiEye', label: '눈에는 눈', by: getOtherRole(myRole) });
-  } else if (decision.use === 'keyFetch' && canKeyFetch) {
-    var picked = G.opKeyDeck[0];
-    G.opKeyDeck.splice(0, 1);
-    if (picked && picked.id) G.opHand.push({ id: picked.id, name: picked.name || (CARDS[picked.id] ? CARDS[picked.id].name : picked.id) });
-    usedKeyFetchInChain.guest = true;
-    log('🤖 체인 키카드: ' + (picked && (picked.name || picked.id) || '선택 없음'), 'opponent');
-    next.links.push({
-      type: 'keyFetch',
-      label: '키 카드 가져오기 (' + (picked && (picked.name || picked.id) || '카드') + ')',
-      cardId: picked && picked.id,
-      by: 'guest',
-    });
-  }
-
-  if (!next.links.length || next.links.length === activeChainState.links.length) {
-    log('🤖 체인 판단: 대응 가치 낮음, 패스', 'opponent');
+  if (!picked || typeof picked.apply !== 'function') {
+    log('🤖 체인 판단: 유효한 응답 옵션 없음, 패스', 'opponent');
     var passNext = Object.assign({}, activeChainState);
     passNext.passCount = (passNext.passCount || 0) + 1;
     passNext.priority = myRole;
@@ -724,6 +694,8 @@ async function _aiChainResponse(chainState) {
     if (passNext.passCount >= 2) resolveChain(passNext);
     return;
   }
+
+  picked.apply(next);
 
   next.passCount = 0;
   next.priority = myRole;
@@ -736,28 +708,24 @@ async function _aiChainResponse(chainState) {
 }
 
 
-async function _groqChainDecision(chainState, flags) {
+async function _groqChainDecision(chainState, options) {
   if (!_WORKER_URL) throw new Error('Worker URL 없음');
+  var legalOptionIds = (options || []).map(function(opt) { return opt.id; });
   var payload = {
     phase: currentPhase,
     priority: chainState.priority,
     links: (chainState.links || []).map(function(l) { return { type: l.type, label: l.label, by: l.by, cardId: l.cardId }; }),
     ai: { handCount: G.opHand.length, deckCount: window.AI.opDeck.length, keyDeckCount: (G.opKeyDeck || []).length },
-    options: {
-      canEye: !!flags.canEye,
-      canKeyFetch: !!flags.canKeyFetch,
-      legalActions: ['pass'].concat(flags.canEye ? ['eye'] : []).concat(flags.canKeyFetch ? ['keyFetch'] : []),
-    },
+    options: legalOptionIds,
   };
-
   var resp = await fetch(_WORKER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'llama-3.1-8b-instant', temperature: 0.1, max_tokens: 200,
+      model: 'llama-3.1-8b-instant', temperature: 0.1, max_tokens: 180,
       response_format: { type: 'json_object' },
       messages: [
-        { role: 'system', content: '당신은 카드게임 체인 응답 AI. 룰을 지켜 불법행동 금지. legalActions 중 하나만 선택. JSON만 반환: {"action":"pass|respond","use":"none|eye|keyFetch","reason":"짧게"}' },
+        { role: 'system', content: '당신은 카드게임 체인 응답 AI. 반드시 룰을 지키고 options 안에서만 1개 선택. JSON만 반환: {"action":"pass|respond","optionId":"id|none","reason":"짧게"}' },
         { role: 'user', content: JSON.stringify(payload) },
       ],
     }),
@@ -767,10 +735,47 @@ async function _groqChainDecision(chainState, flags) {
   var t = (d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '{}';
   var m = t.replace(/```json|```/g,'').trim().match(/\{[\s\S]*\}/);
   var parsed = JSON.parse(m ? m[0] : '{}');
-  var legal = payload.options.legalActions;
-  var use = legal.indexOf(parsed.use) >= 0 ? parsed.use : 'none';
-  var action = parsed.action === 'respond' && use !== 'none' ? 'respond' : 'pass';
-  return { action: action, use: use, reason: parsed.reason || '' };
+  var optionId = legalOptionIds.indexOf(parsed.optionId) >= 0 ? parsed.optionId : 'none';
+  var action = parsed.action === 'respond' && optionId !== 'none' ? 'respond' : 'pass';
+  return { action: action, optionId: optionId, reason: parsed.reason || '' };
+}
+
+function _buildAIChainResponseOptions(chainState) {
+  var opts = [];
+  var hasKeyFetchLink = (chainState.links || []).some(function(l) { return l.type === 'keyFetch'; });
+
+  var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
+  if (hasKeyFetchLink && eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1)) {
+    opts.push({
+      id: 'hand_eye',
+      label: '눈에는 눈',
+      apply: function(next) {
+        _aiMarkUsed('눈에는 눈', 1);
+        _aiDiscard('눈에는 눈');
+        _aiDrawN(2);
+        log('🤖 눈에는 눈: 드로우 2장', 'opponent');
+        next.links.push({ type: 'aiEye', label: '눈에는 눈', by: 'guest' });
+      },
+    });
+  }
+
+  var canKeyFetch = (chainState.priority === 'guest') && !usedKeyFetchInChain.guest && Array.isArray(G.opKeyDeck) && G.opKeyDeck.length > 0;
+  if (canKeyFetch) {
+    opts.push({
+      id: 'chain_key_fetch',
+      label: '키 카드 가져오기',
+      apply: function(next) {
+        var picked = G.opKeyDeck[0];
+        G.opKeyDeck.splice(0, 1);
+        if (picked && picked.id) G.opHand.push({ id: picked.id, name: picked.name || (CARDS[picked.id] ? CARDS[picked.id].name : picked.id) });
+        usedKeyFetchInChain.guest = true;
+        log('🤖 체인 키카드: ' + (picked && (picked.name || picked.id) || '선택 없음'), 'opponent');
+        next.links.push({ type: 'keyFetch', label: '키 카드 가져오기 (' + (picked && (picked.name || picked.id) || '카드') + ')', cardId: picked && picked.id, by: 'guest' });
+      },
+    });
+  }
+
+  return opts;
 }
 
 function _aiCanUse(id, n) { return !window.AI.usedFx[id+'_'+n]; }
