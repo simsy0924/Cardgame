@@ -12,8 +12,7 @@ function beginChain(effect) {
   log(`체인 1: ${effect.label} 발동`, 'mine');
 
   if (!roomRef) {
-    const localState = { ...chainState, passCount: 2 };
-    resolveChain(localState);
+    _resolveLocalChainWithAI(chainState);
     return;
   }
 
@@ -90,9 +89,7 @@ function addChainLink(effect) {
   log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
 
   if (!roomRef) {
-    // 로컬: 상대 패스 자동 처리 → 즉시 해결
-    next.passCount = 2;
-    resolveChain(next);
+    _resolveLocalChainWithAI(next);
     return;
   }
   roomRef.child('chainState').set(next);
@@ -119,6 +116,39 @@ function flushTriggeredEffects() {
 
   beginChain(queued[0]);
   queued.slice(1).forEach(e => addChainLink(e));
+}
+
+function _resolveLocalChainWithAI(chainState) {
+  const next = { ...chainState, links: [...(chainState.links || [])] };
+  const isAIMode = !!(window.AI && window.AI.active);
+  const aiRole = 'guest';
+  const aiHasPriority = next.priority === aiRole;
+  const aiCanChainKeyFetch = !!(isAIMode && aiHasPriority && !usedKeyFetchInChain[aiRole]);
+  if (aiCanChainKeyFetch) {
+    const aiKeyDeck = (G.opKeyDeck || []).filter(c => c && c.id);
+    if (aiKeyDeck.length > 0) {
+      const picked = aiKeyDeck[0];
+      next.links.push({
+        type: 'keyFetch',
+        label: `키 카드 가져오기 (${picked.name || picked.id})`,
+        cardId: picked.id,
+        by: aiRole,
+      });
+
+      const opDeck = Array.isArray(G.opKeyDeck) ? [...G.opKeyDeck] : [];
+      const deckIdx = opDeck.findIndex(c => c && c.id === picked.id);
+      if (deckIdx >= 0) {
+        const [fetchedCard] = opDeck.splice(deckIdx, 1);
+        G.opKeyDeck = opDeck;
+        G.opHand = [...(G.opHand || []), fetchedCard];
+      }
+
+      usedKeyFetchInChain[aiRole] = true;
+      log(`체인 ${next.links.length}: 🤖 키 카드 가져오기 (${picked.name || picked.id})`, 'opponent');
+    }
+  }
+  next.passCount = 2;
+  resolveChain(next);
 }
 
 function activateQuickEffect(effect) {
