@@ -674,6 +674,13 @@ function _aiChainResponse(chainState) {
       if (next.passCount >= 2) {
         resolveChain(next);
       } else {
+        // 플레이어가 응답 수단이 없으면 체인이 멈춘 것처럼 보일 수 있어 즉시 해결
+        if (!_playerCanRespondInChain(next)) {
+          next.passCount = 2;
+          activeChainState = next;
+          resolveChain(next);
+          return;
+        }
         renderChainActions();
         if (typeof openChainResponse === 'function') openChainResponse();
       }
@@ -701,6 +708,14 @@ function _aiChainResponse(chainState) {
     // 플레이어 응답 기회
     // 플레이어가 패스하면 resolveChain
   }
+}
+
+
+function _playerCanRespondInChain(state) {
+  if (!state || !state.active) return false;
+  if (state.priority !== 'host') return false;
+  if (usedKeyFetchInChain && usedKeyFetchInChain.host) return false;
+  return Array.isArray(G.myKeyDeck) && G.myKeyDeck.length > 0;
 }
 
 function _aiCanUse(id, n) { return !window.AI.usedFx[id+'_'+n]; }
