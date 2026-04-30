@@ -1,5 +1,17 @@
 // penguin.js — 펭귄 테마 카드 효과 엔진
 
+
+function queuePenguinTrigger(effect, opts = {}) {
+  const payload = {
+    speed: 'trigger',
+    timing: opts.immediate ? 'immediate' : 'queued',
+    optional: opts.optional !== false,
+    mandatory: opts.optional === false,
+    ...effect,
+  };
+  enqueueTriggeredEffect(payload);
+}
+
 // ─────────────────────────────────────────────
 // 펭귄 마을 ①
 // ─────────────────────────────────────────────
@@ -16,11 +28,8 @@ function triggerKkomaPenguin(from) {
   if (!canUseEffect('꼬마 펭귄', 2, 2)) return;
   const targets = findAllInDeck(c => isPenguinMonster(c.id));
   if (targets.length === 0) return;
-  gameConfirm('꼬마 펭귄 ②\n덱에서 펭귄 몬스터 1장을 소환합니까?', (yes) => {
-    if (!yes) return;
-    markEffectUsed('꼬마 펭귄', 2);
-    enqueueTriggeredEffect({ type: 'triggerKkomaPenguin', label: '꼬마 펭귄 ②' });
-  });
+  markEffectUsed('꼬마 펭귄', 2);
+  queuePenguinTrigger({ type: 'triggerKkomaPenguin', label: '꼬마 펭귄 ②' }, { optional: true, immediate: true });
 }
 
 function resolveKkomaPenguin() {
@@ -38,10 +47,7 @@ function triggerPenguinBubu(from) {
   if (from !== 'deck' || !canUseEffect('펭귄 부부', 1)) return;
   const bubu = [...G.myField].reverse().find(c => c.id === '펭귄 부부' && c.summonedFrom === 'deck');
   if (bubu) bubu.bubuTriggerReady = true;
-  gameConfirm('펭귄 부부 ①\n덱에서 펭귄 카드를 최대 2장 패에 넣겠습니까?', (yes) => {
-    if (!yes) return;
-    enqueueTriggeredEffect({ type: 'triggerPenguinBubu1', label: '펭귄 부부 ①' });
-  });
+  queuePenguinTrigger({ type: 'triggerPenguinBubu1', label: '펭귄 부부 ①' }, { optional: true, immediate: true });
 }
 
 function resolvePenguinBubu1() {
@@ -377,10 +383,7 @@ function resolvePenguinGlory2() {
 // ─────────────────────────────────────────────
 function triggerPenguinHero(from) {
   if (!canUseEffect('펭귄 용사', 1)) return;
-  gameConfirm('펭귄 용사 ①\n덱에서 펭귄 카드 서치 + 펭귄 몬스터 소환 + 패 1장 버리기를 발동합니까?', (yes) => {
-    if (!yes) return;
-    enqueueTriggeredEffect({ type: 'triggerPenguinHero1', label: '펭귄 용사 ①' });
-  });
+  queuePenguinTrigger({ type: 'triggerPenguinHero1', label: '펭귄 용사 ①' }, { optional: true, immediate: true });
 }
 
 function resolvePenguinHero1() {
@@ -438,10 +441,7 @@ function resolvePenguinHero2() {
 }
 
 function autoTriggerHeroGrave() {
-  gameConfirm('펭귄 용사 ③\n묘지에서 다시 소환하고 펭귄 공격력을 1씩 올립니까?', (yes) => {
-    if (!yes) return;
-    enqueueTriggeredEffect({ type: 'triggerPenguinHero3', label: '펭귄 용사 ③' });
-  });
+  queuePenguinTrigger({ type: 'triggerPenguinHero3', label: '펭귄 용사 ③' }, { optional: true, immediate: true });
 }
 
 function resolvePenguinHero3() {
@@ -537,10 +537,7 @@ function resolvePenguinForever2() {
 // ─────────────────────────────────────────────
 function triggerPenguinLegend(from) {
   if (!canUseEffect('펭귄의 전설', 1)) return;
-  gameConfirm('펭귄의 전설 ①\n묘지에서 꼬마 펭귄을 최대 2장 소환합니까?', (yes) => {
-    if (!yes) return;
-    enqueueTriggeredEffect({ type: 'triggerPenguinLegend1', label: '펭귄의 전설 ①' });
-  });
+  queuePenguinTrigger({ type: 'triggerPenguinLegend1', label: '펭귄의 전설 ①' }, { optional: true, immediate: true });
 }
 
 function resolvePenguinLegend1() {
@@ -612,10 +609,7 @@ function resolvePenguinWizard1() {
 
 function triggerPenguinWizard(from) {
   if (!canUseEffect('펭귄 마법사', 2, 2) || G.opField.length === 0) return;
-  gameConfirm('펭귄 마법사 ②\n패를 버리고 상대 몬스터를 제외합니까?', (yes) => {
-    if (!yes) return;
-    enqueueTriggeredEffect({ type: 'triggerPenguinWizard2', label: '펭귄 마법사 ②' });
-  });
+  queuePenguinTrigger({ type: 'triggerPenguinWizard2', label: '펭귄 마법사 ②' }, { optional: true, immediate: true });
 }
 
 function resolvePenguinWizard2() {
