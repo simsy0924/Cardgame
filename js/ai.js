@@ -15,6 +15,7 @@ window.AI = {
   deckPreset: null,
   usedFx:     {},
   attacked:   new Set(),
+  chainMemory: { respondedSig: null },
 };
 
 var _s = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
@@ -113,6 +114,7 @@ function _buildAIDeck() {
   }));
   window.AI.usedFx  = {};
   window.AI.attacked = new Set();
+  window.AI.chainMemory = { respondedSig: null };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -570,6 +572,7 @@ function _aiStartChainEffect(effect, afterResolve) {
 
   // AI가 새 체인1을 여는 경우 — 직접 체인 상태 생성 후 플레이어 우선 응답
   var chainState = {
+    chainId: (typeof nextChainId === 'function') ? nextChainId() : ('chain_' + Date.now()),
     active: true,
     startedBy: getOtherRole(myRole),
     priority: myRole, // 플레이어가 먼저 응답
@@ -938,6 +941,12 @@ setTimeout(_lobby,2000);
       _origPassChainPriority.apply(this, arguments);
     }
   };
+
+  var _origResolveChain = window.resolveChain;
+  window.resolveChain = function(chainState) {
+    if (window.AI && window.AI.chainMemory) window.AI.chainMemory.respondedSig = null;
+    return _origResolveChain.apply(this, arguments);
+  };
 })();
 
 // ─────────────────────────────────────────────────────────────
@@ -955,7 +964,7 @@ function _registerDefaultAIChainResponses() {
     effectNum: 1,
     score: 40,
     condition: function(ctx) {
-      return ctx.hasHostChain;
+      return ctx.analysis && ctx.analysis.hasEyeForEyeTarget;
     },
     activate: function(ctx) {
       _aiMarkUsed('눈에는 눈', 1);
@@ -985,6 +994,11 @@ function _aiAnalyzeChainState(chainState) {
   var hostLinks = links.filter(function(l) { return l && (l.by === myRole || l.by === 'host'); });
   var aiLinks = links.filter(function(l) { return l && (l.by !== myRole && l.by !== 'host'); });
 
+  var hasEyeForEyeTarget = hostLinks.some(function(l) {
+    var t = String((l && l.type) || '');
+    return t === 'keyFetch' || t === 'aiSearch' || t === 'themeEffect' || t.indexOf('search') >= 0;
+  });
+
   var dangerous = hostLinks.some(function(l) {
     var t = String((l && l.type) || '');
     return t.indexOf('negate') >= 0 || t.indexOf('grave') >= 0 || t.indexOf('exile') >= 0 || t.indexOf('destroy') >= 0;
@@ -997,6 +1011,7 @@ function _aiAnalyzeChainState(chainState) {
     hostLinkCount: hostLinks.length,
     aiLinkCount: aiLinks.length,
     dangerousHostLink: dangerous,
+    hasEyeForEyeTarget: hasEyeForEyeTarget,
     aiFieldCount: G.opField.length,
     myFieldCount: G.myField.length,
     aiHandCount: G.opHand.length,
@@ -1017,10 +1032,22 @@ function _aiScoreChainOption(entry, ctx, handCard) {
   return base;
 }
 
+function _canAIRespondNow(state) {
+  if (!state || !state.active) return false;
+  if (state.priority !== 'guest') return false;
+  var links = state.links || [];
+  if (!links.length) return false;
+  var last = links[links.length - 1] || {};
+  var opponentLinkedLast = last.by === myRole || last.by === 'host';
+  var opponentPassedToAI = (state.passCount || 0) > 0;
+  return opponentLinkedLast || opponentPassedToAI;
+}
+
 function _collectAIChainOptions(chainState) {
   var options = [];
   var liveChain = chainState || activeChainState;
   if (!liveChain || !liveChain.active) return options;
+  if (!_canAIRespondNow(liveChain)) return options;
 
   var hasHostChain = (liveChain.links || []).some(function(l) {
     var by = l && l.by;
@@ -1050,9 +1077,30 @@ function _collectAIChainOptions(chainState) {
   return options;
 }
 
+
+function _chainSignature(state) {
+  if (!state || !state.active) return '';
+  var links = state.links || [];
+  var chainId = String(state.chainId || '');
+  return chainId + '|' + links.map(function(l){ return String((l && l.by) || '') + ':' + String((l && l.type) || ''); }).join('|') + '#p' + String(state.priority || '') + '#c' + String(state.passCount || 0);
+}
+
+function _markAIChainHandled(state) {
+  if (!window.AI) return;
+  if (!window.AI.chainMemory) window.AI.chainMemory = { respondedSig: null };
+  window.AI.chainMemory.respondedSig = _chainSignature(state);
+}
+
+function _alreadyHandledChainState(state) {
+  if (!window.AI || !window.AI.chainMemory) return false;
+  return window.AI.chainMemory.respondedSig === _chainSignature(state);
+}
+
 function _aiChainResponse(chainState) {
   if (!window.AI.active) return;
   if (!activeChainState || !activeChainState.active) return;
+  if (!_canAIRespondNow(activeChainState)) return;
+  if (_alreadyHandledChainState(activeChainState)) return;
 
   var options = _collectAIChainOptions(activeChainState || chainState);
   options.sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
@@ -1066,6 +1114,7 @@ function _aiChainResponse(chainState) {
       next.priority = myRole;
       log('🤖 AI: 패스', 'opponent');
       activeChainState = next;
+      _markAIChainHandled(next);
 
       if (next.passCount >= 2) {
         resolveChain(next);
@@ -1092,6 +1141,7 @@ function _aiChainResponse(chainState) {
     next.passCount = 0;
     next.priority = myRole;
     activeChainState = next;
+    _markAIChainHandled(next);
     if (roomRef) roomRef.child('chainState').set(next);
     renderChainActions();
     renderAll();
