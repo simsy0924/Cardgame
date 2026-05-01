@@ -5,13 +5,17 @@ function nextChainId() {
   return 'chain_' + String(window._CHAIN_SEQ);
 }
 
+function getOpponentRole(role) {
+  return role === 'host' ? 'guest' : 'host';
+}
+
 function beginChain(effect) {
   const chainState = {
     chainId: nextChainId(),
     active: true,
     startedBy: myRole,
-    // 발동자 본인에게 먼저 우선권 — 추가 체인 여부 결정 후 상대에게 넘김
-    priority: myRole,
+    // 마지막 발동자의 상대에게 우선권
+    priority: getOpponentRole(myRole),
     passCount: 0,
     links: [{ ...effect, by: myRole }],
   };
@@ -20,8 +24,6 @@ function beginChain(effect) {
   log(`체인 1: ${effect.label} 발동`, 'mine');
 
   if (!roomRef) {
-    // 로컬/AI: 발동자(플레이어)에게 응답 기회 부여
-    // renderChainActions()로 응답/패스 버튼 표시 → 플레이어가 패스하면 AI로 넘어감
     renderChainActions();
     renderAll();
     return;
@@ -131,7 +133,7 @@ function passChainPriority() {
 
   const next = { ...activeChainState };
   next.passCount = (next.passCount || 0) + 1;
-  next.priority = myRole === 'host' ? 'guest' : 'host';
+  next.priority = getOpponentRole(myRole);
   log('체인 패스', 'system');
 
   if (next.passCount >= 2) {
@@ -157,16 +159,21 @@ function passChainPriority() {
   syncClockRunState(next.priority);
 }
 
-function addChainLink(effect) {
+function addChainLink(effect, options = {}) {
+  const force = !!options.force;
   if (!activeChainState || !activeChainState.active) return;
+  if (!force && activeChainState.priority !== myRole) {
+    notify('현재 체인 우선권은 상대에게 있습니다.');
+    return;
+  }
   if (effect.type === 'keyFetch' && usedKeyFetchInChain[myRole]) {
     notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
     return;
   }
   const next = { ...activeChainState };
   next.links = [...(next.links || []), { ...effect, by: myRole }];
-  // 추가한 본인에게 먼저 우선권 → 추가 체인 여부 결정 후 상대에게 넘김
-  next.priority = myRole;
+  // 링크를 추가한 직후에는 상대에게 우선권
+  next.priority = getOpponentRole(myRole);
   next.passCount = 0;
   activeChainState = next;
   if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
@@ -214,7 +221,8 @@ function flushTriggeredEffects() {
   // roomRef 없으면 beginChain 내부에서 _resolveLocalChainWithAI가 호출되므로
   // 체인블록이 형성된 후 즉시 해결됨 (유발효과도 정식 체인블록을 형성)
   beginChain(queued[0]);
-  queued.slice(1).forEach(e => addChainLink(e));
+  // 동시 유발효과 묶음은 체인 구성 단계에서 우선권 검사 없이 링크를 적재
+  queued.slice(1).forEach(e => addChainLink(e, { force: true }));
 }
 
 // _resolveLocalChainWithAI는 제거됨 — beginChain이 발동자에게 먼저 우선권을 주므로
