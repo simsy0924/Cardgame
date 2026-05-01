@@ -602,81 +602,187 @@ function _aiStartChainEffect(effect, afterResolve) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 소환 유발
+// AI 소환 유발 — 카드별 실제 효과를 AI 맥락(opField/opHand/opGrave)으로 실행
 // ─────────────────────────────────────────────────────────────
-async function _trigger(cardId) {
-  var AI = window.AI;
-  var u = function(id,n){ return !!AI.usedFx[id+'_'+n]; };
-  var m = function(id,n){ AI.usedFx[id+'_'+n]=1; };
+// ─────────────────────────────────────────────────────────────
+// AI 소환 유발 레지스트리
+// 새 카드 추가 시: registerAISummonTrigger('카드ID', async function(ctx) { ... })
+// ctx: { ai, u(id,n), m(id,n), findInDeck(pred), deckToField(id),
+//         deckToHand(id), deckToFieldCard(id), chain(effect) }
+// ─────────────────────────────────────────────────────────────
+window.AI_SUMMON_TRIGGERS = window.AI_SUMMON_TRIGGERS || {};
 
-  if (cardId==='꼬마 펭귄' && !u(cardId,2)) {
-    var t=AI.opDeck.find(function(c){ return CARDS[c.id]&&CARDS[c.id].theme==='펭귄'&&CARDS[c.id].cardType==='monster'; });
-    if(t){
-      m(cardId,2);
-      await new Promise(function(done) {
-        _aiStartChainEffect({ type:'aiSummonDeck', label:'꼬마 펭귄 ②', cardId:t.id }, done);
-      });
-      await _s(300); renderAll();
-    }
-  }
-  if (cardId==='수문장 펭귄' && !u(cardId,1) && G.opHand.length>0) {
-    var fi=G.opField.findIndex(function(c){ return c.id==='수문장 펭귄'; });
-    if(fi>=0){ m(cardId,1); G.opField[fi].atk+=1;
-      var wk=G.opHand.reduce(function(a,b){ return (CARDS[a.id]?CARDS[a.id].atk||0:0)<=(CARDS[b.id]?CARDS[b.id].atk||0:0)?a:b; });
-      _aiDiscard(wk.id);
-      await new Promise(function(done){
-        _aiStartChainEffect({ type:'aiForceDiscard', label:'수문장 펭귄 ①', count:1 }, done);
-      });
-      await _s(300);
-    }
-  }
-  if (cardId==='젊은 라이온' && !u(cardId,2)) {
-    var t2=AI.opDeck.find(function(c){ return c.id.includes('사자')||(CARDS[c.id]&&CARDS[c.id].theme==='라이온'); });
-    if(t2){
-      m(cardId,2);
-      await new Promise(function(done) {
-        _aiStartChainEffect({ type:'aiSearch', label:'젊은 라이온 ②', cardId:t2.id }, done);
-      });
-      await _s(300);
-    }
-  }
-  if (cardId==='젊은 타이거' && !u(cardId,2)) {
-    var t3=AI.opDeck.find(function(c){ return CARDS[c.id]&&CARDS[c.id].theme==='타이거'&&CARDS[c.id].cardType==='monster'; });
-    if(t3){
-      m(cardId,2);
-      await new Promise(function(done) {
-        _aiStartChainEffect({ type:'aiSummonDeck', label:'젊은 타이거 ②', cardId:t3.id }, done);
-      });
-      await _s(400); renderAll();
-    }
-  }
-  if (cardId==='베이비 타이거' && !u(cardId,1)) {
-    m(cardId,1);
-    var t4=AI.opDeck.find(function(c){ return CARDS[c.id]&&CARDS[c.id].theme==='타이거'; });
-    var t5=AI.opDeck.find(function(c){ return c.id.includes('호랑이'); });
-    if(t4) _aiSearch(t4.id); if(t5) _aiSearch(t5.id);
-    var bti=G.opField.findIndex(function(c){ return c.id==='베이비 타이거'; });
-    if(bti>=0) G.opExile.push(G.opField.splice(bti,1)[0]);
-    await new Promise(function(done){
-      _aiStartChainEffect({ type:'aiForceDiscard', label:'베이비 타이거 ②', count:1 }, done);
-    });
-    await _s(400); renderAll();
-  }
-  if (cardId==='그레이트 올드 원-크툴루' && !u(cardId,1) && !G.opFieldCard) {
-    var rl=AI.opDeck.find(function(c){ return c.id==='태평양 속 르뤼에'; });
-    if(rl){
-      m(cardId,1);
-      AI.opDeck.splice(AI.opDeck.findIndex(function(c){ return c.id==='태평양 속 르뤼에'; }),1);
-      G.opDeckCount=AI.opDeck.length;
-      await new Promise(function(done) {
-        _aiStartChainEffect({ type:'aiFieldCard', label:'크툴루 ①: 르뤼에 발동', cardId:'태평양 속 르뤼에' }, done);
-      });
-      await _s(300); renderAll();
-    }
-  }
+function registerAISummonTrigger(cardId, fn) {
+  window.AI_SUMMON_TRIGGERS[cardId] = fn;
 }
 
-// ─────────────────────────────────────────────────────────────
+function _buildAICtx(AI) {
+  var u = function(id,n){ return !!AI.usedFx[id+'_'+n]; };
+  var m = function(id,n){ AI.usedFx[id+'_'+n]=1; };
+  var findInDeck = function(pred){ return AI.opDeck.find(pred); };
+  var deckToField = function(cId){
+    var idx=AI.opDeck.findIndex(function(c){return c.id===cId;});
+    if(idx<0||G.opField.length>=maxFieldSlots()) return false;
+    AI.opDeck.splice(idx,1); G.opDeckCount=AI.opDeck.length;
+    var cd=CARDS[cId]||{};
+    G.opField.push({id:cId,name:cd.name||cId,atk:cd.atk||0,atkBase:cd.atk||0});
+    log('🤖 덱→소환: '+(cd.name||cId),'opponent');
+    handleOpponentAction({type:'summon',cardId:cId,by:'guest',ts:Date.now()});
+    return true;
+  };
+  var deckToHand = function(cId){
+    var idx=AI.opDeck.findIndex(function(c){return c.id===cId;});
+    if(idx<0) return false;
+    AI.opDeck.splice(idx,1); G.opDeckCount=AI.opDeck.length;
+    var cd=CARDS[cId]||{};
+    G.opHand.push({id:cId,name:cd.name||cId});
+    log('🤖 서치: '+(cd.name||cId),'opponent');
+    return true;
+  };
+  var deckToFieldCard = function(cId){
+    var fi=AI.opDeck.findIndex(function(c){return c.id===cId;});
+    if(fi>=0){AI.opDeck.splice(fi,1);G.opDeckCount=AI.opDeck.length;}
+    else{var gi=G.opGrave.findIndex(function(c){return c.id===cId;});if(gi>=0)G.opGrave.splice(gi,1);else return false;}
+    var cd=CARDS[cId]||{};
+    G.opFieldCard={id:cId,name:cd.name||cId};
+    handleOpponentAction({type:'fieldCard',cardId:cId,by:'guest',ts:Date.now()});
+    log('🤖 필드 발동: '+(cd.name||cId),'opponent');
+    return true;
+  };
+  var chain = function(effect){
+    return new Promise(function(done){_aiStartChainEffect(effect,done);});
+  };
+  return {ai:AI,u,m,findInDeck,deckToField,deckToHand,deckToFieldCard,chain};
+}
+
+async function _trigger(cardId) {
+  var fn = window.AI_SUMMON_TRIGGERS[cardId];
+  if (fn) await fn(_buildAICtx(window.AI));
+  renderAll();
+}
+
+// ── 기본 등록 ──
+(function(){
+  var D=function(ms){return new Promise(function(r){setTimeout(r,ms);});};
+
+  registerAISummonTrigger('꼬마 펭귄', async function(c){
+    if(c.u('꼬마 펭귄',2)) return;
+    var t=c.findInDeck(function(x){var cd=CARDS[x.id];return cd&&cd.theme==='펭귄'&&cd.cardType==='monster';});
+    if(!t) return; c.m('꼬마 펭귄',2);
+    await c.chain({type:'aiSummonDeck',label:'꼬마 펭귄 ②',cardId:t.id}); await D(300);
+  });
+  registerAISummonTrigger('수문장 펭귄', async function(c){
+    if(c.u('수문장 펭귄','s1')||G.opHand.length===0) return;
+    var fi=G.opField.findIndex(function(x){return x.id==='수문장 펭귄';});
+    if(fi<0) return;
+    c.ai.usedFx['수문장 펭귄_s1']=1; G.opField[fi].atk+=1;
+    var wk=G.opHand.reduce(function(a,b){return(CARDS[a.id]?.atk||0)<=(CARDS[b.id]?.atk||0)?a:b;});
+    _aiDiscard(wk.id);
+    await c.chain({type:'aiForceDiscard',label:'수문장 펭귄 ①',count:1}); await D(300);
+  });
+  registerAISummonTrigger('펭귄 용사', async function(c){
+    if(c.u('펭귄 용사',1)) return; c.m('펭귄 용사',1);
+    var ph=c.findInDeck(function(x){var cd=CARDS[x.id];return cd&&cd.theme==='펭귄';});
+    var pm=c.findInDeck(function(x){var cd=CARDS[x.id];return cd&&cd.theme==='펭귄'&&cd.cardType==='monster'&&x.id!==ph?.id;});
+    await c.chain({type:'aiPenguinHero1',label:'펭귄 용사 ①',searchId:ph?.id,summonId:pm?.id}); await D(300);
+  });
+  registerAISummonTrigger('펭귄의 전설', async function(c){
+    if(c.u('펭귄의 전설',1)) return;
+    var g=G.opGrave.filter(function(x){return x.id==='꼬마 펭귄';}).slice(0,2);
+    if(!g.length) return; c.m('펭귄의 전설',1);
+    await c.chain({type:'aiPenguinLegend1',label:'펭귄의 전설 ①',targets:g.map(function(x){return x.id;})}); await D(300);
+  });
+  registerAISummonTrigger('펭귄 마법사', async function(c){
+    if(c.u('펭귄 마법사',2)||G.opHand.length===0||G.myField.length===0) return;
+    c.m('펭귄 마법사',2);
+    var dc=Math.min(3,G.opHand.length,G.myField.length);
+    for(var i=0;i<dc;i++){if(G.opHand.length>0)_aiDiscard(G.opHand[G.opHand.length-1].id);}
+    await c.chain({type:'aiExileOpField',label:'펭귄 마법사 ②',count:dc}); await D(300);
+  });
+  registerAISummonTrigger('그레이트 올드 원-크툴루', async function(c){
+    if(c.u('그레이트 올드 원-크툴루',1)||G.opFieldCard) return;
+    var t=c.findInDeck(function(x){return x.id==='태평양 속 르뤼에';});
+    if(!t) return; c.m('그레이트 올드 원-크툴루',1);
+    await c.chain({type:'aiFieldCard',label:'크툴루 ①',cardId:'태평양 속 르뤼에'}); await D(300);
+  });
+  registerAISummonTrigger('그레이트 올드 원-크투가', async function(c){
+    if(c.u('그레이트 올드 원-크투가',2)) return; c.m('그레이트 올드 원-크투가',2);
+    var t=c.findInDeck(function(x){var cd=CARDS[x.id];return cd&&cd.name&&cd.name.startsWith('그레이트 올드 원');});
+    if(t){await c.chain({type:'aiSummonDeck',label:'크투가 ②',cardId:t.id});await D(300);}
+  });
+  registerAISummonTrigger('그레이트 올드 원-크아이가', async function(c){
+    if(c.u('그레이트 올드 원-크아이가',2)||G.myField.length===0) return;
+    c.m('그레이트 올드 원-크아이가',2);
+    await c.chain({type:'aiGraveOpField',label:'크아이가 ②',count:Math.min(2,G.myField.length)}); await D(300);
+  });
+  registerAISummonTrigger('엘더 갓-크타니트', async function(c){
+    if(c.u('엘더 갓-크타니트',2)) return; c.m('엘더 갓-크타니트',2);
+    _aiDrawN(1);
+    await c.chain({type:'aiForceDiscard',label:'크타니트 ②',count:1}); await D(300);
+  });
+  registerAISummonTrigger('젊은 라이온', async function(c){
+    if(c.u('젊은 라이온',2)) return;
+    var t=c.findInDeck(function(x){return x.id.includes('사자')||(CARDS[x.id]&&CARDS[x.id].theme==='라이온');});
+    if(!t) return; c.m('젊은 라이온',2);
+    await c.chain({type:'aiSearch',label:'젊은 라이온 ②',cardId:t.id}); await D(300);
+  });
+  registerAISummonTrigger('에이스 라이온', async function(c){
+    if(c.u('에이스 라이온',1)||G.myField.length===0) return; c.m('에이스 라이온',1);
+    await c.chain({type:'aiGraveOpField',label:'에이스 라이온 ①',count:1}); await D(300);
+  });
+  registerAISummonTrigger('라이온 킹', async function(c){
+    if(c.u('라이온 킹',2)||G.myField.length===0) return; c.m('라이온 킹',2);
+    await c.chain({type:'aiGraveAllOpField',label:'라이온 킹 ②'}); await D(300);
+  });
+  registerAISummonTrigger('젊은 타이거', async function(c){
+    if(c.u('젊은 타이거',2)) return;
+    var t=c.findInDeck(function(x){var cd=CARDS[x.id];return cd&&cd.theme==='타이거'&&cd.cardType==='monster';});
+    if(!t) return; c.m('젊은 타이거',2);
+    await c.chain({type:'aiSummonDeck',label:'젊은 타이거 ②',cardId:t.id}); await D(400);
+  });
+  registerAISummonTrigger('에이스 타이거', async function(c){
+    if(c.u('에이스 타이거',1)) return; c.m('에이스 타이거',1);
+    if(G.opField.length>0){var wk=G.opField.reduce(function(a,b){return(a.atk||0)<=(b.atk||0)?a:b;});sendToGrave(wk.id,'field');}
+    if(G.myField.length>0) await c.chain({type:'aiGraveOpField',label:'에이스 타이거 ①',count:1});
+    await D(300);
+  });
+  registerAISummonTrigger('타이거 킹', async function(c){
+    if(c.u('타이거 킹',2)||G.myField.length===0) return; c.m('타이거 킹',2);
+    await c.chain({type:'aiExileOpField',label:'타이거 킹 ②',count:Math.min(3,G.myField.length)}); await D(300);
+  });
+  registerAISummonTrigger('베이비 라이거', async function(c){
+    if(c.u('베이비 라이거',2)) return;
+    var t=c.findInDeck(function(x){return x.id==='모두의 자연';});
+    if(!t) return; c.m('베이비 라이거',2);
+    await c.chain({type:'aiFieldCard',label:'베이비 라이거 ②',cardId:'모두의 자연'}); await D(300);
+  });
+  registerAISummonTrigger('젊은 라이거', async function(c){
+    if(c.u('젊은 라이거',2)) return;
+    var t=c.findInDeck(function(x){var cd=CARDS[x.id];return cd&&cd.theme==='라이거';});
+    if(!t) return; c.m('젊은 라이거',2);
+    await c.chain({type:'aiSearch',label:'젊은 라이거 ②',cardId:t.id}); await D(300);
+  });
+  registerAISummonTrigger('에이스 라이거', async function(c){
+    if(c.u('에이스 라이거',2)) return;
+    var cnt=Math.min(G.opField.length,G.myHand.length);
+    if(!cnt) return; c.m('에이스 라이거',2);
+    await c.chain({type:'aiReturnOpHand',label:'에이스 라이거 ②',count:cnt}); await D(300);
+  });
+  registerAISummonTrigger('라이거 킹', async function(c){
+    if(c.u('라이거 킹',2)||G.myField.length===0) return; c.m('라이거 킹',2);
+    await c.chain({type:'aiExileAllOpField',label:'라이거 킹 ②'}); await D(300);
+  });
+  registerAISummonTrigger('베이비 마피아', async function(c){
+    if(c.u('베이비 마피아',2)) return;
+    var other=G.opField.some(function(x){return x.id!=='베이비 마피아'&&CARDS[x.id]?.theme==='마피아';});
+    if(!other) return;
+    var md=c.findInDeck(function(x){return x.id==='마피아의 도시';})||G.opGrave.find(function(x){return x.id==='마피아의 도시';});
+    if(!md) return; c.m('베이비 마피아',2);
+    await c.chain({type:'aiFieldCard',label:'베이비 마피아 ②',cardId:'마피아의 도시'}); await D(300);
+  });
+})();
+
+
 // AI 턴 종료
 // ─────────────────────────────────────────────────────────────
 function _aiEnd() {
