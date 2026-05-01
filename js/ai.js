@@ -34,15 +34,35 @@ window.AI = {
 };
 
 
-function _setAIThinkingState(on, reason) {
+function _setAIChainBanner(on, message) {
   if (!window.AI) return;
-  if (on) _setBanner(reason || '🤖 체인 대응 고민 중...');
+  if (on) _setBanner(message || '🤖 체인 대응 고민 중...');
   else if (!window.AI.thinking) _setBanner('');
 }
 
-/* 슬립 유틸 */
-var _s = ms => new Promise(r => setTimeout(r, ms));
 
+    _setAIChainBanner(false);
+  _setAIChainBanner(true, '🤖 체인 대응 고민 중...');
+  if (!live || !live.active) { _setAIChainBanner(false); return; }
+  if (live.priority !== 'guest') { _setAIChainBanner(false); return; }
+  if (sig === window.AI.chain.lastSig) { _setAIChainBanner(false); return; }
+  if (!playerActedLast && !playerPassed) { _setAIChainBanner(false); return; }
+
+  window.AI.chain.lastSig = sig; // 처리 마킹
+
+    _setBanner('🤖 체인 패스 선택 중...');
+      _setAIChainBanner(false);
+  _setBanner('🤖 체인 카드 선택 중...');
+    try {
+      best.activate();
+    } catch (e) {
+      console.error('[AI 체인 activate 오류]', e);
+      _setAIChainBanner(false);
+      return;
+    }
+    if (!updated || !updated.active) { _setAIChainBanner(false); return; }
+
+    _setAIChainBanner(false);
 /* ══════════════════════════════════════════════════════════
    안전 훅 유틸 — 동일 함수 2중 래핑 방지
 ═══════════════════════════════════════════════════════════ */
@@ -1126,7 +1146,9 @@ function _aiEnd() {
   window.AI.usedFx   = {};
   window.AI.attacked = new Set();
   G.turn++;
-  isMyTurn = true;
+  var el = document.getElementById('_aiBanner');
+  if (!el) { _aiBanner(); el = document.getElementById('_aiBanner'); }
+  if (!el) return;
   try { attackedMonstersThisTurn.clear(); } catch(e) {}
   gameClock.runningFor  = 'host';
   gameClock.lastUpdated = Date.now();
