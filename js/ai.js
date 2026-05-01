@@ -16,6 +16,8 @@ window.AI = {
   usedFx:     {},
   attacked:   new Set(),
   chainMemory: { respondedSig: null },
+  chainTimer: null,
+  chainWatcher: null,
 };
 
 var _s = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
@@ -168,6 +170,8 @@ function _setupAI() {
     advancePhase('deploy');
     renderAll();
   }, 150);
+
+  _startAIChainWatcher();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1091,6 +1095,36 @@ function _markAIChainHandled(state) {
   window.AI.chainMemory.respondedSig = _chainSignature(state);
 }
 
+function _clearAIChainTimer() {
+  if (!window.AI || !window.AI.chainTimer) return;
+  clearTimeout(window.AI.chainTimer);
+  window.AI.chainTimer = null;
+}
+
+function _startAIChainWatcher() {
+  if (!window.AI || !window.AI.active) return;
+  if (window.AI.chainWatcher) return;
+  window.AI.chainWatcher = setInterval(function() {
+    if (!window.AI.active) return;
+    var live = activeChainState;
+    if (!live || !live.active) return;
+    if (live.priority !== 'guest') return;
+    _scheduleAIChainFallback();
+  }, 500);
+}
+
+function _scheduleAIChainFallback() {
+  if (!window.AI || !window.AI.active) return;
+  _clearAIChainTimer();
+  window.AI.chainTimer = setTimeout(function() {
+    if (!window.AI.active) return;
+    var live = activeChainState;
+    if (!live || !live.active) return;
+    if (live.priority !== 'guest') return;
+    _aiChainResponse(live);
+  }, 1800);
+}
+
 function _alreadyHandledChainState(state) {
   if (!window.AI || !window.AI.chainMemory) return false;
   return window.AI.chainMemory.respondedSig === _chainSignature(state);
@@ -1098,6 +1132,7 @@ function _alreadyHandledChainState(state) {
 
 function _aiChainResponse(chainState) {
   if (!window.AI.active) return;
+  _clearAIChainTimer();
   if (!activeChainState || !activeChainState.active) return;
   if (!_canAIRespondNow(activeChainState)) return;
   if (_alreadyHandledChainState(activeChainState)) return;
@@ -1177,3 +1212,31 @@ window._aiChainResponse = _aiChainResponse;
 window._aiRespondToChain = function() {
   _aiChainResponse(activeChainState);
 };
+
+_safeHook('beginChain', function(_origBeginChain) {
+  return function() {
+    _origBeginChain.apply(this, arguments);
+    _scheduleAIChainFallback();
+  };
+});
+
+_safeHook('addChainLink', function(_origAddChainLink) {
+  return function() {
+    _origAddChainLink.apply(this, arguments);
+    _scheduleAIChainFallback();
+  };
+});
+
+_safeHook('passChainPriority', function(_origPassChainPriority) {
+  return function() {
+    _origPassChainPriority.apply(this, arguments);
+    _scheduleAIChainFallback();
+  };
+});
+
+_safeHook('resolveChain', function(_origResolveChain) {
+  return function() {
+    _clearAIChainTimer();
+    return _origResolveChain.apply(this, arguments);
+  };
+});
