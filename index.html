@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -567,17 +568,34 @@ input[type="text"]::placeholder { color: var(--text-dim); }
   background: linear-gradient(180deg, #0c0c18 0%, #0a0a14 100%);
   border-top: 1px solid var(--border);
   padding: .5rem .9rem;
-  max-height: 110px; overflow-y: auto;
+  max-height: 160px; overflow-y: auto;
   scrollbar-width: thin; scrollbar-color: var(--border) transparent;
 }
 .log-panel h3 {
   font-size: .65rem; color: var(--text-dim); letter-spacing: .15em;
   margin-bottom: .35rem; font-family: 'Cinzel', serif; text-transform: uppercase;
 }
-.log-entry { font-size: .72rem; color: var(--text-dim); padding: .12rem 0; border-bottom: 1px solid #12122a; line-height: 1.4; }
-.log-entry.mine     { color: #6ab87c; }
-.log-entry.opponent { color: #e87070; }
-.log-entry.system   { color: var(--accent); font-style: italic; }
+.log-entry {
+  font-size: .73rem; color: var(--text-dim);
+  padding: .18rem 0 .18rem .5rem;
+  border-bottom: 1px solid #12122a;
+  line-height: 1.5;
+  border-left: 2px solid transparent;
+  display: flex; align-items: flex-start; gap: .35rem;
+}
+.log-entry .log-icon { flex-shrink: 0; font-size: .8rem; margin-top: .05rem; }
+.log-entry .log-text { flex: 1; }
+.log-entry .log-card {
+  background: #1e1e30; border: 1px solid #3a3a58;
+  border-radius: 3px; padding: 0 .3rem;
+  font-family: 'Black Han Sans', sans-serif; font-size: .68rem;
+  color: #c8a96e; white-space: nowrap;
+}
+.log-entry.mine     { color: #7ad68c; border-left-color: #3a8a4a; }
+.log-entry.opponent { color: #e88888; border-left-color: #8a3a3a; }
+.log-entry.system   { color: var(--accent); font-style: italic; border-left-color: #6a5020; }
+.log-entry.chain-open   { color: #9c78df; border-left-color: #6a40af; }
+.log-entry.chain-resolve { color: #7ab8df; border-left-color: #3a70a0; }
 
 /* ── 묘지/제외 존 정보 ── */
 .graveyard-info { display: flex; gap: .5rem; font-size: .68rem; color: var(--text-dim); }
