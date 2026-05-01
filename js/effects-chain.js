@@ -27,27 +27,92 @@ function _checkSaWonsoCounterOnOpponentChain() {
   if (typeof tryActivateSaWonsoJibaeja3    === 'function') tryActivateSaWonsoJibaeja3();
 }
 
-function openChainResponse() {
-  console.log('Current Priority:', activeChainState ? activeChainState.priority : null);
-  if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
-  if (usedKeyFetchInChain[myRole]) {
-    notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
-    return;
-  }
-  const options = (G.myKeyDeck || []).map(c => ({ id: c.id, name: c.name }));
-  if (options.length === 0) {
-    notify('키 카드 덱에 발동 가능한 카드가 없습니다. 패스하세요.');
-    return;
-  }
-  openCardPicker(options, '체인 응답: 키 카드 가져오기 (유발 즉시)', 1, (sel) => {
-    if (!sel || sel.length === 0) return; // 취소 시 무시
-    const picked = options[sel[0]];
-    if (!picked) return;
-    addChainLink({
-      type: 'keyFetch',
-      label: `키 카드 가져오기 (${picked.name})`,
-      cardId: picked.id,
+
+// ─────────────────────────────────────────────────────────────
+// 체인 응답 레지스트리 — 패에서 체인에 응답 가능한 카드 등록
+// 각 테마 파일에서 registerChainHandResponse()로 등록
+// ─────────────────────────────────────────────────────────────
+window.CHAIN_HAND_RESPONSES = window.CHAIN_HAND_RESPONSES || {};
+
+/**
+ * registerChainHandResponse(cardId, entries)
+ * entries: [{ effectNum, label, condition(), activate(handIdx) }, ...]
+ *
+ * condition(): 현재 체인 상태/패/필드를 보고 발동 가능 여부 반환
+ * activate(handIdx): 실제 발동 함수 호출
+ */
+function registerChainHandResponse(cardId, entries) {
+  window.CHAIN_HAND_RESPONSES[cardId] = entries;
+}
+
+/**
+ * collectChainOptions()
+ * 현재 패를 순회하며 체인에 응답 가능한 모든 옵션을 반환
+ * returns: [{ label, cardId, handIdx, activate }]
+ */
+function collectChainOptions() {
+  const options = [];
+
+  // 1) 키카드 가져오기 (기존)
+  if (!usedKeyFetchInChain[myRole]) {
+    (G.myKeyDeck || []).forEach(c => {
+      let canFetch = true;
+      if (c.id === '펭귄 용사'   && G.opField.length === 0) canFetch = false;
+      if (c.id === '펭귄의 전설' && G.myField.length === 0) canFetch = false;
+      if (!canFetch) return;
+      options.push({
+        label:   `[키카드] ${c.name} 가져오기`,
+        cardId:  c.id,
+        handIdx: -1,
+        activate() {
+          addChainLink({ type: 'keyFetch', label: `키 카드 가져오기 (${c.name})`, cardId: c.id });
+        },
+      });
     });
+  }
+
+  // 2) 패의 카드 — 레지스트리 기반
+  G.myHand.forEach((handCard, handIdx) => {
+    const entries = window.CHAIN_HAND_RESPONSES[handCard.id];
+    if (!entries) return;
+    entries.forEach(entry => {
+      if (!canUseEffect(handCard.id, entry.effectNum)) return;
+      if (entry.condition && !entry.condition(handIdx)) return;
+      options.push({
+        label:   `[패] ${handCard.name} ${entry.label}`,
+        cardId:  handCard.id,
+        handIdx,
+        activate() { entry.activate(handIdx); },
+      });
+    });
+  });
+
+  return options;
+}
+
+function openChainResponse() {
+  if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
+
+  const options = collectChainOptions();
+
+  if (options.length === 0) {
+    notify('응답 가능한 카드가 없습니다. 패스하세요.');
+    return;
+  }
+
+  // 선택지가 1개면 바로 발동 확인
+  if (options.length === 1) {
+    gameConfirm(`체인 응답: ${options[0].label}\n발동하시겠습니까?`, (yes) => {
+      if (yes) options[0].activate();
+    });
+    return;
+  }
+
+  // 여러 선택지 — 카드 픽커로 표시
+  const displayList = options.map(o => ({ id: o.cardId, name: o.label }));
+  openCardPicker(displayList, '체인 응답 — 발동할 효과를 선택하세요', 1, (sel) => {
+    if (!sel || sel.length === 0) return;
+    options[sel[0]].activate();
   });
 }
 
@@ -223,6 +288,10 @@ const CHAIN_RESOLVERS = {
   // 공용
   keyFetch:                  (link) => resolveKeyFetch(link.cardId),
   aiForceDiscard:            (link) => forceDiscard(Math.max(1, Number(link.count) || 1)),
+  // AI 눈에는 눈 — 체인 해결 시 AI 드로우 실행
+  aiEyeForEye:               ()     => { _aiDrawN(2); log('🤖 눈에는 눈: 드로우 2장', 'opponent'); renderAll(); },
+  // 플레이어 눈에는 눈 — 상대 서치에 대응, 체인 해결 시 드로우
+  eyeForEyePlayer:           ()     => { drawN(2); log('눈에는 눈: 드로우 2장!', 'mine'); sendGameState(); renderAll(); },
   // 펭귄 마을
   penguinVillage1:           ()     => resolvePenguinVillage1(),
   // 꼬마 펭귄
@@ -381,3 +450,62 @@ function resolvePenguinVillage1() {
 }
 
 function renderFieldZones() {}
+
+// ─────────────────────────────────────────────────────────────
+// 체인 응답 레지스트리 — 범용 카드 등록
+// ─────────────────────────────────────────────────────────────
+(function _registerGenericChainResponses() {
+  if (typeof registerChainHandResponse !== 'function') {
+    setTimeout(_registerGenericChainResponses, 50);
+    return;
+  }
+
+  // 출입통제: 상대 소환 효과를 체인으로 무효
+  registerChainHandResponse('출입통제', [
+    {
+      effectNum: 1,
+      label: '① 상대 소환 효과 무효',
+      condition: () => {
+        if (!activeChainState || !activeChainState.active) return false;
+        // 체인에 상대 링크가 있을 때
+        return (activeChainState.links || []).some(l => l.by !== myRole);
+      },
+      activate: (handIdx) => {
+        G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
+        log('출입통제 발동!', 'mine');
+        sendAction({ type: 'negate', reason: '출입통제' });
+        addChainLink({ type: 'genericNegate', label: '출입통제' });
+        sendGameState(); renderAll();
+      },
+    },
+  ]);
+
+  // 눈에는 눈 (범용): 이미 penguin.js에 등록되어 있으나
+  // 키카드 없는 경우도 대비해 여기서도 등록 (중복 방지: 등록 안 된 경우만)
+  if (!window.CHAIN_HAND_RESPONSES?.['눈에는 눈']) {
+    registerChainHandResponse('눈에는 눈', [
+      {
+        effectNum: 1,
+        label: '① 버리고 드로우 2장',
+        condition: () => {
+          if (!activeChainState || !activeChainState.active) return false;
+          return (activeChainState.links || []).some(l => l.by !== myRole);
+        },
+        activate: (handIdx) => {
+          G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
+          markEffectUsed('눈에는 눈', 1);
+          addChainLink({ type: 'eyeForEyePlayer', label: '눈에는 눈' });
+          sendGameState(); renderAll();
+        },
+      },
+    ]);
+  }
+})();
+
+// CHAIN_RESOLVERS에 genericNegate 추가
+if (typeof CHAIN_RESOLVERS !== 'undefined') {
+  CHAIN_RESOLVERS.genericNegate = () => {
+    log('출입통제: 효과 무효!', 'mine');
+    sendGameState(); renderAll();
+  };
+}

@@ -1,3 +1,4 @@
+
 // theme-common.js — 동적 테마(크툴루/올드원/라이온/타이거/라이거/마피아/불가사의) 공용 처리
 
 window.THEME_EFFECT_HANDLERS = window.THEME_EFFECT_HANDLERS || {};
@@ -211,3 +212,64 @@ function resolveThemeEffect(link) {
   }
   resolveThemeEffectGeneric(link);
 }
+
+// ─────────────────────────────────────────────────────────────
+// 자동 체인 응답 등록 — 카드 텍스트 파싱 기반
+// "자신/상대 턴에 발동할 수 있다" 패턴이 있는 카드를 전부 자동 등록
+// ─────────────────────────────────────────────────────────────
+(function _autoRegisterThemeChainResponses() {
+  if (typeof registerChainHandResponse !== 'function') {
+    setTimeout(_autoRegisterThemeChainResponses, 50);
+    return;
+  }
+
+  const QUICK_THEMES = ['크툴루', '올드원', '올드 원', '라이온', '타이거', '라이거', '마피아', '불가사의', '지배자'];
+  // 지배자는 jibaeja.js에서 별도 등록하므로 여기선 제외
+  const AUTO_THEMES  = ['크툴루', '올드원', '올드 원', '라이온', '타이거', '라이거', '마피아', '불가사의'];
+
+  // "이 효과가 상대 턴에도 발동 가능한지" 판별
+  // 효과 텍스트에 아래 패턴 중 하나가 있으면 퀵효과로 간주
+  const QUICK_PATTERNS = [
+    '자신/상대 턴에',
+    '상대 턴에 발동할 수 있다',
+    '상대턴에도 발동할 수 있다',
+    '상대 효과가 발동했을 때',
+    '상대가 효과를 발동했을 때',
+  ];
+
+  function _isQuickEffect(effectText) {
+    return QUICK_PATTERNS.some(p => effectText.includes(p));
+  }
+
+  // 각 카드 순회
+  Object.values(CARDS || {}).forEach(card => {
+    if (!AUTO_THEMES.includes(card.theme)) return;
+    const effects = (card.effects || '').split('\n').filter(Boolean);
+    const entries = [];
+
+    [1, 2, 3].forEach(effectNum => {
+      const bullet = ['①', '②', '③'][effectNum - 1];
+      const line = effects.find(l => l.startsWith(bullet));
+      if (!line) return;
+      if (!_isQuickEffect(line)) return;
+
+      entries.push({
+        effectNum,
+        label: `${bullet} 퀵 효과 발동`,
+        condition: (handIdx) => {
+          // 현재 체인이 활성이고 내 우선권일 때, 또는 상대 턴일 때
+          if (activeChainState && activeChainState.active) return true;
+          if (!isMyTurn) return true;
+          return false;
+        },
+        activate: (handIdx) => {
+          activateThemeCardEffectFromHand(handIdx, effectNum);
+        },
+      });
+    });
+
+    if (entries.length > 0) {
+      registerChainHandResponse(card.id, entries);
+    }
+  });
+})();

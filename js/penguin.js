@@ -1,3 +1,4 @@
+
 // penguin.js — 펭귄 테마 카드 효과 엔진
 
 
@@ -722,11 +723,95 @@ function activatePenguinEffect() { return false; }
 function handlePenguinOpAction(action) {
   switch (action.type) {
     case 'opFieldExile':
-      // 상대 펭귄 마법사 ②로 내 카드 제외 — network.js의 opFieldExile 케이스에서 처리됨
-      // 여기선 추가 로그만
       log(`상대 효과: ${action.cardId ? (CARDS[action.cardId]?.name || action.cardId) : '카드'} 제외`, 'opponent');
       break;
     default:
       break;
   }
 }
+
+// ─────────────────────────────────────────────
+// 체인 응답 레지스트리 등록 — 펭귄 퀵/유발즉시 효과
+// ─────────────────────────────────────────────
+(function _registerPenguinChainResponses() {
+  // 등록 함수가 로드될 때까지 대기
+  if (typeof registerChainHandResponse !== 'function') {
+    setTimeout(_registerPenguinChainResponses, 50);
+    return;
+  }
+
+  // 펭귄 용사 ②: 상대 턴에 이 카드를 패로 + 펭귄 마법 회수
+  registerChainHandResponse('펭귄 용사', [
+    {
+      effectNum: 2,
+      label: '② 상대 턴: 패로 + 펭귄 마법 회수',
+      condition: () => !isMyTurn && G.myField.some(c => c.id === '펭귄 용사'),
+      activate: () => activatePenguinHero2(),
+    },
+  ]);
+
+  // 펭귄의 일격 ①: 상대 몬스터 효과 발동 시 — 체인 응답으로 발동
+  registerChainHandResponse('펭귄의 일격', [
+    {
+      effectNum: 1,
+      label: '① 상대 효과 무효 (코스트: 패 1장)',
+      condition: () => {
+        // 체인에 상대 효과가 있어야 함
+        if (!activeChainState || !activeChainState.active) return false;
+        const hasOpEffect = (activeChainState.links || []).some(l => l.by !== myRole);
+        return hasOpEffect && G.myField.some(c => isPenguinMonster(c.id)) && G.myHand.length >= 2;
+      },
+      activate: () => activatePenguinStrike1(),
+    },
+  ]);
+
+  // 펭귄이여 영원하라 ②: 상대 턴, 묘지 제외 → 패에서 펭귄 소환
+  registerChainHandResponse('펭귄이여 영원하라', [
+    {
+      effectNum: 2,
+      label: '② 상대 턴: 묘지 제외 → 펭귄 소환',
+      condition: () => {
+        if (isMyTurn) return false;
+        const graveIdx = G.myGrave.findIndex(c => c.id === '펭귄이여 영원하라');
+        return graveIdx >= 0 && G.myHand.some(c => isPenguinMonster(c.id));
+      },
+      activate: () => activatePenguinForever2(),
+    },
+  ]);
+
+  // 펭귄의 전설 ②: 상대 턴, 패로 + 묘지/제외 펭귄 소환
+  registerChainHandResponse('펭귄의 전설', [
+    {
+      effectNum: 2,
+      label: '② 상대 턴: 패로 되돌리고 펭귄 소환',
+      condition: () => {
+        if (isMyTurn) return false;
+        const onField = G.myField.some(c => c.id === '펭귄의 전설');
+        const hasTarget = [...G.myGrave, ...G.myExile].some(c => isPenguinMonster(c.id));
+        return onField && hasTarget;
+      },
+      activate: () => activatePenguinLegend2(),
+    },
+  ]);
+
+  // 눈에는 눈: 상대 서치 체인에 응답
+  registerChainHandResponse('눈에는 눈', [
+    {
+      effectNum: 1,
+      label: '① 버리고 드로우 2장',
+      condition: (handIdx) => {
+        if (!activeChainState || !activeChainState.active) return false;
+        // 체인에 서치(keyFetch 또는 상대 mine 링크)가 있어야 함
+        const hasOpChain = (activeChainState.links || []).some(l => l.by !== myRole);
+        return hasOpChain;
+      },
+      activate: (handIdx) => {
+        // 코스트 지불 후 체인 등록
+        G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
+        markEffectUsed('눈에는 눈', 1);
+        addChainLink({ type: 'eyeForEyePlayer', label: '눈에는 눈' });
+        sendGameState(); renderAll();
+      },
+    },
+  ]);
+})();

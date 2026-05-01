@@ -1,3 +1,4 @@
+
 // jibaeja.js — 지배자/지배룡 테마 카드 효과 엔진
 // 지배자/지배룡 엔진
 // ─────────────────────────────────────────────
@@ -841,3 +842,53 @@ sendToGrave = function(cardId, from = 'field') {
   _origSendToGrave(cardId, from);
   if (from !== 'hand') onSentToGraveFromNonHand(cardId);
 };
+
+// ─────────────────────────────────────────────
+// 체인 응답 레지스트리 등록 — 지배자 퀵/유발즉시 효과
+// ─────────────────────────────────────────────
+(function _registerJibaeChainResponses() {
+  if (typeof registerChainHandResponse !== 'function') {
+    setTimeout(_registerJibaeChainResponses, 50);
+    return;
+  }
+
+  // 수원소/화원소/전원소/풍원소의 지배자 ①:
+  // "자신/상대 필드에 키카드 몬스터 존재 시 상대 턴에도 발동 가능"
+  const _jibaeSharedCond = () => isMyTurn || hasKeyCardMonsterOnField();
+
+  registerChainHandResponse('수원소의 지배자', [
+    {
+      effectNum: 1,
+      label: '① 버리고 → 지배자 서치 + 드로우',
+      condition: _jibaeSharedCond,
+      activate: (hi) => activateJibaejaShui1(hi),
+    },
+  ]);
+
+  registerChainHandResponse('화원소의 지배자', [
+    {
+      effectNum: 1,
+      label: '① 버리고 → 지배자 소환 + 드로우',
+      condition: _jibaeSharedCond,
+      activate: (hi) => activateJibaejaHwa1(hi),
+    },
+  ]);
+
+  registerChainHandResponse('전원소의 지배자', [
+    {
+      effectNum: 1,
+      label: '① 버리고 → 패/묘지 지배자 소환 + 드로우',
+      condition: _jibaeSharedCond,
+      activate: (hi) => activateJibaejaJeon1(hi),
+    },
+  ]);
+
+  registerChainHandResponse('풍원소의 지배자', [
+    {
+      effectNum: 1,
+      label: '① 버리고 → 상대 묘지 제외 + 드로우',
+      condition: (hi) => _jibaeSharedCond() && G.opGrave.length > 0,
+      activate: (hi) => activateJibaejaFung1(hi),
+    },
+  ]);
+})();

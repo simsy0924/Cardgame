@@ -187,9 +187,26 @@ function renderChainActions() {
   const btnKeyFetch = document.getElementById('btnKeyFetch');
   if (!btnRespond || !btnPass) return;
 
-  // 체인이 활성 상태이고 내 우선권일 때만 응답/패스 버튼 표시
   const chainActive = !!(activeChainState && activeChainState.active);
   const myPriority = chainActive && activeChainState.priority === myRole;
+
+  // 응답 가능한 카드 수 계산해서 버튼에 표시
+  if (myPriority && typeof collectChainOptions === 'function') {
+    const opts = collectChainOptions();
+    if (opts.length > 0) {
+      btnRespond.textContent = `체인 응답 (${opts.length})`;
+      btnRespond.style.borderColor = '#9c7cdf';
+      btnRespond.style.color = '#c8a0ff';
+    } else {
+      btnRespond.textContent = '체인 응답';
+      btnRespond.style.borderColor = '';
+      btnRespond.style.color = '';
+    }
+  } else {
+    btnRespond.textContent = '체인 응답';
+    btnRespond.style.borderColor = '';
+    btnRespond.style.color = '';
+  }
 
   btnRespond.classList.toggle('hidden', !myPriority);
   btnPass.classList.toggle('hidden', !myPriority);
@@ -197,9 +214,9 @@ function renderChainActions() {
   if (btnKeyFetch) {
     const noKeyCard = !G.myKeyDeck || G.myKeyDeck.length === 0;
     const inDraw = currentPhase === 'draw';
-    // 체인 활성 중인데 내 우선권이 아닐 때만 비활성화
     const opponentPriority = chainActive && !myPriority;
-    btnKeyFetch.disabled = noKeyCard || inDraw || opponentPriority;
+    // 체인 활성 중에는 키카드 버튼 숨김 (체인 응답 버튼으로 통합)
+    btnKeyFetch.disabled = noKeyCard || inDraw || opponentPriority || chainActive;
   }
   renderChainStack();
 }
@@ -216,11 +233,17 @@ function renderChainStack() {
   }
   const links = activeChainState?.links || [];
   if (!activeChainState?.active || links.length === 0) {
-    wrap.innerHTML = '<div style="opacity:.7">체인 없음</div>';
+    wrap.innerHTML = '<div style="opacity:.5;font-size:.7rem">체인 없음</div>';
     return;
   }
-  const rows = links.map((l, i) => `<div>⛓️ 체인 ${i + 1}: ${l.label || l.type}</div>`).join('');
-  wrap.innerHTML = `<div style="margin-bottom:4px;color:#9c7cdf">체인 스택 (해제는 역순)</div>${rows}`;
+  // 발동자 표시: 내 카드면 녹색, 상대면 빨강
+  const rows = links.map((l, i) => {
+    const isMine = l.by === myRole;
+    const color = isMine ? '#7ad68c' : '#e88888';
+    const who = isMine ? '나' : '상대';
+    return `<div style="color:${color}">⛓ ${i + 1}: <span style="color:#c8a96e">${l.label || l.type}</span> <span style="opacity:.6;font-size:.65rem">[${who}]</span></div>`;
+  }).join('');
+  wrap.innerHTML = `<div style="margin-bottom:4px;color:#9c7cdf;font-size:.7rem;letter-spacing:.05em">CHAIN STACK — 역순 해결</div>${rows}`;
 }
 
 function startKeyFetchEffect() {
