@@ -36,13 +36,8 @@ window.AI = {
 
 function _setAIThinkingState(on, reason) {
   if (!window.AI) return;
-  if (!window.AI.chain) window.AI.chain = { handling: false, timer: null, watcher: null, lastSig: null };
-  window.AI.chain.handling = !!on;
-  if (on) {
-    _setBanner(reason || '🤖 체인 대응 고민 중...');
-  } else if (!window.AI.thinking) {
-    _setBanner('');
-  }
+  if (on) _setBanner(reason || '🤖 체인 대응 고민 중...');
+  else if (!window.AI.thinking) _setBanner('');
 }
 
 /* 슬립 유틸 */
@@ -138,22 +133,6 @@ function _chainSig(state) {
 }
 
 
-function _forceAIResolveCurrentChain(reason) {
-  var cur = activeChainState;
-  if (!cur || !cur.active || cur.priority !== 'guest') return;
-  var next = Object.assign({}, cur);
-  next.passCount = (next.passCount || 0) + 1;
-  next.priority = 'host';
-  activeChainState = next;
-  window.AI.chain.lastSig = _chainSig(next);
-  log('🤖 AI: 강제 체인 해결' + (reason ? ' (' + reason + ')' : ''), 'system');
-  _setAIThinkingState(false);
-  renderChainActions();
-  var fin = Object.assign({}, next);
-  fin.passCount = 2;
-  resolveChain(fin);
-}
-
 function _clearAIChainTimer() {
   if (window.AI.chain.timer) {
     clearTimeout(window.AI.chain.timer);
@@ -202,13 +181,6 @@ function _runAIChainResponse() {
 
   window.AI.chain.lastSig = sig; // 처리 마킹
 
-  setTimeout(() => {
-    var st = activeChainState;
-    if (!st || !st.active) return;
-    if (st.priority !== 'guest') return;
-    if (_chainSig(st) !== sig) return;
-    _forceAIResolveCurrentChain('watchdog');
-  }, 1800);
 
   // 응답 옵션 수집
   var options = _collectAIChainOptions(live);
