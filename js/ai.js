@@ -16,6 +16,8 @@ window.AI = {
   usedFx:     {},
   attacked:   new Set(),
   chainMemory: { respondedSig: null },
+  chainTimer: null,
+  chainWatcher: null,
 };
 
 var _s = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
@@ -168,6 +170,8 @@ function _setupAI() {
     advancePhase('deploy');
     renderAll();
   }, 150);
+
+  _startAIChainWatcher();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -985,6 +989,30 @@ function _registerDefaultAIChainResponses() {
       return { type: 'genericNegate', label: '출입통제 (AI)', by: getOtherRole(myRole) };
     },
   }]);
+
+  // 펭귄의 일격 ① (AI)
+  // 코스트: 이 카드 외 패 1장 버리기 → 상대 체인 1개 무효
+  registerAIChainHandResponse('펭귄의 일격', [{
+    effectNum: 1,
+    score: 95,
+    condition: function(ctx) {
+      if (!ctx.hasHostChain) return false;
+      // 코스트(자기 자신 + 다른 패 1장) 지불 가능해야 함
+      return Array.isArray(G.opHand) && G.opHand.length >= 2;
+    },
+    activate: function() {
+      if (!_aiDiscard('펭귄의 일격')) return null;
+      // 추가 코스트: 임의 카드 1장 버리기 (눈에는 눈/출입통제는 우선 보존)
+      var extraIdx = G.opHand.findIndex(function(c) {
+        return c && c.id !== '눈에는 눈' && c.id !== '출입통제';
+      });
+      if (extraIdx < 0) extraIdx = 0;
+      var extra = G.opHand.splice(extraIdx, 1)[0];
+      if (extra) G.opGrave.push(extra);
+      _aiMarkUsed('펭귄의 일격', 1);
+      return { type: 'genericNegate', label: '펭귄의 일격 ① (AI)', by: getOtherRole(myRole) };
+    },
+  }]);
 }
 
 _registerDefaultAIChainResponses();
@@ -1091,6 +1119,36 @@ function _markAIChainHandled(state) {
   window.AI.chainMemory.respondedSig = _chainSignature(state);
 }
 
+function _clearAIChainTimer() {
+  if (!window.AI || !window.AI.chainTimer) return;
+  clearTimeout(window.AI.chainTimer);
+  window.AI.chainTimer = null;
+}
+
+function _startAIChainWatcher() {
+  if (!window.AI || !window.AI.active) return;
+  if (window.AI.chainWatcher) return;
+  window.AI.chainWatcher = setInterval(function() {
+    if (!window.AI.active) return;
+    var live = activeChainState;
+    if (!live || !live.active) return;
+    if (live.priority !== 'guest') return;
+    _scheduleAIChainFallback();
+  }, 500);
+}
+
+function _scheduleAIChainFallback() {
+  if (!window.AI || !window.AI.active) return;
+  _clearAIChainTimer();
+  window.AI.chainTimer = setTimeout(function() {
+    if (!window.AI.active) return;
+    var live = activeChainState;
+    if (!live || !live.active) return;
+    if (live.priority !== 'guest') return;
+    _aiChainResponse(live);
+  }, 1800);
+}
+
 function _alreadyHandledChainState(state) {
   if (!window.AI || !window.AI.chainMemory) return false;
   return window.AI.chainMemory.respondedSig === _chainSignature(state);
@@ -1098,6 +1156,7 @@ function _alreadyHandledChainState(state) {
 
 function _aiChainResponse(chainState) {
   if (!window.AI.active) return;
+  _clearAIChainTimer();
   if (!activeChainState || !activeChainState.active) return;
   if (!_canAIRespondNow(activeChainState)) return;
   if (_alreadyHandledChainState(activeChainState)) return;
@@ -1177,3 +1236,31 @@ window._aiChainResponse = _aiChainResponse;
 window._aiRespondToChain = function() {
   _aiChainResponse(activeChainState);
 };
+
+_safeHook('beginChain', function(_origBeginChain) {
+  return function() {
+    _origBeginChain.apply(this, arguments);
+    _scheduleAIChainFallback();
+  };
+});
+
+_safeHook('addChainLink', function(_origAddChainLink) {
+  return function() {
+    _origAddChainLink.apply(this, arguments);
+    _scheduleAIChainFallback();
+  };
+});
+
+_safeHook('passChainPriority', function(_origPassChainPriority) {
+  return function() {
+    _origPassChainPriority.apply(this, arguments);
+    _scheduleAIChainFallback();
+  };
+});
+
+_safeHook('resolveChain', function(_origResolveChain) {
+  return function() {
+    _clearAIChainTimer();
+    return _origResolveChain.apply(this, arguments);
+  };
+});
