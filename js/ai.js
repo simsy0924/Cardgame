@@ -253,12 +253,35 @@ function _runAIChainResponse() {
   }, 420);
 }
 
-/* 플레이어가 현재 체인에 응답할 카드를 갖고 있는지 확인 */
+/* 플레이어가 현재 체인에 응답할 카드를 갖고 있는지 확인
+ * [수정] activeChainState가 priority===myRole일 때만 collectChainOptions()가 의미 있음.
+ * 그러나 이 함수는 AI 패스 후 priority를 myRole로 돌린 직후 호출되므로
+ * collectChainOptions()에 activeChainState를 직접 넘겨서 판단.
+ */
 function _playerHasChainResponse() {
-  if (typeof collectChainOptions === 'function') {
-    return collectChainOptions().length > 0;
+  if (!activeChainState || !activeChainState.active) return false;
+  if (typeof collectChainOptions !== 'function') {
+    return Array.isArray(G.myKeyDeck) && G.myKeyDeck.length > 0;
   }
-  return Array.isArray(G.myKeyDeck) && G.myKeyDeck.length > 0;
+  // collectChainOptions는 activeChainState 기준으로 동작하므로
+  // priority를 일시적으로 myRole로 설정해두고 체크할 필요 없음.
+  // 단, 키카드는 항상 응답 가능 (체인이 활성이면)
+  var hasKey = !usedKeyFetchInChain[myRole] && (G.myKeyDeck || []).some(c => {
+    if (c.id === '펭귄 용사' && G.opField.length === 0) return false;
+    if (c.id === '펭귄의 전설' && G.myField.length === 0) return false;
+    return true;
+  });
+  if (hasKey) return true;
+  // 패의 카드 레지스트리 체크
+  return (G.myHand || []).some(card => {
+    var entries = window.CHAIN_HAND_RESPONSES && window.CHAIN_HAND_RESPONSES[card.id];
+    if (!entries) return false;
+    return entries.some(entry => {
+      if (!canUseEffect(card.id, entry.effectNum)) return false;
+      if (entry.condition && !entry.condition(-1)) return false;
+      return true;
+    });
+  });
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -689,12 +712,21 @@ function _collectAIChainOptions(chainState) {
   if (!live || !live.active) return options;
 
   var links = live.links || [];
+  // [수정] hasPlayerChain: 체인에 플레이어 링크가 있는가 (AI 응답 무효계 조건용)
   var hasPlayerChain = links.some(l => l.by === 'host' || l.by === myRole);
+  // [수정] hasPlayerSearchLink: 플레이어 서치 링크가 있는가 (눈에는 눈 조건용)
+  var hasPlayerSearchLink = links.some(l => {
+    if (l.by !== 'host' && l.by !== myRole) return false;
+    var t = String(l.type || '');
+    return t === 'keyFetch' || t.includes('search') || t.includes('Search') || t === 'themeEffect';
+  });
 
+  var analysis = _analyzeChain(live);
   var ctx = {
     chainState: live,
-    hasPlayerChain,
-    analysis: _analyzeChain(live),
+    hasPlayerChain,        // 플레이어 링크 존재 여부
+    hasPlayerSearchLink,   // 플레이어 서치 링크 여부
+    analysis,
   };
 
   G.opHand.forEach((card, idx) => {
@@ -702,6 +734,7 @@ function _collectAIChainOptions(chainState) {
     if (!entries) return;
     entries.forEach(entry => {
       if (!_aiCanUse(card.id, entry.effectNum)) return;
+      // [수정] condition이 없으면 체인이 활성인 것만으로 발동 허용
       if (entry.condition && !entry.condition(ctx, idx, card)) return;
       options.push({
         id:     card.id,
@@ -719,7 +752,10 @@ function _analyzeChain(state) {
   var links = state.links || [];
   var playerLinks = links.filter(l => l.by === 'host' || l.by === myRole);
   var aiLinks     = links.filter(l => l.by === 'guest');
-  var hasSearch   = playerLinks.some(l => ['keyFetch','aiSearch','themeEffect'].includes(l.type) || String(l.type).includes('search'));
+  var hasSearch   = playerLinks.some(l => {
+    var t = String(l.type || '');
+    return t === 'keyFetch' || t.includes('search') || t.includes('Search') || t === 'themeEffect';
+  });
   var hasDangerous = playerLinks.some(l => ['negate','grave','exile','destroy'].some(kw => String(l.type).includes(kw)));
   return {
     playerLinks, aiLinks,
@@ -754,11 +790,12 @@ function registerAIChainHandResponse(cardId, entries) {
 }
 
 // 눈에는 눈 — 상대 서치에 대응, 드로우 2장
+// [수정] hasPlayerSearchLink: 플레이어가 서치계 링크를 체인에 넣었을 때만
 registerAIChainHandResponse('눈에는 눈', [{
   effectNum: 1,
   label: '눈에는 눈',
   score: 45,
-  condition: ctx => ctx.analysis.hasSearch,
+  condition: ctx => ctx.hasPlayerSearchLink,
   activate: (ctx, idx, card) => {
     _aiMarkUsed('눈에는 눈', 1);
     _aiDiscard('눈에는 눈');
