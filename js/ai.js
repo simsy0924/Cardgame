@@ -33,6 +33,17 @@ window.AI = {
   },
 };
 
+
+function _setAIThinkingState(on, reason) {
+  if (!window.AI) return;
+  window.AI.chain.handling = !!on;
+  if (on) {
+    _setBanner(reason || '🤖 체인 대응 고민 중...');
+  } else if (!window.AI.thinking) {
+    _setBanner('');
+  }
+}
+
 /* 슬립 유틸 */
 var _s = ms => new Promise(r => setTimeout(r, ms));
 
@@ -81,6 +92,7 @@ function _setupChainHooks() {
   // resolveChain만 훅 — AI 체인 상태 초기화용
   _safeHook('resolveChain', orig => function(chainState) {
     _clearAIChainTimer();
+    _setAIThinkingState(false);
     window.AI.chain.handling = false;
     window.AI.chain.lastSig  = null;
     return orig.apply(this, arguments);
@@ -112,6 +124,7 @@ function _onChainUpdated(source) {
 
   // 기존 타이머 정리 후 단일 타이머로만 스케줄
   _clearAIChainTimer();
+  _setAIThinkingState(true, '🤖 체인 대응 고민 중...');
   var delay = (source === 'passChainPriority') ? 450 : 380;
   window.AI.chain.timer = setTimeout(() => _runAIChainResponse(), delay);
 }
@@ -153,8 +166,8 @@ function _runAIChainResponse() {
   _clearAIChainTimer();
   if (!window.AI.active) return;
   var live = activeChainState;
-  if (!live || !live.active) return;
-  if (live.priority !== 'guest') return;
+  if (!live || !live.active) { _setAIThinkingState(false); return; }
+  if (live.priority !== 'guest') { _setAIThinkingState(false); return; }
 
   var sig = _chainSig(live);
   if (sig === window.AI.chain.lastSig) return;
@@ -168,7 +181,7 @@ function _runAIChainResponse() {
   // guest가 아닌 마지막 링크를 플레이어 행동으로 간주한다.
   var playerActedLast = (last.by !== 'guest');
   var playerPassed    = (live.passCount || 0) > 0;
-  if (!playerActedLast && !playerPassed) return;
+  if (!playerActedLast && !playerPassed) { _setAIThinkingState(false); return; }
 
   // 응답 옵션 수집
   var options = _collectAIChainOptions(live);
@@ -176,6 +189,7 @@ function _runAIChainResponse() {
   var best = options[0] || null;
 
   if (!best) {
+    _setBanner('🤖 체인 패스 선택 중...');
     // 패스
     setTimeout(() => {
       var cur = activeChainState;
@@ -187,6 +201,7 @@ function _runAIChainResponse() {
       activeChainState = next;
       window.AI.chain.lastSig = _chainSig(next);
       log('🤖 AI: 체인 패스', 'opponent');
+      _setAIThinkingState(false);
 
       if (next.passCount >= 2) {
         resolveChain(next);
@@ -207,6 +222,7 @@ function _runAIChainResponse() {
   }
 
   // 카드 효과 발동
+  _setBanner('🤖 체인 카드 선택 중...');
   // activate()가 _collectAIChainOptions의 래핑된 addChainLink를 호출해
   // 체인 상태를 이미 업데이트함 → 중복 업데이트 없이 후처리만
   setTimeout(() => {
@@ -221,6 +237,7 @@ function _runAIChainResponse() {
     if (!updated || !updated.active) return;
 
     log('🤖 ' + best.label + ' 체인 발동!', 'opponent');
+    _setAIThinkingState(false);
     renderChainActions();
     renderAll();
 
