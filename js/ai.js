@@ -73,51 +73,33 @@ _safeHook('checkWinCondition', orig => function() {
 });
 
 /* ══════════════════════════════════════════════════════════
-   체인 훅 — 단일 통합 (IIFE 별도 훅 없음)
+   AI 체인 인터페이스
+   effects-chain.js의 beginChain/passChainPriority/addChainLink가
+   직접 _notifyAIChainOpened()를 호출하므로 훅 불필요.
 ═══════════════════════════════════════════════════════════ */
 function _setupChainHooks() {
-  // beginChain — 플레이어가 체인1 시작 → AI 응답 기회
-  _safeHook('beginChain', orig => function(effect) {
-    orig.apply(this, arguments);
-    if (window.AI.active) _onChainUpdated('beginChain');
-  });
-
-  // addChainLink — 플레이어가 링크 추가 → AI 응답 기회
-  _safeHook('addChainLink', orig => function(effect, opts) {
-    orig.apply(this, arguments);
-    if (window.AI.active) _onChainUpdated('addChainLink');
-  });
-
-  // passChainPriority — 플레이어 패스 → AI 응답 트리거
-  // [수정] orig.apply() 후 항상 _onChainUpdated를 호출.
-  //        원본 passChainPriority가 AI 모드일 때 priority를 'guest'로 바꾸고 return하므로
-  //        래퍼에서 _onChainUpdated를 이어서 호출해야 AI가 반응함.
-  _safeHook('passChainPriority', orig => function() {
-    if (!window.AI.active) { orig.apply(this, arguments); return; }
-
-    // 원본 실행 (AI 모드면 priority를 guest로 바꾸고 return)
-    orig.apply(this, arguments);
-
-    // 원본 실행 후 체인이 여전히 활성이면 AI 응답 트리거
-    var live = activeChainState;
-    if (live && live.active && live.priority === 'guest') {
-      _onChainUpdated('passChainPriority');
-    }
-  });
-
-  // resolveChain → AI 체인 상태 초기화
+  // resolveChain만 훅 — AI 체인 상태 초기화용
   _safeHook('resolveChain', orig => function(chainState) {
     _clearAIChainTimer();
-    // 자동 패스 타이머도 클리어
-    if (window._chainAutoPassTimer) {
-      clearTimeout(window._chainAutoPassTimer);
-      window._chainAutoPassTimer = null;
-    }
     window.AI.chain.handling = false;
     window.AI.chain.lastSig  = null;
     return orig.apply(this, arguments);
   });
 }
+
+/**
+ * effects-chain.js에서 직접 호출하는 AI 알림 함수.
+ * beginChain/passChainPriority/addChainLink가 로컬 AI 모드에서
+ * setTimeout(()=>_notifyAIChainOpened(), 0)으로 호출.
+ */
+function _notifyAIChainOpened() {
+  if (!window.AI || !window.AI.active) return;
+  var live = activeChainState;
+  if (!live || !live.active) return;
+  if (live.priority !== 'guest') return; // AI 차례가 아님
+  _onChainUpdated('direct');
+}
+window._notifyAIChainOpened = _notifyAIChainOpened;
 
 /* ── 체인 업데이트 단일 진입점 ── */
 function _onChainUpdated(source) {
@@ -212,17 +194,8 @@ function _runAIChainResponse() {
           fin.passCount = 2;
           resolveChain(fin);
         } else {
-          // 플레이어에게 응답 기회 — 5초 내 반응 없으면 자동 패스
-          notify('체인 패스 — 응답하거나 패스하세요.');
-          var _autoPassT = setTimeout(() => {
-            var cur = activeChainState;
-            if (!cur || !cur.active) return;
-            if (cur.priority !== myRole) return;
-            log('⏱ 체인 자동 패스', 'system');
-            passChainPriority();
-          }, 5000);
-          // resolveChain 훅에서 타이머 클리어 — window에 임시 저장
-          window._chainAutoPassTimer = _autoPassT;
+          // 플레이어에게 응답 기회 — 버튼으로 패스하면 됨
+          notify('🤖 AI 체인 패스. 응답하거나 패스하세요.');
         }
       }
     }, 600);
@@ -674,18 +647,6 @@ function _aiFireEffect(effect, afterResolve) {
 
   if (_playerHasChainResponse()) {
     notify(`상대가 ${link.label} 발동! 응답 또는 패스를 선택하세요.`);
-    // 플레이어가 8초 내에 반응 안 하면 자동 패스
-    var autoPassTimer = setTimeout(() => {
-      var cur = activeChainState;
-      if (!cur || !cur.active) return;
-      if (cur.priority !== myRole) return; // 이미 AI 차례면 스킵
-      log('⏱ 체인 자동 패스 (타임아웃)', 'system');
-      passChainPriority();
-    }, 8000);
-    _waitChainClear().then(() => {
-      clearTimeout(autoPassTimer);
-      afterResolve && afterResolve();
-    });
   } else {
     // 플레이어 응답 불가 → 즉시 resolve
     setTimeout(() => {
@@ -695,8 +656,8 @@ function _aiFireEffect(effect, afterResolve) {
       fin.passCount = 2;
       resolveChain(fin);
     }, 300);
-    _waitChainClear().then(() => afterResolve && afterResolve());
   }
+  _waitChainClear().then(() => afterResolve && afterResolve());
 }
 
 /* ══════════════════════════════════════════════════════════

@@ -26,9 +26,12 @@ function beginChain(effect) {
   if (!roomRef) {
     renderChainActions();
     renderAll();
-    // AI 모드: ai.js 훅(beginChain 래퍼)이 _onChainUpdated를 호출하므로
-    // 여기선 렌더만 하고 return. 훅이 없으면(비AI 로컬) 즉시 resolve.
-    if (!window.AI || !window.AI.active) {
+    if (window.AI && window.AI.active) {
+      // AI 모드: 직접 AI 응답 트리거 (훅 불필요)
+      setTimeout(() => {
+        if (typeof _notifyAIChainOpened === 'function') _notifyAIChainOpened();
+      }, 0);
+    } else {
       // 비AI 데모 모드: 즉시 resolve
       resolveChain({ ...chainState, passCount: 2 });
     }
@@ -350,10 +353,12 @@ function passChainPriority() {
       resolveChain(next);
       return;
     }
-    // AI 모드: 상태를 guest 우선권으로 업데이트하고 렌더.
-    // ai.js의 passChainPriority 훅 래퍼가 이어서 _onChainUpdated()를 호출한다.
+    // AI 모드: 상태 업데이트 후 AI 직접 트리거
     activeChainState = next;
     renderChainActions();
+    setTimeout(() => {
+      if (typeof _notifyAIChainOpened === 'function') _notifyAIChainOpened();
+    }, 0);
     return;
   }
 
@@ -385,6 +390,11 @@ function addChainLink(effect, options = {}) {
   if (!roomRef) {
     renderChainActions();
     renderAll();
+    if (window.AI && window.AI.active) {
+      setTimeout(() => {
+        if (typeof _notifyAIChainOpened === 'function') _notifyAIChainOpened();
+      }, 0);
+    }
     return;
   }
   roomRef.child('chainState').set(next);
