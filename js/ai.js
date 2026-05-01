@@ -171,7 +171,7 @@ function _runAIChainResponse() {
   if (live.priority !== 'guest') { _setAIThinkingState(false); return; }
 
   var sig = _chainSig(live);
-  if (sig === window.AI.chain.lastSig) return;
+  if (sig === window.AI.chain.lastSig) { _setAIThinkingState(false); return; }
 
   // 응답 가능 조건: 마지막 링크가 플레이어 것이거나 플레이어가 패스
   var links = live.links || [];
@@ -232,11 +232,17 @@ function _runAIChainResponse() {
     if (!cur || !cur.active) return;
 
     // activate 실행 — 내부에서 addChainLink(AI용)가 호출되어 체인 상태 갱신
-    best.activate();
+    try {
+      best.activate();
+    } catch (e) {
+      console.error('[AI 체인 activate 오류]', e);
+      _setAIThinkingState(false);
+      return;
+    }
 
     // activate 후 체인 상태 확인
     var updated = activeChainState;
-    if (!updated || !updated.active) return;
+    if (!updated || !updated.active) { _setAIThinkingState(false); return; }
 
     log('🤖 ' + best.label + ' 체인 발동!', 'opponent');
     _setAIThinkingState(false);
