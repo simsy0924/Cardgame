@@ -304,13 +304,16 @@ async function _aiTurn() {
     // 전개
     _setBanner('🤖 전개 중...');
     await _deploy(plan.deploy || []);
+
+    // 공격 — AI는 후공이므로 첫 번째 AI 턴부터 공격 가능 (선공 1턴 제한은 플레이어에게만 적용)
     advancePhase('attack');
     await _s(300);
     renderAll();
 
-    // 공격
+    // Groq plan에 attack이 없으면 폴백 공격 시도
+    var attackPlan = (plan.attack && plan.attack.length > 0) ? plan.attack : _buildAttackPlan();
     _setBanner('🤖 공격 중...');
-    await _attack(plan.attack || []);
+    await _attack(attackPlan);
     advancePhase('end');
     await _s(200);
     _aiEnd();
@@ -385,9 +388,30 @@ function _fallback() {
   return plan;
 }
 
-// ─────────────────────────────────────────────────────────────
-// 전개/공격 실행
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// 공격 플랜 생성 — Groq가 attack을 안 줬을 때 폴백
+// ─────────────────────────────────────────────
+function _buildAttackPlan() {
+  var plan = [];
+  var attackers = G.opField.slice();
+  if (G.myField.length === 0) {
+    // 직접 공격
+    attackers.forEach(function(c) { plan.push({ action:'directAttack', attackerId:c.id }); });
+  } else {
+    // 이길 수 있는 상대에게만 공격
+    attackers.forEach(function(att) {
+      var bI = -1, bG = 0;
+      G.myField.forEach(function(def, di) {
+        var g = (att.atk||0) - (def.atk||0);
+        if (g > bG) { bG = g; bI = di; }
+      });
+      if (bI >= 0) plan.push({ action:'attack', attackerId:att.id, targetIdx:bI });
+    });
+  }
+  return plan;
+}
+
+// ─────────────────────────────────────────────
 async function _deploy(actions) {
   for (var i = 0; i < actions.length; i++) {
     var act = actions[i];

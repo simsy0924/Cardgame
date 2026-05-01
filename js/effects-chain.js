@@ -134,11 +134,15 @@ function passChainPriority() {
   }
 
   if (!roomRef) {
-    // 로컬/AI 모드: 상대(AI)에게 우선권 넘기고 AI 응답 트리거
-    // AI 응답 후 AI도 패스하면 다시 플레이어에게 → passCount 2 → resolve
+    if (!window.AI || !window.AI.active) {
+      // 데모/로컬 비AI 모드: 상대도 즉시 패스 → resolve
+      next.passCount = 2;
+      resolveChain(next);
+      return;
+    }
+    // AI 모드: ai.js 훅이 처리하므로 여기선 상태만 업데이트
     activeChainState = next;
     renderChainActions();
-    // ai.js의 passChainPriority 훅이 AI 응답을 처리함
     return;
   }
 
@@ -207,30 +211,8 @@ function flushTriggeredEffects() {
   queued.slice(1).forEach(e => addChainLink(e));
 }
 
-function _resolveLocalChainWithAI(chainState) {
-  if (!window.AI || !window.AI.active) {
-    const localState = { ...chainState, passCount: 2 };
-    resolveChain(localState);
-    return;
-  }
-
-  activeChainState = { ...chainState, priority: 'guest' };
-  renderChainActions();
-
-  setTimeout(() => {
-    if (typeof window._aiRespondToChain === 'function') {
-      window._aiRespondToChain();
-      return;
-    }
-    if (typeof window._aiChainResponse === 'function') {
-      window._aiChainResponse(activeChainState);
-      return;
-    }
-
-    // 안전장치: AI 응답 함수가 없는 경우 로컬 체인이 멈추지 않도록 즉시 해결
-    resolveChain({ ...activeChainState, passCount: 2 });
-  }, 800);
-}
+// _resolveLocalChainWithAI는 제거됨 — beginChain이 발동자에게 먼저 우선권을 주므로
+// 플레이어 패스 → ai.js passChainPriority 훅 → AI 응답 트리거 흐름으로 처리됨
 
 function activateQuickEffect(effect) {
   // 퀵 효과: 자신/상대 턴 전개·공격·엔드 단계에 발동 가능. 체인에 응답으로 추가 가능.
