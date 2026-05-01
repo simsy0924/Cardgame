@@ -36,6 +36,7 @@ window.AI = {
 
 function _setAIThinkingState(on, reason) {
   if (!window.AI) return;
+  if (!window.AI.chain) window.AI.chain = { handling: false, timer: null, watcher: null, lastSig: null };
   window.AI.chain.handling = !!on;
   if (on) {
     _setBanner(reason || '🤖 체인 대응 고민 중...');
