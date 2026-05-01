@@ -88,29 +88,20 @@ function _setupChainHooks() {
     if (window.AI.active) _onChainUpdated('addChainLink');
   });
 
-  // passChainPriority — 플레이어 패스 → AI 로컬 처리
+  // passChainPriority — 플레이어 패스 → AI 응답 트리거
+  // [수정] orig.apply() 후 항상 _onChainUpdated를 호출.
+  //        원본 passChainPriority가 AI 모드일 때 priority를 'guest'로 바꾸고 return하므로
+  //        래퍼에서 _onChainUpdated를 이어서 호출해야 AI가 반응함.
   _safeHook('passChainPriority', orig => function() {
     if (!window.AI.active) { orig.apply(this, arguments); return; }
 
+    // 원본 실행 (AI 모드면 priority를 guest로 바꾸고 return)
+    orig.apply(this, arguments);
+
+    // 원본 실행 후 체인이 여전히 활성이면 AI 응답 트리거
     var live = activeChainState;
-    var isLocalPlayerPass = !roomRef && live && live.active && live.priority === myRole;
-
-    if (isLocalPlayerPass) {
-      // 로컬 AI 모드: 직접 passCount 조작
-      var next = Object.assign({}, live);
-      next.passCount = (next.passCount || 0) + 1;
-      next.priority = 'guest'; // → AI 차례
-      activeChainState = next;
-      log('체인 패스', 'system');
-
-      if (next.passCount >= 2) {
-        resolveChain(next);
-      } else {
-        renderChainActions();
-        _onChainUpdated('passChainPriority');
-      }
-    } else {
-      orig.apply(this, arguments);
+    if (live && live.active && live.priority === 'guest') {
+      _onChainUpdated('passChainPriority');
     }
   });
 
