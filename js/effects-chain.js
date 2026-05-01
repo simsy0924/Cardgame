@@ -127,23 +127,24 @@ function collectChainOptions(aiCtx) {
       opHand:  G.opHand, opField: G.opField,
       opGrave: G.opGrave, opExile: G.opExile,
       isMyTurn_val: isMyTurn,
-      effectUsed_val: Object.assign({}, effectUsed),
+      myRole_val: myRole,
     };
-    // AI 패/필드 → "내" 것처럼 교체 (condition이 G.myHand 참조하므로)
+    // AI 패/필드 → "내" 것처럼 교체
     G.myHand  = aiCtx.hand;
     G.myField = aiCtx.field;
     G.myGrave = aiCtx.grave;
     G.myExile = aiCtx.exile;
     G.myKeyDeck = aiCtx.keyDeck || [];
-    // 플레이어 패/필드 → "상대" 것처럼 교체 (condition이 G.opField 참조하므로)
+    // 플레이어 패/필드 → "상대" 것처럼 교체
     G.opHand  = _swap.hand;
     G.opField = _swap.field;
     G.opGrave = _swap.grave;
     G.opExile = _swap.exile;
-    // AI 입장에서 isMyTurn = AI 턴인지 여부
     isMyTurn  = aiCtx.isMyTurn || false;
-    // effectUsed → AI usedFx로 교체 (canUseEffect가 effectUsed를 봄)
-    if (aiCtx.usedFx) Object.assign(effectUsed, {}); // 일단 유지 (AI는 canUseEffect 대신 별도 체크)
+    // ★ 핵심: myRole을 'guest'로 교체해야 _chainHasOpponentLink() 등이 올바르게 동작
+    // condition 내부의 l.by !== myRole 에서 myRole='guest'여야
+    // 플레이어(host) 링크를 "상대 링크"로 인식함
+    myRole = 'guest';
   }
 
   const _restore = () => {
@@ -154,6 +155,7 @@ function collectChainOptions(aiCtx) {
     G.opHand  = _swap.opHand; G.opField = _swap.opField;
     G.opGrave = _swap.opGrave; G.opExile = _swap.opExile;
     isMyTurn  = _swap.isMyTurn_val;
+    myRole    = _swap.myRole_val;
     _swap = null;
   };
 
@@ -205,6 +207,7 @@ function collectChainOptions(aiCtx) {
               opHand: G.opHand, opField: G.opField,
               opGrave: G.opGrave, opExile: G.opExile,
               isMyTurn_val: isMyTurn,
+              myRole_val: myRole,
               addChainLink: window.addChainLink,
               markEffectUsed: window.markEffectUsed,
             };
@@ -216,6 +219,7 @@ function collectChainOptions(aiCtx) {
             G.opHand = s2.hand; G.opField = s2.field;
             G.opGrave = s2.grave; G.opExile = s2.exile;
             isMyTurn = capturedCtx.isMyTurn || false;
+            myRole = 'guest'; // ★ condition/_chainHasOpponentLink가 올바로 동작하도록
             // addChainLink → AI용 (by:'guest')
             window.addChainLink = function(effect, opts) {
               if (!activeChainState || !activeChainState.active) return;
@@ -242,6 +246,7 @@ function collectChainOptions(aiCtx) {
               G.opHand = s2.opHand; G.opField = s2.opField;
               G.opGrave = s2.opGrave; G.opExile = s2.opExile;
               isMyTurn = s2.isMyTurn_val;
+              myRole = s2.myRole_val || 'host';
               window.addChainLink = s2.addChainLink;
               window.markEffectUsed = s2.markEffectUsed;
             }
