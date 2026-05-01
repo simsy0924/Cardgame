@@ -211,6 +211,19 @@ function renderChainActions() {
   btnRespond.classList.toggle('hidden', !myPriority);
   btnPass.classList.toggle('hidden', !myPriority);
 
+  // AI 대전에서 상대(AI) 우선권일 때 현재 고민 상태를 버튼 텍스트로 표시
+  if (!myPriority && window.AI?.active) {
+    const aiThinking = !!window.AI.chain?.handling;
+    btnRespond.classList.remove('hidden');
+    btnPass.classList.add('hidden');
+    btnRespond.textContent = aiThinking ? 'AI가 체인 고민 중...' : 'AI 결정 대기 중...';
+    btnRespond.style.borderColor = aiThinking ? '#ea580c' : '';
+    btnRespond.style.color = aiThinking ? '#fb923c' : '';
+    btnRespond.disabled = true;
+  } else {
+    btnRespond.disabled = !myPriority;
+  }
+
   if (btnKeyFetch) {
     const noKeyCard = !G.myKeyDeck || G.myKeyDeck.length === 0;
     const inDraw = currentPhase === 'draw';

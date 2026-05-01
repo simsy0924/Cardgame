@@ -187,8 +187,9 @@ function _runAIChainResponse() {
   var options = _collectAIChainOptions(live);
   options.sort((a, b) => (b.score || 0) - (a.score || 0));
   var best = options[0] || null;
+  var willChain = _aiShouldChain(live, best, options);
 
-  if (!best) {
+  if (!best || !willChain) {
     _setBanner('🤖 체인 패스 선택 중...');
     // 패스
     setTimeout(() => {
@@ -252,6 +253,19 @@ function _runAIChainResponse() {
       }, 300);
     }
   }, 420);
+}
+
+function _aiShouldChain(chainState, bestOption, options) {
+  if (!bestOption) return false;
+  var score = Number(bestOption.score || 0);
+  var depth = (chainState && chainState.links && chainState.links.length) || 0;
+  // 점수가 낮은 선택지는 AI가 패스할 수 있게 한다.
+  // 체인이 길어질수록 기준을 조금 높여 무의미한 과체인을 줄인다.
+  var threshold = depth >= 3 ? 2.2 : 1.4;
+  if (score >= threshold) return true;
+  // 선택지 자체가 많을 때는 소극적 패스 확률 감소 (대응 폭이 넓다면 더 공격적으로)
+  if ((options || []).length >= 3 && score >= 1.0) return true;
+  return false;
 }
 
 /* 플레이어가 현재 체인에 응답할 카드를 갖고 있는지 확인
