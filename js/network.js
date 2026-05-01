@@ -409,10 +409,14 @@ function handleOpponentAction(action) {
       break;
     case 'summon': {
       const sc = CARDS[action.cardId] || {};
-      const publicIdx = G.opHand.findIndex(c => c.id === action.cardId);
-      if (publicIdx >= 0) G.opHand.splice(publicIdx, 1);
-      else if (G.opHand.length > 0) G.opHand.pop();
-      G.opField.push({ id: action.cardId, name: sc.name || action.cardId, atk: sc.atk || 0 });
+      if (!action.localApplied) {
+        const publicIdx = G.opHand.findIndex(c => c.id === action.cardId);
+        if (publicIdx >= 0) G.opHand.splice(publicIdx, 1);
+        else if (G.opHand.length > 0) G.opHand.pop();
+        if (G.opField.length < maxFieldSlots()) {
+          G.opField.push({ id: action.cardId, name: sc.name || action.cardId, atk: sc.atk || 0 });
+        }
+      }
       log(`상대 소환: ${sc.name || action.cardId}${sc.atk !== undefined ? ` (ATK ${sc.atk})` : ''}`, 'opponent');
       if (G.goldenAppleActive) {
         drawOne();
