@@ -26,6 +26,12 @@ function beginChain(effect) {
   if (!roomRef) {
     renderChainActions();
     renderAll();
+    // AI 모드: ai.js 훅(beginChain 래퍼)이 _onChainUpdated를 호출하므로
+    // 여기선 렌더만 하고 return. 훅이 없으면(비AI 로컬) 즉시 resolve.
+    if (!window.AI || !window.AI.active) {
+      // 비AI 데모 모드: 즉시 resolve
+      resolveChain({ ...chainState, passCount: 2 });
+    }
     return;
   }
 
@@ -50,56 +56,190 @@ window.CHAIN_HAND_RESPONSES = window.CHAIN_HAND_RESPONSES || {};
  * registerChainHandResponse(cardId, entries)
  * entries: [{ effectNum, label, condition(), activate(handIdx) }, ...]
  *
- * condition(): 현재 체인 상태/패/필드를 보고 발동 가능 여부 반환
+ * condition(handIdx): 현재 체인 상태/패/필드를 보고 발동 가능 여부 반환
+ *   - activeChainState가 활성 중임은 collectChainOptions()가 보장
+ *   - "상대 링크가 있어야 한다" 같은 추가 조건만 작성할 것
  * activate(handIdx): 실제 발동 함수 호출
  */
 function registerChainHandResponse(cardId, entries) {
   window.CHAIN_HAND_RESPONSES[cardId] = entries;
 }
 
+// ─────────────────────────────────────────────────────────────
+// 체인 발동자 판별 헬퍼
+// ─────────────────────────────────────────────────────────────
+
+/** 체인에 상대(myRole 기준)가 발동한 링크가 하나라도 있는가 */
+function _chainHasOpponentLink() {
+  if (!activeChainState || !activeChainState.active) return false;
+  return (activeChainState.links || []).some(l => l.by !== myRole);
+}
+
+/** 체인에 상대가 발동한 서치계 링크가 있는가 (눈에는 눈 조건) */
+function _chainHasOpponentSearchLink() {
+  if (!activeChainState || !activeChainState.active) return false;
+  return (activeChainState.links || []).some(l => {
+    if (l.by === myRole) return false; // 내 링크 제외
+    const t = String(l.type || '');
+    return t === 'keyFetch' || t.includes('search') || t.includes('Search')
+        || t === 'aiSearch' || t === 'themeEffect';
+  });
+}
+
 /**
  * collectChainOptions()
  * 현재 패를 순회하며 체인에 응답 가능한 모든 옵션을 반환
  * returns: [{ label, cardId, handIdx, activate }]
+ *
+ * [수정] 체인이 활성 중이면 레지스트리 condition을 실행.
+ * condition은 "상대 링크 존재" 같은 추가 조건만 담당.
+ * "체인이 활성 중인가"는 여기서 일괄 체크하므로 condition에서 중복 체크 불필요.
  */
-function collectChainOptions() {
+/**
+ * collectChainOptions(aiCtx?)
+ *
+ * aiCtx가 없으면 플레이어 컨텍스트로 동작.
+ * aiCtx가 있으면 전역 변수(G.myHand, G.myField 등)를 AI 데이터로 임시 교체 후
+ * 동일한 레지스트리(CHAIN_HAND_RESPONSES, CHAIN_FIELD_RESPONSES)를 실행.
+ * 이 방식 덕분에 카드를 아무리 추가해도 별도 AI 전용 코드가 필요 없음.
+ *
+ * aiCtx = {
+ *   hand: G.opHand,   field: G.opField,
+ *   grave: G.opGrave, exile: G.opExile,
+ *   keyDeck: G.opKeyDeck,
+ *   role: 'guest',
+ *   usedFx: window.AI.usedFx,  // AI usedFx
+ * }
+ */
+function collectChainOptions(aiCtx) {
   const options = [];
+  if (!activeChainState || !activeChainState.active) return options;
 
-  // 1) 키카드 가져오기 (기존)
-  if (!usedKeyFetchInChain[myRole]) {
-    (G.myKeyDeck || []).forEach(c => {
-      let canFetch = true;
-      if (c.id === '펭귄 용사'   && G.opField.length === 0) canFetch = false;
-      if (c.id === '펭귄의 전설' && G.myField.length === 0) canFetch = false;
-      if (!canFetch) return;
-      options.push({
-        label:   `[키카드] ${c.name} 가져오기`,
-        cardId:  c.id,
-        handIdx: -1,
-        activate() {
-          addChainLink({ type: 'keyFetch', label: `키 카드 가져오기 (${c.name})`, cardId: c.id });
-        },
-      });
-    });
+  // ── AI 컨텍스트 스왑 ──
+  // condition/activate 내부가 참조하는 전역 변수를 AI 데이터로 임시 교체.
+  // 실행 후 반드시 복원.
+  let _swap = null;
+  if (aiCtx) {
+    _swap = {
+      hand:  G.myHand,  field:  G.myField,
+      grave: G.myGrave, exile:  G.myExile,
+      keyDeck: G.myKeyDeck,
+      opHand:  G.opHand, opField: G.opField,
+      opGrave: G.opGrave, opExile: G.opExile,
+      isMyTurn_val: isMyTurn,
+      effectUsed_val: Object.assign({}, effectUsed),
+    };
+    // AI 패/필드 → "내" 것처럼 교체 (condition이 G.myHand 참조하므로)
+    G.myHand  = aiCtx.hand;
+    G.myField = aiCtx.field;
+    G.myGrave = aiCtx.grave;
+    G.myExile = aiCtx.exile;
+    G.myKeyDeck = aiCtx.keyDeck || [];
+    // 플레이어 패/필드 → "상대" 것처럼 교체 (condition이 G.opField 참조하므로)
+    G.opHand  = _swap.hand;
+    G.opField = _swap.field;
+    G.opGrave = _swap.grave;
+    G.opExile = _swap.exile;
+    // AI 입장에서 isMyTurn = AI 턴인지 여부
+    isMyTurn  = aiCtx.isMyTurn || false;
+    // effectUsed → AI usedFx로 교체 (canUseEffect가 effectUsed를 봄)
+    if (aiCtx.usedFx) Object.assign(effectUsed, {}); // 일단 유지 (AI는 canUseEffect 대신 별도 체크)
   }
 
-  // 2) 패의 카드 — 레지스트리 기반
-  G.myHand.forEach((handCard, handIdx) => {
-    const entries = window.CHAIN_HAND_RESPONSES[handCard.id];
-    if (!entries) return;
-    entries.forEach(entry => {
-      if (!canUseEffect(handCard.id, entry.effectNum)) return;
-      if (entry.condition && !entry.condition(handIdx)) return;
-      options.push({
-        label:   `[패] ${handCard.name} ${entry.label}`,
-        cardId:  handCard.id,
-        handIdx,
-        activate() { entry.activate(handIdx); },
+  const _restore = () => {
+    if (!_swap) return;
+    G.myHand  = _swap.hand;  G.myField = _swap.field;
+    G.myGrave = _swap.grave; G.myExile = _swap.exile;
+    G.myKeyDeck = _swap.keyDeck;
+    G.opHand  = _swap.opHand; G.opField = _swap.opField;
+    G.opGrave = _swap.opGrave; G.opExile = _swap.opExile;
+    isMyTurn  = _swap.isMyTurn_val;
+    _swap = null;
+  };
+
+  try {
+    // 1) 키카드 가져오기 (플레이어 전용 — AI는 키카드 별도 처리)
+    if (!aiCtx && !usedKeyFetchInChain[myRole]) {
+      (G.myKeyDeck || []).forEach(c => {
+        let canFetch = true;
+        if (c.id === '펭귄 용사'   && G.opField.length === 0) canFetch = false;
+        if (c.id === '펭귄의 전설' && G.myField.length === 0) canFetch = false;
+        if (!canFetch) return;
+        options.push({
+          label:   `[키카드] ${c.name} 가져오기`,
+          cardId:  c.id,
+          handIdx: -1,
+          activate() {
+            addChainLink({ type: 'keyFetch', label: `키 카드 가져오기 (${c.name})`, cardId: c.id });
+          },
+        });
+      });
+    }
+
+    // 2) 패의 카드 — 레지스트리 기반 (플레이어/AI 공용)
+    const hand = aiCtx ? aiCtx.hand : G.myHand;
+    hand.forEach((handCard, handIdx) => {
+      const entries = window.CHAIN_HAND_RESPONSES[handCard.id];
+      if (!entries) return;
+      entries.forEach(entry => {
+        // 사용 횟수 체크 — AI는 usedFx, 플레이어는 effectUsed
+        if (aiCtx) {
+          const key = handCard.id + '_' + entry.effectNum;
+          if (aiCtx.usedFx && aiCtx.usedFx[key]) return;
+        } else {
+          if (!canUseEffect(handCard.id, entry.effectNum)) return;
+        }
+        // condition 실행 (전역 변수가 이미 교체된 상태)
+        if (entry.condition && !entry.condition(handIdx)) return;
+        options.push({
+          label:   `[패] ${handCard.name} ${entry.label}`,
+          cardId:  handCard.id,
+          handIdx,
+          activate() { entry.activate(handIdx); },
+        });
       });
     });
-  });
+
+    // 3) 필드의 카드 — CHAIN_FIELD_RESPONSES (플레이어/AI 공용)
+    const field = aiCtx ? aiCtx.field : G.myField;
+    field.forEach((fieldCard, fieldIdx) => {
+      const entries = window.CHAIN_FIELD_RESPONSES && window.CHAIN_FIELD_RESPONSES[fieldCard.id];
+      if (!entries) return;
+      entries.forEach(entry => {
+        if (aiCtx) {
+          const key = fieldCard.id + '_' + entry.effectNum;
+          if (aiCtx.usedFx && aiCtx.usedFx[key]) return;
+        } else {
+          if (!canUseEffect(fieldCard.id, entry.effectNum)) return;
+        }
+        if (entry.condition && !entry.condition(fieldIdx)) return;
+        options.push({
+          label:   `[필드] ${fieldCard.name} ${entry.label}`,
+          cardId:  fieldCard.id,
+          handIdx: -3,
+          fieldIdx,
+          activate() { entry.activate(fieldIdx); },
+        });
+      });
+    });
+
+  } finally {
+    _restore();
+  }
 
   return options;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 필드 카드 체인 응답 레지스트리
+// "패로 가져올 수 없는" 카드들의 필드 발동 효과 등록
+// registerChainFieldResponse(cardId, entries)
+// entries: [{ effectNum, label, condition(fieldIdx), activate(fieldIdx) }, ...]
+// ─────────────────────────────────────────────────────────────
+window.CHAIN_FIELD_RESPONSES = window.CHAIN_FIELD_RESPONSES || {};
+
+function registerChainFieldResponse(cardId, entries) {
+  window.CHAIN_FIELD_RESPONSES[cardId] = entries;
 }
 
 function openChainResponse() {
@@ -143,12 +283,13 @@ function passChainPriority() {
 
   if (!roomRef) {
     if (!window.AI || !window.AI.active) {
-      // 데모/로컬 비AI 모드: 상대도 즉시 패스 → resolve
+      // 비AI 로컬 모드: 상대도 즉시 패스 → resolve
       next.passCount = 2;
       resolveChain(next);
       return;
     }
-    // AI 모드: ai.js 훅이 처리하므로 여기선 상태만 업데이트
+    // AI 모드: 상태를 guest 우선권으로 업데이트하고 렌더.
+    // ai.js의 passChainPriority 훅 래퍼가 이어서 _onChainUpdated()를 호출한다.
     activeChainState = next;
     renderChainActions();
     return;
@@ -217,16 +358,9 @@ function flushTriggeredEffects() {
   const queued = [...pendingTriggerEffects];
   pendingTriggerEffects = [];
 
-  // 로컬/Firebase 모두 beginChain 경로를 타도록 통일
-  // roomRef 없으면 beginChain 내부에서 _resolveLocalChainWithAI가 호출되므로
-  // 체인블록이 형성된 후 즉시 해결됨 (유발효과도 정식 체인블록을 형성)
   beginChain(queued[0]);
-  // 동시 유발효과 묶음은 체인 구성 단계에서 우선권 검사 없이 링크를 적재
   queued.slice(1).forEach(e => addChainLink(e, { force: true }));
 }
-
-// _resolveLocalChainWithAI는 제거됨 — beginChain이 발동자에게 먼저 우선권을 주므로
-// 플레이어 패스 → ai.js passChainPriority 훅 → AI 응답 트리거 흐름으로 처리됨
 
 function activateQuickEffect(effect) {
   // 퀵 효과: 자신/상대 턴 전개·공격·엔드 단계에 발동 가능. 체인에 응답으로 추가 가능.
@@ -294,7 +428,7 @@ const CHAIN_RESOLVERS = {
   // AI 효과 리졸버
   aiForceDiscard:            (link) => forceDiscard(Math.max(1, Number(link.count) || 1)),
   aiEyeForEye:               ()     => { _aiDrawN(2); log('🤖 눈에는 눈: 드로우 2장', 'opponent'); renderAll(); },
-  aiSummonDeck:              (link) => { if (link.cardId) { _aiSummonDeck(link.cardId); renderAll(); } },
+  aiSummonDeck:              (link) => { if (link.cardId) { _aiSummonFromDeck(link.cardId); renderAll(); } },
   aiSearch:                  (link) => { if (link.cardId) { _aiSearch(link.cardId); renderAll(); } },
   aiFieldCard:               (link) => {
     if (!link.cardId) return;
@@ -303,6 +437,24 @@ const CHAIN_RESOLVERS = {
     handleOpponentAction({ type:'fieldCard', cardId: link.cardId, by:'guest', ts: Date.now() });
     log('🤖 ' + card.name + ' 발동', 'opponent');
     renderAll();
+  },
+  aiGraveOpField:            (link) => { _aiGraveFromPlayerField(Number(link.count) || 1); sendGameState(); renderAll(); },
+  aiGraveAllOpField:         ()     => { _aiGraveFromPlayerField(G.myField.length); sendGameState(); renderAll(); },
+  aiExileOpField:            (link) => { _aiExileFromPlayerField(Number(link.count) || 1); sendGameState(); renderAll(); },
+  aiExileAllOpField:         ()     => { _aiExileFromPlayerField(G.myField.length); sendGameState(); renderAll(); },
+  aiReturnOpHand:            (link) => { _aiReturnToPlayerHand(Number(link.count) || 1); sendGameState(); renderAll(); },
+  aiPenguinHero1:            (link) => { if (link.searchId) _aiSearch(link.searchId); if (link.summonId) _aiSummonFromDeck(link.summonId); sendGameState(); renderAll(); },
+  aiPenguinLegend1:          (link) => {
+    (link.targets || []).forEach(id => {
+      var gi = G.opGrave.findIndex(c => c.id === id);
+      if (gi >= 0 && G.opField.length < maxFieldSlots()) {
+        var c = G.opGrave.splice(gi, 1)[0];
+        var cd = CARDS[c.id] || {};
+        G.opField.push({ id: c.id, name: cd.name || c.id, atk: cd.atk || 0, atkBase: cd.atk || 0 });
+        log('🤖 묘지 부활: ' + (cd.name || c.id), 'opponent');
+      }
+    });
+    sendGameState(); renderAll();
   },
   // 플레이어 눈에는 눈 — 상대 서치에 대응, 체인 해결 시 드로우
   eyeForEyePlayer:           ()     => { drawN(2); log('눈에는 눈: 드로우 2장!', 'mine'); sendGameState(); renderAll(); },
@@ -349,20 +501,42 @@ const CHAIN_RESOLVERS = {
   jibaeHwa1:                 ()     => resolveJibaeHwa1(),
   jibaeJeon1:                ()     => resolveJibaeJeon1(),
   jibaeFung1:                ()     => resolveJibaeFung1(),
+  // 체인 무효
+  genericNegate:             ()     => { log('효과 무효!', 'system'); sendGameState(); renderAll(); },
+  // 아자토스 ③: 필드 효과 무효 + 서로 필드 제외
+  azatothEffect3: (link) => {
+    const maxExile = Number(link.maxExile) || 0;
+    if (maxExile <= 0) { sendGameState(); renderAll(); return; }
+    // 서로 필드에서 같은 수만큼 제외
+    const myTargets  = G.myField.slice();
+    const opTargets  = G.opField.slice();
+    if (!myTargets.length && !opTargets.length) { sendGameState(); renderAll(); return; }
+    openCardPicker(myTargets, `아자토스 ③: 내 필드에서 ${maxExile}장까지 제외`, maxExile, (sel1) => {
+      sel1.sort((a,b)=>b-a).forEach(i => {
+        const c = G.myField.splice(i, 1)[0];
+        if (c) G.myExile.push(c);
+      });
+      const exileCount = sel1.length;
+      if (!exileCount || !opTargets.length) { sendGameState(); renderAll(); return; }
+      const opExileCount = Math.min(exileCount, opTargets.length);
+      openCardPicker([...G.opField], `아자토스 ③: 상대 필드에서 ${opExileCount}장 제외`, opExileCount, (sel2) => {
+        sel2.sort((a,b)=>b-a).forEach(i => {
+          const c = G.opField.splice(i, 1)[0];
+          if (c) { G.opExile.push(c); sendAction({ type: 'opFieldRemove', cardId: c.id, to: 'exile' }); }
+        });
+        log(`아자토스 ③: 서로 필드 ${exileCount}장씩 제외!`, 'mine');
+        sendGameState(); renderAll();
+      });
+    });
+  },
 };
 
 // 체인 링크를 역순으로 실행
-// - 내 링크: CHAIN_RESOLVERS로 실행
-// - 상대 링크: sendAction으로 상대 화면에서 실행 (로컬/AI 모드는 handleOpponentAction 직접 호출)
-// - negate/genericNegate 링크: 바로 다음(숫자 낮은) 링크를 무효화
 function executeChainLocally(links) {
   const negatedIndices = new Set();
 
-  // 역순(높은 체인 번호 → 낮은 번호)으로 무효 대상 마킹
   links.forEach((link, i) => {
     if (link.type === 'quickPenguinStrike1' || link.type === 'genericNegate') {
-      // 이 링크 바로 다음(원래 체인에서 하나 낮은) 링크 무효
-      // links는 이미 역순이므로 i+1이 원래 체인에서 하나 낮은 링크
       if (i + 1 < links.length) negatedIndices.add(i + 1);
     }
   });
@@ -370,20 +544,20 @@ function executeChainLocally(links) {
   links.forEach((link, i) => {
     if (negatedIndices.has(i)) {
       log(`무효: ${link.label || link.type}`, 'system');
-      return; // 무효된 링크 스킵
+      return;
     }
 
     if (link.by === myRole) {
-      // 내 링크 — 로컬 실행
       const resolver = CHAIN_RESOLVERS[link.type];
       if (resolver) resolver(link);
       else console.warn('[Chain] 알 수 없는 링크 타입:', link.type);
     } else {
-      // 상대 링크 — AI/로컬 모드에서 직접 처리
+      // 상대(AI) 링크 — CHAIN_RESOLVERS로 통일 실행
       if (window.AI && window.AI.active) {
-        _executeAIChainLink(link);
+        const resolver = CHAIN_RESOLVERS[link.type];
+        if (resolver) resolver(link);
+        else _executeAIChainLink(link); // 폴백
       }
-      // Firebase 모드에서는 상대 클라이언트가 자기 링크를 직접 실행하므로 여기서 실행 안 함
     }
   });
 
@@ -392,32 +566,22 @@ function executeChainLocally(links) {
   usedKeyFetchInChain = {};
 }
 
-// AI 체인 링크 실행 — AI(상대) 측 효과를 로컬에서 처리
+// AI 체인 링크 실행 폴백 (CHAIN_RESOLVERS에 없는 레거시 타입용)
 function _executeAIChainLink(link) {
   switch (link.type) {
     case 'aiEyeForEye':
-      _aiDrawN(2);
+      if (typeof _aiDrawN === 'function') _aiDrawN(2);
       log('🤖 눈에는 눈: 드로우 2장', 'opponent');
       break;
-    case 'aiForceDiscard':
-      // AI가 버려야 하는 경우 — sendAction 경로에서 처리됨
-      break;
-    case 'themeEffect':
-    case 'keyFetch':
-      // 상대 키카드 가져오기는 sendGameState로 동기화됨
-      break;
     default:
-      // 알 수 없는 AI 링크 — 무시
+      console.warn('[AI Chain] 알 수 없는 타입:', link.type);
       break;
   }
 }
 
 
 // ─────────────────────────────────────────────────────────────
-// 펭귄 마을 ② 지속효과 — 버려지는 카드가 공개된 펭귄 마을일 때만 가로챔
-// 체인 없이 즉시 물어봄 (지속효과)
-// callback(true)  = 마을 ②로 대체됨 → 실제 버리기 취소
-// callback(false) = 대체 안 함 → 정상 버리기 진행
+// 펭귄 마을 ② 지속효과
 // ─────────────────────────────────────────────────────────────
 function _checkVillageOnDiscard(cardId, callback) {
   if (cardId !== '펭귄 마을') { callback(false); return; }
@@ -438,7 +602,7 @@ function _checkVillageOnDiscard(cardId, callback) {
           _tryRecoverPenguinStrikeFromGrave();
           sendGameState(); renderAll();
         }
-        callback(true); // 대체 완료 → 마을 자체는 버리지 않음
+        callback(true);
       }, true);
     }
   );
@@ -450,7 +614,7 @@ function manualDiscard(handIdx) {
   selectedCardIdx = -1;
 
   _checkVillageOnDiscard(c.id, (replaced) => {
-    if (replaced) return; // 마을 ②로 대체 — 실제 버리기 없음
+    if (replaced) return;
     G.myHand.splice(handIdx, 1);
     G.myGrave.push({ id: c.id, name: c.name });
     log(`패를 버림: ${c.name}`, 'mine');
@@ -461,7 +625,6 @@ function manualDiscard(handIdx) {
   });
 }
 
-// _forcedDiscardOne: 코스트용 강제 1장 버리기
 function _forcedDiscardOne(title, callback) {
   if (G.myHand.length === 0) { callback(); return; }
   openCardPicker(G.myHand, title, 1, (sel) => {
@@ -488,16 +651,13 @@ function resolveKeyFetch(cardId) {
   const idx = G.myKeyDeck.findIndex(c => c.id === cardId);
   if (idx < 0) { notify(`키 카드 덱에 ${CARDS[cardId]?.name || cardId}가 없습니다.`); return; }
 
-  // ★ 카드별 가져오기 조건 체크
   if (cardId === '펭귄 용사') {
-    // "상대 필드에 몬스터가 존재할 경우에만 패에 넣을 수 있다"
     if (G.opField.length === 0) {
       notify('펭귄 용사: 상대 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
       return;
     }
   }
   if (cardId === '펭귄의 전설') {
-    // "자신 필드에 몬스터가 존재할 경우에만 패에 넣을 수 있다"
     if (G.myField.length === 0) {
       notify('펭귄의 전설: 자신 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
       return;
@@ -529,16 +689,14 @@ function renderFieldZones() {}
     return;
   }
 
-  // 출입통제: 상대 소환 효과를 체인으로 무효
+  // 출입통제: 체인이 활성 중이고 상대 링크가 있을 때 무효
   registerChainHandResponse('출입통제', [
     {
       effectNum: 1,
-      label: '① 상대 소환 효과 무효',
-      condition: () => {
-        if (!activeChainState || !activeChainState.active) return false;
-        // 체인에 상대 링크가 있을 때
-        return (activeChainState.links || []).some(l => l.by !== myRole);
-      },
+      label: '① 상대 효과 무효',
+      // [수정] 체인 활성은 collectChainOptions()가 보장.
+      // 여기선 "상대 링크가 있어야" 조건만 체크.
+      condition: () => _chainHasOpponentLink(),
       activate: (handIdx) => {
         G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
         log('출입통제 발동!', 'mine');
@@ -549,17 +707,14 @@ function renderFieldZones() {}
     },
   ]);
 
-  // 눈에는 눈 (범용): 이미 penguin.js에 등록되어 있으나
-  // 키카드 없는 경우도 대비해 여기서도 등록 (중복 방지: 등록 안 된 경우만)
+  // 눈에는 눈: 상대가 서치계 효과를 체인에 넣었을 때 응답
   if (!window.CHAIN_HAND_RESPONSES?.['눈에는 눈']) {
     registerChainHandResponse('눈에는 눈', [
       {
         effectNum: 1,
         label: '① 버리고 드로우 2장',
-        condition: () => {
-          if (!activeChainState || !activeChainState.active) return false;
-          return (activeChainState.links || []).some(l => l.by !== myRole);
-        },
+        // [수정] 상대 서치 링크가 체인에 있어야 함
+        condition: () => _chainHasOpponentSearchLink(),
         activate: (handIdx) => {
           G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
           markEffectUsed('눈에는 눈', 1);
@@ -570,11 +725,3 @@ function renderFieldZones() {}
     ]);
   }
 })();
-
-// CHAIN_RESOLVERS에 genericNegate 추가
-if (typeof CHAIN_RESOLVERS !== 'undefined') {
-  CHAIN_RESOLVERS.genericNegate = () => {
-    log('출입통제: 효과 무효!', 'mine');
-    sendGameState(); renderAll();
-  };
-}

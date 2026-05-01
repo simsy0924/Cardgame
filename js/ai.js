@@ -108,6 +108,11 @@ function _setupChainHooks() {
   // resolveChain → AI 체인 상태 초기화
   _safeHook('resolveChain', orig => function(chainState) {
     _clearAIChainTimer();
+    // 자동 패스 타이머도 클리어
+    if (window._chainAutoPassTimer) {
+      clearTimeout(window._chainAutoPassTimer);
+      window._chainAutoPassTimer = null;
+    }
     window.AI.chain.handling = false;
     window.AI.chain.lastSig  = null;
     return orig.apply(this, arguments);
@@ -201,11 +206,23 @@ function _runAIChainResponse() {
         resolveChain(next);
       } else {
         renderChainActions();
-        // 플레이어가 응답 불가면 즉시 resolve
         if (!_playerHasChainResponse()) {
+          // 플레이어 응답 불가 → 즉시 resolve
           var fin = Object.assign({}, next);
           fin.passCount = 2;
           resolveChain(fin);
+        } else {
+          // 플레이어에게 응답 기회 — 5초 내 반응 없으면 자동 패스
+          notify('체인 패스 — 응답하거나 패스하세요.');
+          var _autoPassT = setTimeout(() => {
+            var cur = activeChainState;
+            if (!cur || !cur.active) return;
+            if (cur.priority !== myRole) return;
+            log('⏱ 체인 자동 패스', 'system');
+            passChainPriority();
+          }, 5000);
+          // resolveChain 훅에서 타이머 클리어 — window에 임시 저장
+          window._chainAutoPassTimer = _autoPassT;
         }
       }
     }, 600);
@@ -213,30 +230,29 @@ function _runAIChainResponse() {
   }
 
   // 카드 효과 발동
+  // activate()가 _collectAIChainOptions의 래핑된 addChainLink를 호출해
+  // 체인 상태를 이미 업데이트함 → 중복 업데이트 없이 후처리만
   setTimeout(() => {
     var cur = activeChainState;
     if (!cur || !cur.active) return;
 
-    var link = best.activate();
-    if (!link) return;
+    // activate 실행 — 내부에서 addChainLink(AI용)가 호출되어 체인 상태 갱신
+    best.activate();
 
-    var next = Object.assign({}, cur);
-    next.links    = (next.links || []).concat([link]);
-    next.passCount = 0;
-    next.priority  = myRole;
-    activeChainState = next;
-    window.AI.chain.lastSig = _chainSig(next);
+    // activate 후 체인 상태 확인
+    var updated = activeChainState;
+    if (!updated || !updated.active) return;
 
-    log(`🤖 ${best.label} 체인 발동!`, 'opponent');
+    log('🤖 ' + best.label + ' 체인 발동!', 'opponent');
     renderChainActions();
     renderAll();
 
     if (_playerHasChainResponse()) {
-      notify(`체인 ${next.links.length}: ${link.label || best.label}. 응답 또는 패스를 선택하세요.`);
+      notify('체인 ' + (updated.links || []).length + ': ' + best.label + '. 응답 또는 패스를 선택하세요.');
     } else {
-      // 플레이어 응답 불가 → AI도 더 이상 응답 불가 → resolve
+      // 플레이어 응답 불가 → resolve
       setTimeout(() => {
-        var fin = Object.assign({}, activeChainState || next);
+        var fin = Object.assign({}, activeChainState || updated);
         fin.passCount = 2;
         resolveChain(fin);
       }, 300);
@@ -245,34 +261,12 @@ function _runAIChainResponse() {
 }
 
 /* 플레이어가 현재 체인에 응답할 카드를 갖고 있는지 확인
- * [수정] activeChainState가 priority===myRole일 때만 collectChainOptions()가 의미 있음.
- * 그러나 이 함수는 AI 패스 후 priority를 myRole로 돌린 직후 호출되므로
- * collectChainOptions()에 activeChainState를 직접 넘겨서 판단.
+ * collectChainOptions()를 그대로 사용 — 플레이어 레지스트리 기반으로 판단
  */
 function _playerHasChainResponse() {
   if (!activeChainState || !activeChainState.active) return false;
-  if (typeof collectChainOptions !== 'function') {
-    return Array.isArray(G.myKeyDeck) && G.myKeyDeck.length > 0;
-  }
-  // collectChainOptions는 activeChainState 기준으로 동작하므로
-  // priority를 일시적으로 myRole로 설정해두고 체크할 필요 없음.
-  // 단, 키카드는 항상 응답 가능 (체인이 활성이면)
-  var hasKey = !usedKeyFetchInChain[myRole] && (G.myKeyDeck || []).some(c => {
-    if (c.id === '펭귄 용사' && G.opField.length === 0) return false;
-    if (c.id === '펭귄의 전설' && G.myField.length === 0) return false;
-    return true;
-  });
-  if (hasKey) return true;
-  // 패의 카드 레지스트리 체크
-  return (G.myHand || []).some(card => {
-    var entries = window.CHAIN_HAND_RESPONSES && window.CHAIN_HAND_RESPONSES[card.id];
-    if (!entries) return false;
-    return entries.some(entry => {
-      if (!canUseEffect(card.id, entry.effectNum)) return false;
-      if (entry.condition && !entry.condition(-1)) return false;
-      return true;
-    });
-  });
+  if (typeof collectChainOptions !== 'function') return false;
+  return collectChainOptions().length > 0;
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -680,8 +674,20 @@ function _aiFireEffect(effect, afterResolve) {
 
   if (_playerHasChainResponse()) {
     notify(`상대가 ${link.label} 발동! 응답 또는 패스를 선택하세요.`);
+    // 플레이어가 8초 내에 반응 안 하면 자동 패스
+    var autoPassTimer = setTimeout(() => {
+      var cur = activeChainState;
+      if (!cur || !cur.active) return;
+      if (cur.priority !== myRole) return; // 이미 AI 차례면 스킵
+      log('⏱ 체인 자동 패스 (타임아웃)', 'system');
+      passChainPriority();
+    }, 8000);
+    _waitChainClear().then(() => {
+      clearTimeout(autoPassTimer);
+      afterResolve && afterResolve();
+    });
   } else {
-    // 플레이어 응답 불가 → AI도 더 이상 없으므로 즉시 resolve
+    // 플레이어 응답 불가 → 즉시 resolve
     setTimeout(() => {
       var cur = activeChainState;
       if (!cur || !cur.active) { afterResolve && afterResolve(); return; }
@@ -689,148 +695,69 @@ function _aiFireEffect(effect, afterResolve) {
       fin.passCount = 2;
       resolveChain(fin);
     }, 300);
+    _waitChainClear().then(() => afterResolve && afterResolve());
   }
-
-  _waitChainClear().then(() => afterResolve && afterResolve());
 }
 
 /* ══════════════════════════════════════════════════════════
-   AI 체인 응답 옵션 수집
+   AI 체인 응답 — collectChainOptions 재사용
+   별도 AI 전용 레지스트리 없음. 플레이어와 동일한 CHAIN_HAND_RESPONSES/
+   CHAIN_FIELD_RESPONSES를 사용하되, 전역 컨텍스트를 AI 데이터로 교체해서 실행.
+   카드를 추가할 때 registerChainHandResponse()만 등록하면 AI도 자동 작동.
 ═══════════════════════════════════════════════════════════ */
-function _collectAIChainOptions(chainState) {
-  var options = [];
-  var live = chainState || activeChainState;
-  if (!live || !live.active) return options;
-
-  var links = live.links || [];
-  // [수정] hasPlayerChain: 체인에 플레이어 링크가 있는가 (AI 응답 무효계 조건용)
-  var hasPlayerChain = links.some(l => l.by === 'host' || l.by === myRole);
-  // [수정] hasPlayerSearchLink: 플레이어 서치 링크가 있는가 (눈에는 눈 조건용)
-  var hasPlayerSearchLink = links.some(l => {
-    if (l.by !== 'host' && l.by !== myRole) return false;
-    var t = String(l.type || '');
-    return t === 'keyFetch' || t.includes('search') || t.includes('Search') || t === 'themeEffect';
-  });
-
-  var analysis = _analyzeChain(live);
-  var ctx = {
-    chainState: live,
-    hasPlayerChain,        // 플레이어 링크 존재 여부
-    hasPlayerSearchLink,   // 플레이어 서치 링크 여부
-    analysis,
-  };
-
-  G.opHand.forEach((card, idx) => {
-    var entries = window.AI_CHAIN_HAND_RESPONSES && window.AI_CHAIN_HAND_RESPONSES[card.id];
-    if (!entries) return;
-    entries.forEach(entry => {
-      if (!_aiCanUse(card.id, entry.effectNum)) return;
-      // [수정] condition이 없으면 체인이 활성인 것만으로 발동 허용
-      if (entry.condition && !entry.condition(ctx, idx, card)) return;
-      options.push({
-        id:     card.id,
-        label:  entry.label || card.id,
-        score:  _scoreOption(entry, ctx, card),
-        activate: () => entry.activate(ctx, idx, card),
-      });
-    });
-  });
-
-  return options;
-}
-
-function _analyzeChain(state) {
-  var links = state.links || [];
-  var playerLinks = links.filter(l => l.by === 'host' || l.by === myRole);
-  var aiLinks     = links.filter(l => l.by === 'guest');
-  var hasSearch   = playerLinks.some(l => {
-    var t = String(l.type || '');
-    return t === 'keyFetch' || t.includes('search') || t.includes('Search') || t === 'themeEffect';
-  });
-  var hasDangerous = playerLinks.some(l => ['negate','grave','exile','destroy'].some(kw => String(l.type).includes(kw)));
-  return {
-    playerLinks, aiLinks,
-    playerLinkCount: playerLinks.length,
-    aiLinkCount:     aiLinks.length,
-    hasSearch, hasDangerous,
-    aiHandCount:  G.opHand.length,
-    myHandCount:  G.myHand.length,
-    aiFieldCount: G.opField.length,
-    myFieldCount: G.myField.length,
-  };
-}
-
-function _scoreOption(entry, ctx, card) {
-  var score = Number(entry.score) || 0;
-  if (ctx.analysis.hasDangerous && card.id === '출입통제') score += 30;
-  if (ctx.analysis.hasSearch    && card.id === '눈에는 눈') score += 20;
-  if (ctx.analysis.aiHandCount <= 2) score += 10; // 패가 적으면 더 적극적
-  if (ctx.analysis.playerLinkCount > ctx.analysis.aiLinkCount) score += 5;
-  return score;
-}
 
 function _aiCanUse(id, n)  { return !window.AI.usedFx[id + '_' + n]; }
 function _aiMarkUsed(id, n){ window.AI.usedFx[id + '_' + n] = 1; }
 
-/* ══════════════════════════════════════════════════════════
-   AI 체인 응답 카드 레지스트리
-═══════════════════════════════════════════════════════════ */
-window.AI_CHAIN_HAND_RESPONSES = window.AI_CHAIN_HAND_RESPONSES || {};
-function registerAIChainHandResponse(cardId, entries) {
-  window.AI_CHAIN_HAND_RESPONSES[cardId] = entries;
-}
+/**
+ * AI용 체인 옵션 수집.
+ * collectChainOptions(aiCtx)에 AI 컨텍스트를 넘겨 플레이어 레지스트리를 그대로 실행.
+ * activate() 내부에서 G.myHand/G.myGrave/addChainLink 등을 호출하는데,
+ * 컨텍스트 스왑 덕분에 AI 데이터를 가리키게 됨.
+ * 단, activate()의 addChainLink는 AI용 버전(by:'guest')으로 래핑해서 실행.
+ */
+function _collectAIChainOptions(live) {
+  if (!live || !live.active) return [];
 
-// 눈에는 눈 — 상대 서치에 대응, 드로우 2장
-// [수정] hasPlayerSearchLink: 플레이어가 서치계 링크를 체인에 넣었을 때만
-registerAIChainHandResponse('눈에는 눈', [{
-  effectNum: 1,
-  label: '눈에는 눈',
-  score: 45,
-  condition: ctx => ctx.hasPlayerSearchLink,
-  activate: (ctx, idx, card) => {
-    _aiMarkUsed('눈에는 눈', 1);
-    _aiDiscard('눈에는 눈');
-    _aiDrawN(2);
-    log('🤖 눈에는 눈: 드로우 2장', 'opponent');
+  // AI 컨텍스트 생성
+  var aiCtx = {
+    hand:     G.opHand,
+    field:    G.opField,
+    grave:    G.opGrave,
+    exile:    G.opExile,
+    keyDeck:  G.opKeyDeck || [],
+    isMyTurn: false,      // AI는 항상 "상대 턴" 입장
+    usedFx:   window.AI.usedFx,
+  };
+
+  // activate() 내부의 addChainLink, G.myGrave.push 등이
+  // 컨텍스트 스왑으로 AI 데이터를 가리키므로
+  // 추가로 addChainLink를 AI용으로 래핑
+  var origAddChainLink = window.addChainLink;
+  // AI 체인 응답 시: addChainLink 대신 직접 체인 상태 조작
+  window.addChainLink = function(effect, opts) {
+    if (!activeChainState || !activeChainState.active) return;
+    var aiLink = Object.assign({}, effect, { by: 'guest' });
+    var next = Object.assign({}, activeChainState);
+    next.links    = (next.links || []).concat([aiLink]);
+    next.passCount = 0;
+    next.priority  = myRole; // 플레이어에게 우선권
+    activeChainState = next;
+    window.AI.chain.lastSig = typeof _chainSig === 'function' ? _chainSig(next) : null;
+    log('🤖 ' + (effect.label || effect.type) + ' 체인 발동!', 'opponent');
+    renderChainActions();
     renderAll();
-    return { type: 'aiEyeForEye', label: '눈에는 눈 (AI)', by: 'guest' };
-  },
-}]);
+  };
 
-// 출입통제 — 상대 소환/효과 무효
-registerAIChainHandResponse('출입통제', [{
-  effectNum: 1,
-  label: '출입통제',
-  score: 85,
-  condition: ctx => ctx.hasPlayerChain,
-  activate: (ctx, idx, card) => {
-    _aiMarkUsed('출입통제', 1);
-    _aiDiscard('출입통제');
-    log('🤖 출입통제: 효과 무효!', 'opponent');
-    return { type: 'genericNegate', label: '출입통제 (AI)', by: 'guest' };
-  },
-}]);
+  var options;
+  try {
+    options = collectChainOptions(aiCtx);
+  } finally {
+    window.addChainLink = origAddChainLink;
+  }
 
-// 펭귄의 일격 — 코스트(자신+1장 버리기) → 체인 무효
-registerAIChainHandResponse('펭귄의 일격', [{
-  effectNum: 1,
-  label: '펭귄의 일격',
-  score: 95,
-  condition: (ctx, idx, card) => ctx.hasPlayerChain && G.opHand.length >= 2,
-  activate: (ctx, idx, card) => {
-    _aiMarkUsed('펭귄의 일격', 1);
-    _aiDiscard('펭귄의 일격');
-    // 추가 코스트: 가치 낮은 카드 1장 버리기
-    var sacrificeIdx = G.opHand.findIndex(c => c.id !== '눈에는 눈' && c.id !== '출입통제');
-    if (sacrificeIdx < 0 && G.opHand.length > 0) sacrificeIdx = 0;
-    if (sacrificeIdx >= 0) {
-      var sacrifice = G.opHand.splice(sacrificeIdx, 1)[0];
-      if (sacrifice) G.opGrave.push(sacrifice);
-    }
-    log('🤖 펭귄의 일격: 체인 무효!', 'opponent');
-    return { type: 'genericNegate', label: '펭귄의 일격 ① (AI)', by: 'guest' };
-  },
-}]);
+  return options;
+}
 
 /* ══════════════════════════════════════════════════════════
    AI 소환 유발효과 레지스트리
