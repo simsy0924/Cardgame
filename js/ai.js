@@ -138,7 +138,7 @@ function _chainSig(state) {
 }
 
 
-function _forceAIPassCurrentChain(reason) {
+function _forceAIResolveCurrentChain(reason) {
   var cur = activeChainState;
   if (!cur || !cur.active || cur.priority !== 'guest') return;
   var next = Object.assign({}, cur);
@@ -146,14 +146,12 @@ function _forceAIPassCurrentChain(reason) {
   next.priority = 'host';
   activeChainState = next;
   window.AI.chain.lastSig = _chainSig(next);
-  log('🤖 AI: 강제 체인 패스' + (reason ? ' (' + reason + ')' : ''), 'system');
+  log('🤖 AI: 강제 체인 해결' + (reason ? ' (' + reason + ')' : ''), 'system');
   _setAIThinkingState(false);
   renderChainActions();
-  if (next.passCount >= 2 || !_playerHasChainResponse()) {
-    var fin = Object.assign({}, next);
-    fin.passCount = 2;
-    resolveChain(fin);
-  }
+  var fin = Object.assign({}, next);
+  fin.passCount = 2;
+  resolveChain(fin);
 }
 
 function _clearAIChainTimer() {
@@ -209,7 +207,7 @@ function _runAIChainResponse() {
     if (!st || !st.active) return;
     if (st.priority !== 'guest') return;
     if (_chainSig(st) !== sig) return;
-    _forceAIPassCurrentChain('watchdog');
+    _forceAIResolveCurrentChain('watchdog');
   }, 1800);
 
   // 응답 옵션 수집
