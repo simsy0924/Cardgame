@@ -4,7 +4,8 @@ function beginChain(effect) {
   const chainState = {
     active: true,
     startedBy: myRole,
-    priority: myRole === 'host' ? 'guest' : 'host',
+    // 발동자 본인에게 먼저 우선권 — 추가 체인 여부 결정 후 상대에게 넘김
+    priority: myRole,
     passCount: 0,
     links: [{ ...effect, by: myRole }],
   };
@@ -13,7 +14,10 @@ function beginChain(effect) {
   log(`체인 1: ${effect.label} 발동`, 'mine');
 
   if (!roomRef) {
-    _resolveLocalChainWithAI(chainState);
+    // 로컬/AI: 발동자(플레이어)에게 응답 기회 부여
+    // renderChainActions()로 응답/패스 버튼 표시 → 플레이어가 패스하면 AI로 넘어감
+    renderChainActions();
+    renderAll();
     return;
   }
 
@@ -130,9 +134,11 @@ function passChainPriority() {
   }
 
   if (!roomRef) {
-    // 로컬/데모: 상대도 자동 패스 → 즉시 해결
-    next.passCount = 2;
-    resolveChain(next);
+    // 로컬/AI 모드: 상대(AI)에게 우선권 넘기고 AI 응답 트리거
+    // AI 응답 후 AI도 패스하면 다시 플레이어에게 → passCount 2 → resolve
+    activeChainState = next;
+    renderChainActions();
+    // ai.js의 passChainPriority 훅이 AI 응답을 처리함
     return;
   }
 
@@ -149,14 +155,16 @@ function addChainLink(effect) {
   }
   const next = { ...activeChainState };
   next.links = [...(next.links || []), { ...effect, by: myRole }];
-  next.priority = myRole === 'host' ? 'guest' : 'host';
+  // 추가한 본인에게 먼저 우선권 → 추가 체인 여부 결정 후 상대에게 넘김
+  next.priority = myRole;
   next.passCount = 0;
   activeChainState = next;
   if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
   log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
 
   if (!roomRef) {
-    _resolveLocalChainWithAI(next);
+    renderChainActions();
+    renderAll();
     return;
   }
   roomRef.child('chainState').set(next);

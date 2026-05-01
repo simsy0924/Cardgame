@@ -423,17 +423,67 @@ async function _attack(actions) {
 
 function _aiStartChainEffect(effect, afterResolve) {
   if (!window.AI.active) { if (typeof afterResolve === 'function') afterResolve(); return; }
-  var localEffect = (!roomRef && effect) ? { ...effect, by: myRole } : effect;
+
+  // AI 효과는 항상 by:'guest' (AI=후공=guest)
+  var aiEffect = Object.assign({}, effect, { by: getOtherRole(myRole) });
+
   if (activeChainState && activeChainState.active) {
-    if (typeof addChainLink === 'function') addChainLink(localEffect);
-    if (typeof afterResolve === 'function') setTimeout(afterResolve, 200);
+    // 기존 체인에 AI 링크 추가 — 직접 상태 조작 (addChainLink는 myRole 기준)
+    var next = Object.assign({}, activeChainState);
+    next.links = (next.links || []).concat([aiEffect]);
+    next.passCount = 0;
+    next.priority = myRole; // 플레이어에게 응답 기회
+    activeChainState = next;
+    renderChainActions();
+    if (_playerCanRespondInChain(next)) {
+      notify(`체인 ${next.links.length}: ${aiEffect.label}. 응답 또는 패스를 선택하세요.`);
+    } else {
+      setTimeout(function() {
+        if (!activeChainState || !activeChainState.active) return;
+        resolveChain(Object.assign({}, activeChainState, { passCount: 2 }));
+      }, 300);
+    }
+    if (typeof afterResolve === 'function') {
+      var _wait = function() {
+        if (activeChainState && activeChainState.active) { setTimeout(_wait, 150); return; }
+        afterResolve();
+      };
+      setTimeout(_wait, 200);
+    }
     return;
   }
-  if (typeof beginChain === 'function') beginChain(localEffect);
-  setTimeout(function waitChainDone() {
-    if (activeChainState && activeChainState.active) { setTimeout(waitChainDone, 150); return; }
-    if (typeof afterResolve === 'function') afterResolve();
-  }, 200);
+
+  // AI가 새 체인1을 여는 경우 — 직접 체인 상태 생성 후 플레이어에게 우선권
+  var chainState = {
+    active: true,
+    startedBy: getOtherRole(myRole),
+    priority: myRole, // 플레이어가 먼저 응답
+    passCount: 0,
+    links: [aiEffect],
+  };
+  activeChainState = chainState;
+  log(`체인 1: ${aiEffect.label} (AI 발동)`, 'opponent');
+  renderChainActions();
+  renderAll();
+
+  if (_playerCanRespondInChain(chainState)) {
+    notify(`상대가 ${aiEffect.label} 발동! 응답 또는 패스를 선택하세요.`);
+    // 플레이어가 패스하면 passChainPriority 훅에서 AI 재트리거
+  } else {
+    // 플레이어 응답 수단 없음 → 즉시 해결
+    setTimeout(function() {
+      if (!activeChainState || !activeChainState.active) return;
+      resolveChain(Object.assign({}, activeChainState, { passCount: 2 }));
+    }, 500);
+  }
+
+  if (typeof afterResolve === 'function') {
+    var _wait2 = function() {
+      if (activeChainState && activeChainState.active) { setTimeout(_wait2, 150); return; }
+      afterResolve();
+    };
+    setTimeout(_wait2, 200);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -672,33 +722,32 @@ function _aiChainResponse(chainState) {
   if (eyeIdx >= 0 && _aiCanUse('눈에는 눈', 1) && hasHostChain) canRespond = true;
 
   if (!canRespond) {
-    // 패스
+    // 패스 — 플레이어에게 우선권 돌려줌
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) return;
       var next = Object.assign({}, activeChainState);
       next.passCount = (next.passCount || 0) + 1;
-      next.priority = 'host';
+      next.priority = myRole; // 플레이어에게
       log('🤖 AI: 패스', 'opponent');
       activeChainState = next;
 
       if (next.passCount >= 2) {
         resolveChain(next);
       } else {
+        renderChainActions();
         if (!_playerCanRespondInChain(next)) {
+          // 플레이어도 응답 수단 없으면 즉시 resolve
           next.passCount = 2;
           activeChainState = next;
           resolveChain(next);
-          return;
         }
-        renderChainActions();
-        if (typeof openChainResponse === 'function') openChainResponse();
+        // 응답 수단 있으면 버튼이 표시됐으므로 대기
       }
     }, 600);
     return;
   }
 
-  // AI 눈에는 눈 발동 — addChainLink를 통해 체인블록 정식 등록
-  // 효과 실행(드로우)은 resolveChain 시점에 처리되도록 CHAIN_RESOLVERS에 등록
+  // AI 눈에는 눈 발동 — 체인블록 정식 등록
   setTimeout(function() {
     if (!activeChainState || !activeChainState.active) return;
     var eyeIdx2 = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
@@ -706,17 +755,28 @@ function _aiChainResponse(chainState) {
     _aiMarkUsed('눈에는 눈', 1);
     _aiDiscard('눈에는 눈');
     log('🤖 눈에는 눈 체인 발동!', 'opponent');
-    // addChainLink 대신 직접 상태 조작 (AI는 guest이므로 myRole의 반대쪽)
     var next = Object.assign({}, activeChainState);
     next.links = (next.links || []).concat([{ type: 'aiEyeForEye', label: '눈에는 눈 (AI)', by: getOtherRole(myRole) }]);
     next.passCount = 0;
     next.priority = myRole; // 플레이어에게 응답 기회
     activeChainState = next;
-    if (roomRef) {
-      roomRef.child('chainState').set(next);
-    }
+    if (roomRef) roomRef.child('chainState').set(next);
     renderChainActions();
     renderAll();
+    // 플레이어에게 응답 기회 명시적으로 알림
+    if (_playerCanRespondInChain(next)) {
+      notify(`체인 ${next.links.length}: 눈에는 눈 (AI). 응답 또는 패스를 선택하세요.`);
+    } else {
+      // 플레이어 응답 수단 없음 → 패스 카운트 올리고 해결
+      next.passCount = 1;
+      activeChainState = next;
+      setTimeout(function() {
+        if (!activeChainState || !activeChainState.active) return;
+        var final = Object.assign({}, activeChainState);
+        final.passCount = 2;
+        resolveChain(final);
+      }, 300);
+    }
   }, 400);
 }
 
@@ -724,7 +784,10 @@ function _aiChainResponse(chainState) {
 function _playerCanRespondInChain(state) {
   if (!state || !state.active) return false;
   if (state.priority !== 'host') return false;
-  if (usedKeyFetchInChain && usedKeyFetchInChain.host) return false;
+  // 키카드 또는 패의 체인 응답 카드가 있으면 응답 가능
+  if (typeof collectChainOptions === 'function') {
+    return collectChainOptions().length > 0;
+  }
   return Array.isArray(G.myKeyDeck) && G.myKeyDeck.length > 0;
 }
 
