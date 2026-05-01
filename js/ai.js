@@ -989,6 +989,30 @@ function _registerDefaultAIChainResponses() {
       return { type: 'genericNegate', label: '출입통제 (AI)', by: getOtherRole(myRole) };
     },
   }]);
+
+  // 펭귄의 일격 ① (AI)
+  // 코스트: 이 카드 외 패 1장 버리기 → 상대 체인 1개 무효
+  registerAIChainHandResponse('펭귄의 일격', [{
+    effectNum: 1,
+    score: 95,
+    condition: function(ctx) {
+      if (!ctx.hasHostChain) return false;
+      // 코스트(자기 자신 + 다른 패 1장) 지불 가능해야 함
+      return Array.isArray(G.opHand) && G.opHand.length >= 2;
+    },
+    activate: function() {
+      if (!_aiDiscard('펭귄의 일격')) return null;
+      // 추가 코스트: 임의 카드 1장 버리기 (눈에는 눈/출입통제는 우선 보존)
+      var extraIdx = G.opHand.findIndex(function(c) {
+        return c && c.id !== '눈에는 눈' && c.id !== '출입통제';
+      });
+      if (extraIdx < 0) extraIdx = 0;
+      var extra = G.opHand.splice(extraIdx, 1)[0];
+      if (extra) G.opGrave.push(extra);
+      _aiMarkUsed('펭귄의 일격', 1);
+      return { type: 'genericNegate', label: '펭귄의 일격 ① (AI)', by: getOtherRole(myRole) };
+    },
+  }]);
 }
 
 _registerDefaultAIChainResponses();
