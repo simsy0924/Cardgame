@@ -1,7 +1,13 @@
 
 // effects-chain.js — 체인/유발/퀵 이펙트 처리
+function nextChainId() {
+  window._CHAIN_SEQ = (window._CHAIN_SEQ || 0) + 1;
+  return 'chain_' + String(window._CHAIN_SEQ);
+}
+
 function beginChain(effect) {
   const chainState = {
+    chainId: nextChainId(),
     active: true,
     startedBy: myRole,
     // 발동자 본인에게 먼저 우선권 — 추가 체인 여부 결정 후 상대에게 넘김
