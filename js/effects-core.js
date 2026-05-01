@@ -1,3 +1,4 @@
+
 // effects-core.js — 턴/전투/승리 등 공용 게임 효과
 
 // effects.js — 페이즈, 전투, 승리조건, 체인, 범용 카드 효과
@@ -193,73 +194,54 @@ function _resolveForceDiscardWithGuard(dmg) {
 }
 
 // ─────────────────────────────────────────────
-// 펭귄 마을 ② 공통 헬퍼
-// 패 버리기가 발생하는 모든 경로에서 호출.
-// 조건 충족 시 gameConfirm → 대신 필드 펭귄 묘지 or 나머지 패 버리기.
-// done(true)  = 마을 ②로 전부 대체됨 (추가 버리기 불필요)
-// done(false) = 마을 미발동 또는 부족분 → 일반 버리기 진행
-// ─────────────────────────────────────────────
-function _tryVillageReplace(n, onSkip) {
-  const villageIdx    = G.myHand.findIndex(c => c.id === '펭귄 마을' && c.isPublic);
-  const fieldPenguins = G.myField.filter(c => isPenguinMonster(c.id));
-  if (villageIdx < 0 || fieldPenguins.length === 0 || n <= 0) { onSkip(n); return; }
-
-  gameConfirm(
-    `펭귄 마을 ② 발동?\n패 ${n}장 버리는 대신 필드 펭귄 몬스터를 묘지로 보냅니다.`,
-    (yes) => {
-      if (!yes) { onSkip(n); return; }
-      const maxReplace = Math.min(n, fieldPenguins.length);
-      openCardPicker(
-        fieldPenguins,
-        `펭귄 마을 ②: 묘지로 보낼 펭귄 몬스터 (최대 ${maxReplace}장)`,
-        maxReplace,
-        (sel) => {
-          const sent = sel.length;
-          sel.forEach(i => {
-            const mon = fieldPenguins[i];
-            sendToGrave(mon.id, 'field');
-            if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
-          });
-          _tryRecoverPenguinStrikeFromGrave();
-          const remaining = n - sent;
-          if (remaining > 0) onSkip(remaining); // 부족분은 일반 버리기
-          else { sendGameState(); renderAll(); checkWinCondition(); }
-        },
-        true // forced
-      );
-    }
-  );
-}
-
-// ─────────────────────────────────────────────
-// forceDiscard — 패 n장 강제 버리기 (항상 내가 직접 선택, 취소 불가)
-// 펭귄 마을 ②: 버리기 전 대체 가능 여부 먼저 체크
+// forceDiscard — 패 n장 강제 버리기
+// 선택한 카드 중 공개된 펭귄 마을이 있으면 ②로 대체 여부를 물음
 // ─────────────────────────────────────────────
 function forceDiscard(n) {
   if (G.myHand.length === 0) { checkWinCondition(); return; }
   const actualN = Math.min(n, G.myHand.length);
 
-  _tryVillageReplace(actualN, (rem) => {
-    const remN = Math.min(rem, G.myHand.length);
-    if (remN <= 0) { sendGameState(); renderAll(); checkWinCondition(); return; }
-    openCardPicker(
-      G.myHand,
-      `패를 ${remN}장 버려야 합니다 (${remN}장 선택)`,
-      remN,
-      (selected) => {
-        selected.sort((a, b) => b - a).forEach(i => {
-          if (G.myHand[i]) G.myGrave.push(G.myHand.splice(i, 1)[0]);
-        });
-        // 덜 선택된 경우 무작위로 채움 (비공개패 보호 불가)
-        const shortage = remN - selected.length;
-        for (let i = 0; i < shortage && G.myHand.length > 0; i++) {
-          G.myGrave.push(G.myHand.splice(Math.floor(Math.random() * G.myHand.length), 1)[0]);
+  openCardPicker(G.myHand, `패를 ${actualN}장 버려야 합니다`, actualN, (selected) => {
+    const indices = [...selected].sort((a, b) => b - a);
+
+    // 선택된 카드 중 공개된 펭귄 마을이 있는지 확인
+    const villageSelIdx = selected.find(i => G.myHand[i]?.id === '펭귄 마을' && G.myHand[i]?.isPublic);
+    const fieldPenguins = G.myField.filter(c => isPenguinMonster(c.id));
+
+    const doDiscard = () => {
+      indices.forEach(i => {
+        if (G.myHand[i]) G.myGrave.push(G.myHand.splice(i, 1)[0]);
+      });
+      sendGameState(); renderAll(); checkWinCondition();
+    };
+
+    if (villageSelIdx !== undefined && fieldPenguins.length > 0) {
+      gameConfirm(
+        `펭귄 마을 ②\n버리는 대신 필드의 펭귄 몬스터를 묘지로 보냅니까?`,
+        (yes) => {
+          if (yes) {
+            openCardPicker(fieldPenguins, '펭귄 마을 ②: 대신 묘지로 보낼 펭귄 몬스터', 1, (sel) => {
+              if (sel.length > 0) {
+                const mon = fieldPenguins[sel[0]];
+                sendToGrave(mon.id, 'field');
+                log(`펭귄 마을 ②: ${mon.name} 대신 묘지`, 'mine');
+                if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
+                _tryRecoverPenguinStrikeFromGrave();
+              }
+              // 마을 제외 나머지만 버리기
+              const remainIdx = indices.filter(i => i !== villageSelIdx).sort((a, b) => b - a);
+              remainIdx.forEach(i => { if (G.myHand[i]) G.myGrave.push(G.myHand.splice(i, 1)[0]); });
+              sendGameState(); renderAll(); checkWinCondition();
+            }, true);
+          } else {
+            doDiscard();
+          }
         }
-        sendGameState(); renderAll(); checkWinCondition();
-      },
-      true // forced — 취소 불가
-    );
-  });
+      );
+    } else {
+      doDiscard();
+    }
+  }, true);
 }
 
 // ─────────────────────────────────────────────

@@ -1,3 +1,4 @@
+
 // network.js — Firebase 연결, 방 생성/참가, 게임 상태 동기화
 // FIREBASE GAME STATE SYNC
 // ─────────────────────────────────────────────
@@ -364,7 +365,22 @@ function listenGameActions() {
 }
 
 function sendAction(action) {
-  if (!roomRef) return;
+  if (!roomRef) {
+    // AI 모드: forceDiscard는 AI가 직접 처리
+    if (action.type === 'forceDiscard' && window.AI && window.AI.active) {
+      const n = action.count || 1;
+      log(`🤖 AI: 패 ${n}장 버리기 (${action.reason || '효과'})`, 'opponent');
+      // AI 패에서 무작위 n장 버리기
+      for (let i = 0; i < n && G.opHand.length > 0; i++) {
+        const idx = Math.floor(Math.random() * G.opHand.length);
+        const c = G.opHand.splice(idx, 1)[0];
+        G.opGrave.push({ id: c.id, name: c.name || '?' });
+        if (c.id && c.id !== 'unknown') log(`🤖 버림: ${c.name}`, 'opponent');
+      }
+      sendGameState(); renderAll(); checkWinCondition();
+    }
+    return;
+  }
   action.by = myRole;
   action.ts = Date.now();
   roomRef.update({ lastAction: action });
@@ -377,30 +393,27 @@ function handleOpponentAction(action) {
       break;
     case 'search':
       // 상대가 서치 → 눈에는 눈 자동 체크
-      log(`상대 서치: ${action.cardName || ''}`, 'opponent');
+      log(`상대 서치: ${action.cardName || '(카드명 미공개)'}`, 'opponent');
       { const eyeIdx = G.myHand.findIndex(c => c.id === '눈에는 눈');
         if (eyeIdx >= 0 && canUseEffect('눈에는 눈', 1)) {
-          gameConfirm('눈에는 눈 발동? (드로우 2장)', (yes) => {
+          gameConfirm(`상대가 서치 → 눈에는 눈 발동? (버리고 드로우 2장)`, (yes) => {
             if (!yes) return;
             markEffectUsed('눈에는 눈', 1);
+            // 체인블록 형성 후 발동
             G.myHand.splice(eyeIdx, 1);
             G.myGrave.push({ id: '눈에는 눈', name: '눈에는 눈' });
-            drawN(2);
-            log('눈에는 눈: 드로우 2장!', 'mine');
-            sendGameState(); renderAll();
+            beginChain({ type: 'eyeForEyePlayer', label: '눈에는 눈' });
           });
         }
       }
       break;
     case 'summon': {
       const sc = CARDS[action.cardId] || {};
-      // Remove from opponent hand
       const publicIdx = G.opHand.findIndex(c => c.id === action.cardId);
       if (publicIdx >= 0) G.opHand.splice(publicIdx, 1);
       else if (G.opHand.length > 0) G.opHand.pop();
       G.opField.push({ id: action.cardId, name: sc.name || action.cardId, atk: sc.atk || 0 });
-      log(`상대 소환: ${sc.name || action.cardId}`, 'opponent');
-      // 유혹의 황금사과: 상대 소환 시 내가 드로우
+      log(`상대 소환: ${sc.name || action.cardId}${sc.atk !== undefined ? ` (ATK ${sc.atk})` : ''}`, 'opponent');
       if (G.goldenAppleActive) {
         drawOne();
         log('유혹의 황금사과: 상대 소환으로 드로우!', 'mine');
@@ -416,7 +429,7 @@ function handleOpponentAction(action) {
       if (ahi >= 0) G.opHand.splice(ahi, 1);
       else if (G.opHand.length > 0) G.opHand.pop();
       G.opGrave.push({ id: action.cardId, name: ac.name });
-      log(`상대 ${action.type === 'discard' ? '버림' : '발동'}: ${ac.name}`, 'opponent');
+      log(`상대 ${action.type === 'discard' ? '패 버림' : '효과 발동'}: ${ac.name}`, 'opponent');
       renderAll();
       break;
     }
@@ -426,7 +439,7 @@ function handleOpponentAction(action) {
       if (fhi >= 0) G.opHand.splice(fhi, 1);
       else if (G.opHand.length > 0) G.opHand.pop();
       G.opFieldCard = { id: action.cardId, name: fc.name };
-      log(`상대 필드 카드: ${fc.name}`, 'opponent');
+      log(`상대 필드 마법 발동: ${fc.name}`, 'opponent');
       renderAll();
       break;
     }
@@ -434,24 +447,40 @@ function handleOpponentAction(action) {
       handleOpponentCombat(action);
       break;
     case 'directAttack':
-      log(`상대 직접 공격! 패 ${action.card.atk}장 피해`, 'opponent');
+      log(`상대 직접 공격! 내 패 ${action.card.atk}장 피해`, 'opponent');
       notify(`직접 공격 당함! 패 ${action.card.atk}장 버려야 합니다`);
-      // 펭귄 마을 ②, 구사일생 포함 피해 처리
       _resolveCombatDamage(action.card.atk);
       break;
     case 'forceDiscard':
       {
         const cnt = action.count || 0;
         const reason = action.reason ? ` (${action.reason})` : '';
-        log(`상대 효과: 패 ${cnt}장 버리기${reason}`, 'opponent');
-        notify(`패 ${cnt}장을 골라 버려야 합니다!${reason}`);
-        forceDiscard(cnt);
+
+        if (action.attackerPicks) {
+          // 공격자(상대)가 내 패를 직접 고르는 경우
+          // 내 패 전체를 보여주고 상대가 고름 (비공개 포함)
+          log(`상대 효과: 내 패 ${cnt}장 선택 버리기${reason}`, 'opponent');
+          notify(`상대가 내 패 ${cnt}장을 고릅니다!${reason}`);
+          // 내 패를 공개 상태로 표시해서 picker 열기
+          const handSnapshot = G.myHand.map((c, i) => ({ ...c, _handIdx: i }));
+          openCardPicker(handSnapshot, `상대가 선택: 패 ${cnt}장 버리기${reason}`, cnt, (sel) => {
+            sel.sort((a, b) => b - a).forEach(i => {
+              const realIdx = handSnapshot[i]._handIdx;
+              if (G.myHand[realIdx]) G.myGrave.push(G.myHand.splice(realIdx, 1)[0]);
+            });
+            sendGameState(); renderAll(); checkWinCondition();
+          }, true);
+        } else {
+          // 상대 효과지만 내가 직접 고르는 경우 (기본)
+          log(`상대 효과: 내 패 ${cnt}장 버리기 강제${reason}`, 'opponent');
+          notify(`패 ${cnt}장을 골라 버려야 합니다!${reason}`);
+          forceDiscard(cnt);
+        }
       }
       break;
     case 'revealAllHand':
-      // 상대가 내 패를 전부 공개
       G.myHand.forEach(c => { c.isPublic = true; });
-      log('상대 효과로 내 패가 전부 공개됨!', 'opponent');
+      log('상대 효과: 내 패 전부 공개됨!', 'opponent');
       notify('내 패가 전부 공개됐습니다!');
       renderAll();
       break;

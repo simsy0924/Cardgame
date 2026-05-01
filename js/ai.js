@@ -51,10 +51,16 @@ _safeHook('endTurn', function(_origET) {
 
 _safeHook('checkWinCondition', function(_origCWC) {
   return function() {
-    _origCWC.apply(this, arguments);
-    if (!window.AI.active) return;
-    if (G.opHand.length === 0 && !isMyTurn) {
-      setTimeout(function() { showGameOver(true); }, 300);
+    if (!window.AI.active) { _origCWC.apply(this, arguments); return; }
+
+    // 내 패가 0 → 패배 (원본 처리)
+    if (G.myHand.length === 0) {
+      _origCWC.apply(this, arguments);
+      return;
+    }
+    // AI 패가 0 → 승리
+    if (G.opHand.length === 0) {
+      showGameOver(true);
     }
   };
 });
@@ -190,6 +196,7 @@ function _aiRemHand(cardId) {
 function _aiSummon(cardId) {
   var card = CARDS[cardId];
   if (!card || card.cardType !== 'monster') return false;
+  if (G.opField.length >= maxFieldSlots()) { log('🤖 몬스터 존 가득 — 소환 불가', 'opponent'); return false; }
   _aiRemHand(cardId);
   G.opField.push({ id: cardId, name: card.name,
     atk: card.atk != null ? card.atk : 0,
@@ -202,6 +209,7 @@ function _aiSummon(cardId) {
 function _aiSummonDeck(cardId) {
   var idx = window.AI.opDeck.findIndex(function(c) { return c.id === cardId; });
   if (idx < 0) return false;
+  if (G.opField.length >= maxFieldSlots()) { log('🤖 몬스터 존 가득 — 덱소환 불가', 'opponent'); return false; }
   window.AI.opDeck.splice(idx, 1);
   G.opDeckCount = window.AI.opDeck.length;
   var card = CARDS[cardId] || {};
@@ -583,26 +591,34 @@ setTimeout(_lobby,500);
 setTimeout(_lobby,2000);
 
 // ─────────────────────────────────────────────────────────────
-// beginChain/passChainPriority 훅 — AI 모드 체인 처리
-// 핵심: 기존 체인 엔진 로직은 유지하고, AI 응답 트리거만 보강
-// 수정: passChainPriority 훅에서 AI 응답 트리거 제거 (이중 발동 방지)
-//       AI 응답은 beginChain 훅에서만 트리거
+// beginChain / addChainLink / passChainPriority 훅 — AI 모드 체인 처리
+// 플레이어가 체인N을 추가할 때마다 AI가 체인N+1 응답 기회를 가짐
 // ─────────────────────────────────────────────────────────────
 (function() {
-  var _origBeginChain = window.beginChain;
-  window.beginChain = function(effect) {
-    _origBeginChain.apply(this, arguments);
+  // 공통: 우선권이 AI(guest)쪽이면 응답 트리거
+  function _triggerAIIfNeeded() {
     if (!window.AI.active) return;
-
-    // 기존 beginChain이 만든 체인 상태를 그대로 사용
     var live = activeChainState;
     if (!live || !live.active) return;
     if (live.priority !== 'guest') return;
-
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) return;
       _aiChainResponse(activeChainState);
     }, 350);
+  }
+
+  // beginChain: 플레이어 체인1 → AI 응답 기회
+  var _origBeginChain = window.beginChain;
+  window.beginChain = function(effect) {
+    _origBeginChain.apply(this, arguments);
+    _triggerAIIfNeeded();
+  };
+
+  // addChainLink: 플레이어가 체인N 추가 → AI 체인N+1 응답 기회
+  var _origAddChainLink = window.addChainLink;
+  window.addChainLink = function(effect) {
+    _origAddChainLink.apply(this, arguments);
+    _triggerAIIfNeeded();
   };
 
   var _origPassChainPriority = window.passChainPriority;
@@ -621,16 +637,19 @@ setTimeout(_lobby,2000);
       next.priority = 'guest';
       activeChainState = next;
       log('체인 패스', 'system');
-      // passCount >= 2 이면 즉시 해결 (AI 응답 트리거 없음)
       if (next.passCount >= 2) {
         resolveChain(next);
+      } else {
+        // 플레이어가 패스 → AI에게 다시 응답 기회
+        renderChainActions();
+        setTimeout(function() {
+          if (!activeChainState || !activeChainState.active) return;
+          _aiChainResponse(activeChainState);
+        }, 400);
       }
-      // passCount < 2 이면 AI 응답을 기다림 — beginChain 훅이 이미 트리거했으므로 여기서는 하지 않음
     } else {
       _origPassChainPriority.apply(this, arguments);
     }
-    // ★ AI 응답 트리거 제거: passChainPriority에서는 AI를 다시 트리거하지 않음
-    // AI 응답은 beginChain 훅에서만 처리 → 이중 발동 방지
   };
 })();
 
@@ -641,18 +660,9 @@ function _aiChainResponse(chainState) {
   if (!window.AI.active) return;
   if (!activeChainState || !activeChainState.active) return;
 
-  // AI가 응답할 수 있는 카드 확인
-  // 1. 구사일생: 전투 피해 시 자동 (별도 처리)
-  // 2. 눈에는 눈: 플레이어 서치 시 자동 트리거
-  // 3. 키카드 중 응답 가능한 것
-
-  // 현재 체인에서 AI가 응답할 카드 없으면 패스
   var canRespond = false;
 
-  // 눈에는 눈 체크
-  // - 기존: keyFetch(서치) 체인에서만 응답
-  // - 개선: 상대가 체인 1을 열었을 때도 즉시 반응 후보로 검토
-  //   (응답 카드가 없으면 명시적으로 Pass 처리)
+  // 눈에는 눈: 플레이어가 체인 1을 열었을 때 응답 가능
   var liveChain = activeChainState || chainState;
   var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
   var hasHostChain = (liveChain.links || []).some(function(l) {
@@ -667,14 +677,13 @@ function _aiChainResponse(chainState) {
       if (!activeChainState || !activeChainState.active) return;
       var next = Object.assign({}, activeChainState);
       next.passCount = (next.passCount || 0) + 1;
-      next.priority = 'host'; // 플레이어에게 다시
-      log('🤖 AI: "응답 없음(Pass)"', 'opponent');
+      next.priority = 'host';
+      log('🤖 AI: 패스', 'opponent');
       activeChainState = next;
 
       if (next.passCount >= 2) {
         resolveChain(next);
       } else {
-        // 플레이어가 응답 수단이 없으면 체인이 멈춘 것처럼 보일 수 있어 즉시 해결
         if (!_playerCanRespondInChain(next)) {
           next.passCount = 2;
           activeChainState = next;
@@ -688,26 +697,27 @@ function _aiChainResponse(chainState) {
     return;
   }
 
-  // AI가 응답 결정
-  log('🤖 체인 응답!', 'opponent');
-  var next = Object.assign({}, activeChainState);
-  // 눈에는 눈 발동
-  var eyeIdx = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
-  if (eyeIdx >= 0) {
+  // AI 눈에는 눈 발동 — addChainLink를 통해 체인블록 정식 등록
+  // 효과 실행(드로우)은 resolveChain 시점에 처리되도록 CHAIN_RESOLVERS에 등록
+  setTimeout(function() {
+    if (!activeChainState || !activeChainState.active) return;
+    var eyeIdx2 = G.opHand.findIndex(function(c) { return c.id === '눈에는 눈'; });
+    if (eyeIdx2 < 0) return;
     _aiMarkUsed('눈에는 눈', 1);
     _aiDiscard('눈에는 눈');
-    _aiDrawN(2);
-    log('🤖 눈에는 눈: 드로우 2장', 'opponent');
-    next.links.push({ type: 'aiEye', label: '눈에는 눈', by: getOtherRole(myRole) });
+    log('🤖 눈에는 눈 체인 발동!', 'opponent');
+    // addChainLink 대신 직접 상태 조작 (AI는 guest이므로 myRole의 반대쪽)
+    var next = Object.assign({}, activeChainState);
+    next.links = (next.links || []).concat([{ type: 'aiEyeForEye', label: '눈에는 눈 (AI)', by: getOtherRole(myRole) }]);
     next.passCount = 0;
-    next.priority = myRole;
+    next.priority = myRole; // 플레이어에게 응답 기회
     activeChainState = next;
+    if (roomRef) {
+      roomRef.child('chainState').set(next);
+    }
     renderChainActions();
     renderAll();
-
-    // 플레이어 응답 기회
-    // 플레이어가 패스하면 resolveChain
-  }
+  }, 400);
 }
 
 

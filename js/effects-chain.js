@@ -316,7 +316,7 @@ const CHAIN_RESOLVERS = {
   triggerPenguinHero3:       ()     => resolvePenguinHero3(),
   // 펭귄의 일격
   quickPenguinStrike1:       ()     => resolvePenguinStrike1(),
-  triggerPenguinStrike2:     ()     => _tryRecoverPenguinStrikeFromGrave(),
+  triggerPenguinStrike2:     ()     => resolvePenguinStrike2(),
   // 펭귄이여 영원하라
   ignitionPenguinForever1:   ()     => resolvePenguinForever1(),
   quickPenguinForever2:      ()     => resolvePenguinForever2(),
@@ -336,83 +336,137 @@ const CHAIN_RESOLVERS = {
   jibaeFung1:                ()     => resolveJibaeFung1(),
 };
 
-// 체인 링크를 역순으로 로컬 실행 (Firebase 없이 해결하거나 resolvedLinks 처리 시)
+// 체인 링크를 역순으로 실행
+// - 내 링크: CHAIN_RESOLVERS로 실행
+// - 상대 링크: sendAction으로 상대 화면에서 실행 (로컬/AI 모드는 handleOpponentAction 직접 호출)
+// - negate/genericNegate 링크: 바로 다음(숫자 낮은) 링크를 무효화
 function executeChainLocally(links) {
-  links.forEach(link => {
-    if (link.by !== myRole) return;
-    const resolver = CHAIN_RESOLVERS[link.type];
-    if (resolver) {
-      resolver(link);
-    } else {
-      console.warn('[Chain] 알 수 없는 링크 타입:', link.type);
+  const negatedIndices = new Set();
+
+  // 역순(높은 체인 번호 → 낮은 번호)으로 무효 대상 마킹
+  links.forEach((link, i) => {
+    if (link.type === 'quickPenguinStrike1' || link.type === 'genericNegate') {
+      // 이 링크 바로 다음(원래 체인에서 하나 낮은) 링크 무효
+      // links는 이미 역순이므로 i+1이 원래 체인에서 하나 낮은 링크
+      if (i + 1 < links.length) negatedIndices.add(i + 1);
     }
   });
+
+  links.forEach((link, i) => {
+    if (negatedIndices.has(i)) {
+      log(`무효: ${link.label || link.type}`, 'system');
+      return; // 무효된 링크 스킵
+    }
+
+    if (link.by === myRole) {
+      // 내 링크 — 로컬 실행
+      const resolver = CHAIN_RESOLVERS[link.type];
+      if (resolver) resolver(link);
+      else console.warn('[Chain] 알 수 없는 링크 타입:', link.type);
+    } else {
+      // 상대 링크 — AI/로컬 모드에서 직접 처리
+      if (window.AI && window.AI.active) {
+        _executeAIChainLink(link);
+      }
+      // Firebase 모드에서는 상대 클라이언트가 자기 링크를 직접 실행하므로 여기서 실행 안 함
+    }
+  });
+
   sendGameState();
   renderAll();
   usedKeyFetchInChain = {};
 }
 
-
-function manualDiscard(handIdx) {
-  if (handIdx < 0 || !G.myHand[handIdx]) return;
-  const c = G.myHand.splice(handIdx, 1)[0];
-  G.myGrave.push({ id: c.id, name: c.name });
-  selectedCardIdx = -1;
-  log(`패를 버림: ${c.name}`, 'mine');
-  sendAction({ type: 'discard', cardId: c.id });
-  onJibaeryongDiscarded(c.id);
-  onHandDiscarded_jibaeSasl();
-  sendGameState();
-  renderAll();
-  checkWinCondition();
-}
-
-// ★ 강제 패 버리기 1장 — 코스트용, 취소 불가
-// 펭귄 마을 ②: 버리는 대신 필드 펭귄 묘지 가능
-function _forcedDiscardOne(title, callback) {
-  if (G.myHand.length === 0) { callback(); return; }
-
-  // 펭귄 마을 ② 체크
-  const villageIdx    = G.myHand.findIndex(c => c.id === '펭귄 마을' && c.isPublic);
-  const fieldPenguins = G.myField.filter(c => isPenguinMonster(c.id));
-
-  if (villageIdx >= 0 && fieldPenguins.length > 0) {
-    gameConfirm(
-      `펭귄 마을 ② 발동?\n패 1장 버리는 대신 필드 펭귄 몬스터를 묘지로 보냅니다.`,
-      (yes) => {
-        if (yes) {
-          openCardPicker(fieldPenguins, '펭귄 마을 ②: 묘지로 보낼 펭귄 몬스터', 1, (sel) => {
-            if (sel.length > 0) {
-              const mon = fieldPenguins[sel[0]];
-              sendToGrave(mon.id, 'field');
-              if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
-              _tryRecoverPenguinStrikeFromGrave();
-            }
-            callback();
-          }, true);
-        } else {
-          // 마을 거부 → 일반 강제 버리기
-          _doForcedDiscardOne(title, callback);
-        }
-      }
-    );
-  } else {
-    _doForcedDiscardOne(title, callback);
+// AI 체인 링크 실행 — AI(상대) 측 효과를 로컬에서 처리
+function _executeAIChainLink(link) {
+  switch (link.type) {
+    case 'aiEyeForEye':
+      _aiDrawN(2);
+      log('🤖 눈에는 눈: 드로우 2장', 'opponent');
+      break;
+    case 'aiForceDiscard':
+      // AI가 버려야 하는 경우 — sendAction 경로에서 처리됨
+      break;
+    case 'themeEffect':
+    case 'keyFetch':
+      // 상대 키카드 가져오기는 sendGameState로 동기화됨
+      break;
+    default:
+      // 알 수 없는 AI 링크 — 무시
+      break;
   }
 }
 
-function _doForcedDiscardOne(title, callback) {
+
+// ─────────────────────────────────────────────────────────────
+// 펭귄 마을 ② 지속효과 — 버려지는 카드가 공개된 펭귄 마을일 때만 가로챔
+// 체인 없이 즉시 물어봄 (지속효과)
+// callback(true)  = 마을 ②로 대체됨 → 실제 버리기 취소
+// callback(false) = 대체 안 함 → 정상 버리기 진행
+// ─────────────────────────────────────────────────────────────
+function _checkVillageOnDiscard(cardId, callback) {
+  if (cardId !== '펭귄 마을') { callback(false); return; }
+  const villageCard   = G.myHand.find(c => c.id === '펭귄 마을' && c.isPublic);
+  const fieldPenguins = G.myField.filter(c => isPenguinMonster(c.id));
+  if (!villageCard || fieldPenguins.length === 0) { callback(false); return; }
+
+  gameConfirm(
+    `펭귄 마을 ②\n버리는 대신 필드의 펭귄 몬스터를 묘지로 보냅니까?`,
+    (yes) => {
+      if (!yes) { callback(false); return; }
+      openCardPicker(fieldPenguins, '펭귄 마을 ②: 대신 묘지로 보낼 펭귄 몬스터', 1, (sel) => {
+        if (sel.length > 0) {
+          const mon = fieldPenguins[sel[0]];
+          sendToGrave(mon.id, 'field');
+          log(`펭귄 마을 ②: ${mon.name} 대신 묘지`, 'mine');
+          if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
+          _tryRecoverPenguinStrikeFromGrave();
+          sendGameState(); renderAll();
+        }
+        callback(true); // 대체 완료 → 마을 자체는 버리지 않음
+      }, true);
+    }
+  );
+}
+
+function manualDiscard(handIdx) {
+  if (handIdx < 0 || !G.myHand[handIdx]) return;
+  const c = G.myHand[handIdx];
+  selectedCardIdx = -1;
+
+  _checkVillageOnDiscard(c.id, (replaced) => {
+    if (replaced) return; // 마을 ②로 대체 — 실제 버리기 없음
+    G.myHand.splice(handIdx, 1);
+    G.myGrave.push({ id: c.id, name: c.name });
+    log(`패를 버림: ${c.name}`, 'mine');
+    sendAction({ type: 'discard', cardId: c.id });
+    onJibaeryongDiscarded(c.id);
+    onHandDiscarded_jibaeSasl();
+    sendGameState(); renderAll(); checkWinCondition();
+  });
+}
+
+// _forcedDiscardOne: 코스트용 강제 1장 버리기
+function _forcedDiscardOne(title, callback) {
   if (G.myHand.length === 0) { callback(); return; }
   openCardPicker(G.myHand, title, 1, (sel) => {
-    if (sel.length > 0) {
-      const c = G.myHand.splice(sel[0], 1)[0];
-      G.myGrave.push(c);
-      log(`버림(코스트): ${c.name}`, 'mine');
-      onJibaeryongDiscarded(c.id);
-      onHandDiscarded_jibaeSasl();
-    }
-    callback();
+    if (sel.length === 0) { callback(); return; }
+    const c = G.myHand[sel[0]];
+    _checkVillageOnDiscard(c.id, (replaced) => {
+      if (!replaced) {
+        G.myHand.splice(sel[0], 1);
+        G.myGrave.push({ id: c.id, name: c.name });
+        log(`버림(코스트): ${c.name}`, 'mine');
+        onJibaeryongDiscarded(c.id);
+        onHandDiscarded_jibaeSasl();
+      }
+      callback();
+    });
   }, true);
+}
+
+function _doForcedDiscardOne(title, callback) {
+  _forcedDiscardOne(title, callback);
 }
 
 function resolveKeyFetch(cardId) {

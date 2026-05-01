@@ -123,8 +123,7 @@ function resolveSagePenguin1() {
   if (!canUseEffect('현자 펭귄', 1)) { notify('이미 사용했습니다.'); return; }
   markEffectUsed('현자 펭귄', 1);
   drawOne();
-  openCardPicker(G.myHand, '현자 펭귄 ①: 패 1장 버리기', 1, (sel) => {
-    if (sel.length > 0) G.myGrave.push(G.myHand.splice(sel[0], 1)[0]);
+  _forcedDiscardOne('현자 펭귄 ①: 패 1장 버리기', () => {
     sendGameState(); renderAll();
   });
 }
@@ -173,13 +172,12 @@ function resolveSummonerPenguin1(sourceInstanceId) {
   markEffectUsed('수문장 펭귄', 1);
   G.myField[fieldIdx].atk += 1;
   log(`수문장 펭귄 ATK +1 → ${G.myField[fieldIdx].atk}`, 'mine');
-  // "서로 패를 1장 고르고 버린다" — 내가 먼저 고르고, 상대에게도 forceDiscard 전송
-  openCardPicker(G.myHand, '수문장 펭귄 ①: 자신 패 1장 버리기 (필수)', 1, (sel) => {
-    if (sel.length > 0) G.myGrave.push(G.myHand.splice(sel[0], 1)[0]);
+  // "서로 패를 1장 고르고 버린다"
+  _forcedDiscardOne('수문장 펭귄 ①: 자신 패 1장 버리기 (필수)', () => {
     log('수문장 펭귄 ①: 상대도 패 1장 버려야 합니다.', 'system');
     sendAction({ type: 'forceDiscard', count: 1, reason: '수문장 펭귄 ①' });
     sendGameState(); renderAll();
-  }, true); // forced — 취소 불가
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -208,58 +206,33 @@ function isPenguinLegendTargeted(cardId) {
   return G.myField.some(c => c.id === '펭귄의 전설');
 }
 
-// 상대가 내 필드 카드를 대상으로 하는 효과 처리 전에 호출
-// cardId: 대상이 될 내 필드 카드 id
-// isTargeting: true = 대상 지정 효과, false = 비대상 효과(전설도 막을 수 없음)
-// 반환값: true = 전설 내성으로 효과 무효, false = 정상 진행
-function checkPenguinLegendImmunity(cardId, isTargeting = true) {
-  if (!isTargeting) return false; // 비대상 효과는 전설도 받음
+// 상대가 내 필드 카드를 효과로 건드릴 때 호출
+// isTargeting: true = 대상 지정 효과 (전설이 받음), false = 비대상 효과 (전설이 차단)
+function checkPenguinLegendImmunity(cardId, isTargeting = false) {
   if (cardId !== '펭귄의 전설') return false;
   if (!G.myField.some(c => c.id === '펭귄의 전설')) return false;
-  log('펭귄의 전설 ③: 대상 지정 효과 무효!', 'mine');
-  notify('펭귄의 전설 ③: 이 카드를 대상으로 하는 효과는 무효입니다.');
+  if (isTargeting) return false; // 대상 지정 효과는 전설도 받음
+  // 비대상 효과 → 차단
+  log('펭귄의 전설 ③: 비대상 효과 무효!', 'mine');
+  notify('펭귄의 전설 ③: 대상으로 하지 않는 효과를 받지 않습니다.');
   return true;
 }
-function checkPenguinVillageReplace(discardCount) {
-  const villageIdx    = G.myHand.findIndex(c => c.id === '펭귄 마을' && c.isPublic);
-  const fieldPenguins = G.myField.filter(c => isPenguinMonster(c.id));
-  if (villageIdx < 0 || fieldPenguins.length === 0 || discardCount <= 0) return false;
-
-  gameConfirm('펭귄 마을 ② 발동? (패 버리는 대신 필드 펭귄 몬스터 묘지로)', (yes) => {
-    if (!yes) return;
-    openCardPicker(
-      fieldPenguins,
-      '펭귄 마을 ②: 대신 묘지로 보낼 펭귄 몬스터',
-      Math.min(discardCount, fieldPenguins.length),
-      (sel) => {
-        sel.forEach(i => {
-          const mon = fieldPenguins[i];
-          sendToGrave(mon.id, 'field');
-          // 수문장 펭귄 ②: 마을 효과로 묘지 시 상대 몬스터 제거
-          if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
-        });
-        // 펭귄의 일격 ②: 마을 효과로 몬스터가 묘지로 보내졌을 경우 묘지의 이 카드를 패에 넣는다
-        _tryRecoverPenguinStrikeFromGrave();
-        renderAll();
-      }
-    );
-  });
-  return true;
-}
-
-// 펭귄의 일격 ② — 펭귄 마을 효과로 몬스터 묘지 시 자동 트리거
+// 펭귄의 일격 ② — 펭귄 마을 효과로 몬스터 묘지 시 유발효과 (체인블록 형성)
 function _tryRecoverPenguinStrikeFromGrave() {
   const graveIdx = G.myGrave.findIndex(c => c.id === '펭귄의 일격');
   if (graveIdx < 0) return;
   if (!canUseEffect('펭귄의 일격', 2)) return;
-  gameConfirm('펭귄의 일격 ②\n묘지의 펭귄의 일격을 패에 넣습니까?', (yes) => {
-    if (!yes) return;
-    markEffectUsed('펭귄의 일격', 2);
-    const c = G.myGrave.splice(graveIdx, 1)[0];
-    G.myHand.push({ id: c.id, name: c.name, isPublic: true });
-    log('펭귄의 일격 ②: 묘지에서 패로 회수!', 'mine');
-    sendGameState(); renderAll();
-  });
+  markEffectUsed('펭귄의 일격', 2);
+  enqueueTriggeredEffect({ type: 'triggerPenguinStrike2', label: '펭귄의 일격 ②' });
+}
+
+function resolvePenguinStrike2() {
+  const graveIdx = G.myGrave.findIndex(c => c.id === '펭귄의 일격');
+  if (graveIdx < 0) { log('펭귄의 일격 ②: 묘지에 없습니다.', 'mine'); return; }
+  const c = G.myGrave.splice(graveIdx, 1)[0];
+  G.myHand.push({ id: c.id, name: c.name, isPublic: true });
+  log('펭귄의 일격 ②: 묘지에서 패로 회수!', 'mine');
+  sendGameState(); renderAll();
 }
 
 // ─────────────────────────────────────────────
@@ -455,26 +428,43 @@ function resolvePenguinHero3() {
 
 // ─────────────────────────────────────────────
 // 펭귄의 일격 ①
-// 코스트: "패를 1장 버리고 발동" → 체인 발동 전에 먼저 지불
-// 무효되어도 코스트 패는 날아감
+// 발동 조건: 체인에 상대 몬스터 효과가 있을 때만
+// 코스트: 이 카드 외 패 1장 버리기 → 이 카드도 묘지 → 체인 추가
 // ─────────────────────────────────────────────
 function activatePenguinStrike1() {
   if (!canUseEffect('펭귄의 일격', 1)) { notify('이미 사용했습니다.'); return; }
   if (!G.myField.some(c => isPenguinMonster(c.id))) { notify('필드에 펭귄 몬스터가 없습니다.'); return; }
-  // 코스트 먼저 지불 — 체인 발동 전
-  _forcedDiscardOne('펭귄의 일격 ①: 코스트로 패 1장 버리기 (무효되어도 날아감)', () => {
-    markEffectUsed('펭귄의 일격', 1);
-    // 패에서 일격 카드 묘지로 (코스트 아닌 발동 비용)
+  const hasOpEffect = activeChainState && activeChainState.active &&
+    (activeChainState.links || []).some(l => l.by !== myRole);
+  if (!hasOpEffect) { notify('펭귄의 일격 ①: 상대 몬스터 효과 발동 시에만 사용 가능합니다.'); return; }
+
+  // 이 카드 자신을 제외한 패에서 코스트 1장 선택
+  const strikeHandIdx = G.myHand.findIndex(c => c.id === '펭귄의 일격');
+  const costPool = G.myHand.filter((_, i) => i !== strikeHandIdx);
+  if (costPool.length === 0) { notify('코스트로 버릴 패가 없습니다.'); return; }
+
+  openCardPicker(costPool, '펭귄의 일격 ①: 코스트 패 1장 버리기', 1, (sel) => {
+    if (sel.length === 0) return;
+    const costCard = costPool[sel[0]];
+    const realIdx  = G.myHand.indexOf(costCard);
+    if (realIdx >= 0) {
+      G.myGrave.push(G.myHand.splice(realIdx, 1)[0]);
+      log(`버림(코스트): ${costCard.name}`, 'mine');
+    }
+    // 이 카드 자신도 묘지
     const sIdx = G.myHand.findIndex(c => c.id === '펭귄의 일격');
     if (sIdx >= 0) G.myGrave.push(G.myHand.splice(sIdx, 1)[0]);
-    activateQuickEffect({ type: 'quickPenguinStrike1', label: '펭귄의 일격 ①' });
-  });
+    markEffectUsed('펭귄의 일격', 1);
+    addChainLink({ type: 'quickPenguinStrike1', label: '펭귄의 일격 ①' });
+    sendGameState(); renderAll();
+  }, true);
 }
 
 function resolvePenguinStrike1() {
-  // 코스트는 이미 activate 시점에 지불됨
   log('펭귄의 일격 ①: 상대 효과 무효!', 'mine');
-  sendAction({ type: 'negate', reason: '펭귄의 일격' });
+  // 실제 무효는 executeChainLocally의 negatedIndices로 처리됨
+  // Firebase 모드 알림용으로만 전송
+  if (roomRef) sendAction({ type: 'negate', reason: '펭귄의 일격' });
   sendGameState(); renderAll();
 }
 
@@ -617,17 +607,35 @@ function resolvePenguinWizard2() {
   markEffectUsed('펭귄 마법사', 2);
   const maxD = Math.min(3, G.myHand.length);
   if (maxD === 0) return;
-  openCardPicker(G.myHand, `펭귄 마법사 ②: 패 최대 3장 버리고 상대 몬스터 제외`, maxD, (sel) => {
+
+  // 몇 장 버릴지 먼저 선택 후, 1장씩 _forcedDiscardOne으로 마을 ② 체크
+  openCardPicker(G.myHand, `펭귄 마법사 ②: 패 최대 ${maxD}장 버리고 상대 몬스터 제외`, maxD, (sel) => {
     const dc = sel.length;
-    sel.sort((a, b) => b - a).forEach(i => G.myGrave.push(G.myHand.splice(i, 1)[0]));
-    openCardPicker(G.opField, `펭귄 마법사 ②: 상대 몬스터 ${dc}장 제외`, dc, (opSel) => {
-      opSel.sort((a, b) => b - a).forEach(i => {
-        const mon = G.opField.splice(i, 1)[0];
-        G.opExile.push(mon);
-        sendAction({ type: 'opFieldExile', cardId: mon.id });
+    if (dc === 0) return;
+
+    let discarded = 0;
+    function discardNext() {
+      if (discarded >= dc) {
+        // 버린 수만큼 상대 몬스터 제외
+        const targets = G.opField.filter(() => true);
+        const pickCount = Math.min(dc, targets.length);
+        if (pickCount === 0) { sendGameState(); renderAll(); return; }
+        openCardPicker(targets, `펭귄 마법사 ②: 상대 몬스터 ${pickCount}장 제외`, pickCount, (opSel) => {
+          opSel.sort((a, b) => b - a).forEach(i => {
+            const mon = G.opField.splice(i, 1)[0];
+            G.opExile.push(mon);
+            sendAction({ type: 'opFieldExile', cardId: mon.id });
+          });
+          sendGameState(); renderAll();
+        });
+        return;
+      }
+      _forcedDiscardOne(`펭귄 마법사 ②: 패 버리기 (${discarded + 1}/${dc})`, () => {
+        discarded++;
+        discardNext();
       });
-      sendGameState(); renderAll();
-    });
+    }
+    discardNext();
   });
 }
 

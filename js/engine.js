@@ -1,3 +1,4 @@
+
 // engine.js — 게임 상태, 유틸, 소환/드로우, 클럭
 // Firebase Setup
 // ─────────────────────────────────────────────
@@ -218,17 +219,85 @@ function syncClockRunState(newRunningFor) {
   });
 }
 
-function log(msg, type = '') {
-  const el = document.createElement('div');
-  el.className = `log-entry ${type}`;
-  el.textContent = msg;
-  const container = document.getElementById('logEntries');
-  container.prepend(el);
-  while (container.children.length > 50) container.lastChild.remove();
+// ─── 로그 타입별 아이콘 및 분류 ───
+const LOG_META = {
+  // 내 행동
+  '서치':        { icon: '🔍', cls: 'mine' },
+  '소환':        { icon: '✨', cls: 'mine' },
+  '드로우':      { icon: '🃏', cls: 'mine' },
+  '버림':        { icon: '🗑', cls: 'mine' },
+  '발동':        { icon: '⚡', cls: 'mine' },
+  '체인 1':      { icon: '⛓', cls: 'chain-open' },
+  '체인 2':      { icon: '⛓', cls: 'chain-open' },
+  '체인 3':      { icon: '⛓', cls: 'chain-open' },
+  '체인 해제':   { icon: '✅', cls: 'chain-resolve' },
+  '체인 패스':   { icon: '⏭', cls: 'system' },
+  // 상대 행동
+  '상대 소환':   { icon: '👾', cls: 'opponent' },
+  '상대 서치':   { icon: '🔎', cls: 'opponent' },
+  '상대 효과':   { icon: '💥', cls: 'opponent' },
+  '🤖':          { icon: '',   cls: 'opponent' },
+  // 전투
+  '전투':        { icon: '⚔️', cls: 'system' },
+  '직접 공격':   { icon: '🗡', cls: 'system' },
+  '묘지':        { icon: '💀', cls: 'system' },
+  // 시스템
+  '턴':          { icon: '🔄', cls: 'system' },
+  '게임':        { icon: '🎮', cls: 'system' },
+  '드로우 단계': { icon: '📥', cls: 'system' },
+};
 
-  // 내 행동 로그(mine)는 상대한테도 전송
-  // system 로그 중 일부도 전송 (턴 종료, 전투 결과 등)
-  if ((type === 'mine' || type === 'system') && roomRef) {
+function _classifyLog(msg, explicitType) {
+  if (explicitType === 'mine')     return { icon: '▶', cls: 'mine' };
+  if (explicitType === 'opponent') return { icon: '◀', cls: 'opponent' };
+  if (explicitType === 'system')   return { icon: '◆', cls: 'system' };
+  // 내용 기반 분류
+  for (const [key, meta] of Object.entries(LOG_META)) {
+    if (msg.includes(key)) return meta;
+  }
+  return { icon: '·', cls: '' };
+}
+
+// 카드명을 <span class="log-card">으로 감싸기
+function _highlightCardNames(msg) {
+  // 따옴표 없는 카드명은 CARDS 키 기준으로 강조
+  let result = msg;
+  // 특수문자 포함 카드명은 순서대로 처리 (긴 것 먼저)
+  const cardNames = Object.keys(CARDS || {}).sort((a, b) => b.length - a.length);
+  for (const name of cardNames) {
+    if (result.includes(name)) {
+      result = result.replaceAll(name, `<span class="log-card">${name}</span>`);
+      break; // 첫 번째 매칭만 (성능)
+    }
+  }
+  return result;
+}
+
+function log(msg, type = '') {
+  const container = document.getElementById('logEntries');
+  if (!container) return;
+
+  const meta = _classifyLog(msg, type);
+  const el = document.createElement('div');
+  el.className = `log-entry ${meta.cls || type}`;
+
+  // 아이콘
+  const iconEl = document.createElement('span');
+  iconEl.className = 'log-icon';
+  iconEl.textContent = meta.icon || (type === 'mine' ? '▶' : type === 'opponent' ? '◀' : '◆');
+  el.appendChild(iconEl);
+
+  // 텍스트 (카드명 강조 포함)
+  const textEl = document.createElement('span');
+  textEl.className = 'log-text';
+  textEl.innerHTML = _highlightCardNames(msg);
+  el.appendChild(textEl);
+
+  container.prepend(el);
+  while (container.children.length > 80) container.lastChild.remove();
+
+  // 내 행동(mine)과 시스템 로그는 상대에게 전송
+  if ((type === 'mine' || type === 'system') && typeof roomRef !== 'undefined' && roomRef) {
     const ts = Date.now();
     roomRef.child('lastLog').set({ msg, type, ts });
   }
@@ -243,16 +312,32 @@ function listenOpponentLog() {
     if (!data || data.ts <= lastLogTs) return;
     lastLogTs = data.ts;
 
-    // 이미 handleOpponentAction이 처리하는 주요 액션은 중복 출력 방지
-    // → lastAction의 ts와 비교해서 같은 시점이면 스킵
-    // 대신 펭귄 효과 내부 동작(서치, 소환 등)은 새로 표시
-    const displayType = data.type === 'system' ? 'system' : 'opponent';
-    const el = document.createElement('div');
-    el.className = `log-entry ${displayType}`;
-    el.textContent = data.type === 'system' ? data.msg : '[상대] ' + data.msg;
     const container = document.getElementById('logEntries');
+    if (!container) return;
+
+    // system 로그는 그대로, mine 로그는 '[상대] ' 접두어 추가 후 opponent 타입으로
+    const displayType = data.type === 'system' ? 'system' : 'opponent';
+    const displayMsg  = data.type === 'system' ? data.msg : '[상대] ' + data.msg;
+
+    // 리치 로그 형식으로 렌더링
+    const meta = _classifyLog(displayMsg, displayType);
+    const el = document.createElement('div');
+    el.className = `log-entry ${meta.cls || displayType}`;
+
+    const iconEl = document.createElement('span');
+    iconEl.className = 'log-icon';
+    iconEl.textContent = meta.icon || (displayType === 'opponent' ? '◀' : '◆');
+    el.appendChild(iconEl);
+
+    const textEl = document.createElement('span');
+    textEl.className = 'log-text';
+    textEl.innerHTML = typeof _highlightCardNames === 'function'
+      ? _highlightCardNames(displayMsg)
+      : displayMsg;
+    el.appendChild(textEl);
+
     container.prepend(el);
-    while (container.children.length > 50) container.lastChild.remove();
+    while (container.children.length > 80) container.lastChild.remove();
   });
 }
 
@@ -325,9 +410,83 @@ function onSummon(cardId, from) {
   renderAll();
 }
 function onSentToGrave(cardId) { if (cardId === '펭귄 용사') autoTriggerHeroGrave(); }
+
+// ─────────────────────────────────────────────────────────────
+// 중앙화된 내성 시스템
+// checkImmunity(cardId, effectType, source)
+//   cardId    : 효과를 받을 내 필드 카드 id
+//   effectType: 'effect'(일반/비대상) | 'target'(대상 지정) | 'toGrave'(묘지로) | 'attack'(공격 대상)
+//   source    : 'opponent'(상대) | 'mine'(자신) | 'combat'(전투)
+// 반환: { immune: true, reason: '...' } | { immune: false }
+// ─────────────────────────────────────────────────────────────
+function checkImmunity(cardId, effectType, source = 'opponent') {
+  // 아우터 갓-아자토스 ①: 모든 카드 효과 차단 + 묘지로 안 보내짐
+  if (cardId === '아우터 갓-아자토스') {
+    if (effectType === 'effect' || effectType === 'target' || effectType === 'toGrave') {
+      return { immune: true, reason: '아자토스 ①: 다른 카드의 효과를 받지 않으며 묘지로 보내지지 않습니다.' };
+    }
+  }
+
+  // 아우터 갓 슈브 니구라스 ③: 상대 카드 효과 차단 + 공격 대상 안 됨
+  if (cardId === '아우터 갓 슈브 니구라스' && source === 'opponent') {
+    if (effectType === 'effect' || effectType === 'target' || effectType === 'attack') {
+      return { immune: true, reason: '슈브 니구라스 ③: 상대 카드의 효과를 받지 않습니다.' };
+    }
+  }
+
+  // 펭귄의 전설 ③: "이 카드를 대상으로 하지 않는 상대 카드의 효과를 받지 않는다"
+  // → 비대상(effect) 효과는 차단, 대상 지정(target) 효과는 받음
+  if (cardId === '펭귄의 전설' && source === 'opponent') {
+    if (effectType === 'effect') {
+      if (G.myField.some(c => c.id === '펭귄의 전설')) {
+        return { immune: true, reason: '펭귄의 전설 ③: 대상으로 하지 않는 효과를 받지 않습니다.' };
+      }
+    }
+  }
+
+  // 에이스 라이온 ③: 에이스 라이온이 필드에 있는 한, 라이온 카드는 전투로 묘지 안 감
+  if (effectType === 'toGrave' && source === 'combat') {
+    if (CARDS[cardId]?.theme === '라이온' && G.myField.some(c => c.id === '에이스 라이온')) {
+      return { immune: true, reason: '에이스 라이온 ③: 라이온 카드는 전투로 묘지로 보내지지 않습니다.' };
+    }
+  }
+
+  // 타이거 킹 ④: 자신 필드에 다른 몬스터가 없을 경우 묘지로 안 보내짐
+  if (cardId === '타이거 킹' && effectType === 'toGrave') {
+    if (G.myField.filter(c => c.id !== '타이거 킹').length === 0) {
+      return { immune: true, reason: '타이거 킹 ④: 다른 몬스터가 없으면 묘지로 보내지지 않습니다.' };
+    }
+  }
+
+  // 라이거 킹: 베이비 라이거 ③ 효과로 이 턴 내성 부여 (G.ligerKingImmune 플래그)
+  if (cardId === '라이거 킹' && source === 'opponent' && G.ligerKingImmune) {
+    if (effectType === 'effect' || effectType === 'target') {
+      return { immune: true, reason: '라이거 킹: 이 턴 상대 효과를 받지 않습니다.' };
+    }
+  }
+
+  return { immune: false };
+}
+
+// 내성 체크 후 묘지로 보내는 헬퍼
+// 반환: true = 실제로 묘지로 보냄, false = 내성으로 차단
+function sendToGraveWithImmunityCheck(cardId, from = 'field', source = 'opponent') {
+  if (from === 'field') {
+    const result = checkImmunity(cardId, 'toGrave', source);
+    if (result.immune) {
+      log(`내성: ${result.reason}`, 'system');
+      notify(result.reason);
+      return false;
+    }
+  }
+  sendToGrave(cardId, from);
+  return true;
+}
+
 function resetTurnEffects() {
   resetEffectUsed();
   if (G.penguinHeroAtkBuff) { G.myField.forEach(c => { if (isPenguinMonster(c.id)) c.atk = c.atkBase || CARDS[c.id]?.atk || 0; }); G.penguinHeroAtkBuff = false; }
   G.myField.forEach(c => { if (c.id === '수문장 펭귄') c.atk = c.atkBase || 3; });
+  G.ligerKingImmune = false; // 라이거 킹 내성 턴 종료 시 해제
   resetJibaeEffects();
 }
