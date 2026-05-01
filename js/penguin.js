@@ -23,6 +23,32 @@ function activatePenguinVillage1(handIdx) {
 }
 
 // ─────────────────────────────────────────────
+// 꼬마 펭귄 ①: 전개단계에 패에서 소환 — 기동효과, 체인블록 형성
+function activateKkomaPenguin1(handIdx) {
+  if (!canUseEffect('꼬마 펭귄', 1, 2)) { notify('이미 2번 사용했습니다.'); return; }
+  if (G.myField.length >= maxFieldSlots()) { notify('몬스터 존이 가득 찼습니다.'); return; }
+  const source = G.myHand[handIdx];
+  if (!source) return;
+  markEffectUsed('꼬마 펭귄', 1);
+  // 발동 시 패에서 제거 후 체인 등록
+  G.myHand.splice(handIdx, 1);
+  activateIgnitionEffect({
+    type: 'ignitionKkomaPenguin1',
+    label: '꼬마 펭귄 ①',
+    cardId: source.id,
+  });
+}
+
+function resolveKkomaPenguin1(cardId) {
+  // 체인 해결 시 실제 소환 처리
+  const card = CARDS[cardId || '꼬마 펭귄'];
+  if (G.myField.length >= maxFieldSlots()) { notify('몬스터 존이 가득 찼습니다.'); return; }
+  G.myField.push({ id: card.id, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'hand' });
+  log(`패에서 소환: ${card.name}`, 'mine');
+  sendAction({ type: 'summon', cardId: card.id });
+  sendGameState(); onSummon(card.id, 'hand'); renderAll();
+}
+
 // 꼬마 펭귄 ②
 // ─────────────────────────────────────────────
 function triggerKkomaPenguin(from) {
@@ -681,7 +707,7 @@ function activatePenguinCard(handIdx, effectNum) {
 
   switch (c.id) {
     case '펭귄 마을':          if (effectNum === 1) activatePenguinVillage1(handIdx); break;
-    case '꼬마 펭귄':           summonFromHand(handIdx); break;
+    case '꼬마 펭귄':           activateKkomaPenguin1(handIdx); break;
     case '펭귄 부부':           if (effectNum === 2) activatePenguinBubu2(handIdx); else notify('펭귄 부부는 자체 소환 효과가 없습니다.'); break;
     case '현자 펭귄':           notify('현자 펭귄은 자체 소환 효과가 없습니다.'); break;
     case '수문장 펭귄':         notify('수문장 펭귄은 자체 소환 효과가 없습니다.'); break;

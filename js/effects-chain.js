@@ -295,6 +295,7 @@ const CHAIN_RESOLVERS = {
   // 펭귄 마을
   penguinVillage1:           ()     => resolvePenguinVillage1(),
   // 꼬마 펭귄
+  ignitionKkomaPenguin1:     (link) => resolveKkomaPenguin1(link.cardId),
   triggerKkomaPenguin:       ()     => resolveKkomaPenguin(),
   // 펭귄 부부
   triggerPenguinBubu1:       ()     => resolvePenguinBubu1(),
