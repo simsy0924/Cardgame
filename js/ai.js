@@ -163,7 +163,10 @@ function _runAIChainResponse() {
   // 응답 가능 조건: 마지막 링크가 플레이어 것이거나 플레이어가 패스
   var links = live.links || [];
   var last  = links[links.length - 1] || {};
-  var playerActedLast = (last.by === 'host' || last.by === myRole);
+  // AI 로컬전에서는 플레이어=host, AI=guest로 고정.
+  // myRole이 다른 로직에서 임시 변경되어도(컨텍스트 스왑) 판정이 흔들리지 않도록
+  // guest가 아닌 마지막 링크를 플레이어 행동으로 간주한다.
+  var playerActedLast = (last.by !== 'guest');
   var playerPassed    = (live.passCount || 0) > 0;
   if (!playerActedLast && !playerPassed) return;
 
@@ -179,7 +182,8 @@ function _runAIChainResponse() {
       if (!cur || !cur.active) return;
       var next = Object.assign({}, cur);
       next.passCount = (next.passCount || 0) + 1;
-      next.priority  = myRole;
+      // 컨텍스트 스왑 중 myRole 값 변동 영향 제거
+      next.priority  = 'host';
       activeChainState = next;
       window.AI.chain.lastSig = _chainSig(next);
       log('🤖 AI: 체인 패스', 'opponent');
