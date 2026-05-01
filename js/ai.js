@@ -730,33 +730,10 @@ function _collectAIChainOptions(live) {
     usedFx:   window.AI.usedFx,
   };
 
-  // activate() 내부의 addChainLink, G.myGrave.push 등이
-  // 컨텍스트 스왑으로 AI 데이터를 가리키므로
-  // 추가로 addChainLink를 AI용으로 래핑
-  var origAddChainLink = window.addChainLink;
-  // AI 체인 응답 시: addChainLink 대신 직접 체인 상태 조작
-  window.addChainLink = function(effect, opts) {
-    if (!activeChainState || !activeChainState.active) return;
-    var aiLink = Object.assign({}, effect, { by: 'guest' });
-    var next = Object.assign({}, activeChainState);
-    next.links    = (next.links || []).concat([aiLink]);
-    next.passCount = 0;
-    next.priority  = myRole; // 플레이어에게 우선권
-    activeChainState = next;
-    window.AI.chain.lastSig = typeof _chainSig === 'function' ? _chainSig(next) : null;
-    log('🤖 ' + (effect.label || effect.type) + ' 체인 발동!', 'opponent');
-    renderChainActions();
-    renderAll();
-  };
-
-  var options;
-  try {
-    options = collectChainOptions(aiCtx);
-  } finally {
-    window.addChainLink = origAddChainLink;
-  }
-
-  return options;
+  // activate() 내부의 래핑은 collectChainOptions가 반환한
+  // 각 옵션의 activate 클로저(_makeActivate) 안에서 처리됨.
+  // 여기선 옵션 수집만.
+  return collectChainOptions(aiCtx);
 }
 
 /* ══════════════════════════════════════════════════════════
