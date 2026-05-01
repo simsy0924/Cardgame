@@ -326,33 +326,92 @@ async function _aiTurn() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Groq API
+// Groq API — 강화된 상태 + 상세 시스템 프롬프트
 // ─────────────────────────────────────────────────────────────
 async function _groq() {
   if (!_WORKER_URL) throw new Error('Worker URL 없음');
+
+  // 카드 상세 정보 빌드
+  function cardDetail(c) {
+    var cd = CARDS[c.id] || {};
+    return {
+      id: c.id,
+      name: c.name || cd.name,
+      cardType: cd.cardType,
+      atk: c.atk != null ? c.atk : cd.atk,
+      theme: cd.theme,
+      isKeyCard: cd.isKeyCard || false,
+      effects: cd.effects ? cd.effects.replace(/\n/g, ' ') : '',
+    };
+  }
+
   var state = {
     turn: G.turn,
+    phase: currentPhase,
     ai: {
-      hand: G.opHand.map(function(c) {
-        var cd = CARDS[c.id] || {};
-        return { id: c.id, name: c.name, cardType: cd.cardType, atk: cd.atk, theme: cd.theme };
-      }),
-      field: G.opField.map(function(c) { return { id: c.id, name: c.name, atk: c.atk }; }),
+      hand:    G.opHand.map(cardDetail),
+      field:   G.opField.map(cardDetail),
+      grave:   G.opGrave.map(function(c) { return { id: c.id, name: c.name }; }),
+      exile:   G.opExile.map(function(c) { return { id: c.id, name: c.name }; }),
+      keyDeck: (G.opKeyDeck || []).map(function(c) { return { id: c.id, name: c.name }; }),
+      fieldCard: G.opFieldCard ? { id: G.opFieldCard.id, name: G.opFieldCard.name } : null,
       deckCount: window.AI.opDeck.length,
     },
     player: {
       handCount: G.myHand.length,
-      field: G.myField.map(function(c) { return { id: c.id, name: c.name, atk: c.atk }; }),
+      // 공개된 플레이어 패만 보여줌
+      publicHand: G.myHand.filter(function(c) { return c.isPublic; }).map(cardDetail),
+      field:   G.myField.map(cardDetail),
+      grave:   G.myGrave.map(function(c) { return { id: c.id, name: c.name }; }),
+      exile:   G.myExile.map(function(c) { return { id: c.id, name: c.name }; }),
+      fieldCard: G.myFieldCard ? { id: G.myFieldCard.id, name: G.myFieldCard.name } : null,
+      keyDeckCount: G.myKeyDeck ? G.myKeyDeck.length : 0,
+      deckCount: G.myDeck ? G.myDeck.length : 0,
     },
+    winCondition: '패 0장이 되면 패배. 전투: 공격ATK > 방어ATK → 패 차이만큼 손실. 직접공격 → ATK만큼 손실.',
   };
+
+  var systemPrompt = `당신은 핸드 배틀 TCG의 전략적 AI 플레이어입니다.
+
+【게임 규칙】
+- 승리: 상대의 패를 0장으로 만들기
+- 패배: 자신의 패가 0장이 되면 즉시 패배
+- 전투: 내 몬스터ATK > 상대ATK → 상대 몬스터 묘지 + 패 차이만큼 손실
+- 직접공격: 상대 필드 비어있을 때 → 상대 패 ATK장 손실
+- ATK 동일 → 양쪽 묘지 (무승부, 패 손실 없음)
+
+【전략 원칙】
+1. 상대 패가 적으면 공격적으로, 많으면 필드를 구축
+2. ATK가 낮은 내 몬스터는 상대 ATK와 비교 후 공격 결정
+3. 이길 수 없는 전투는 피하고 직접공격 기회를 노릴 것
+4. 소환 유발효과(②)가 있는 카드를 우선 소환 고려
+5. 묘지/제외 카드를 활용하는 효과도 고려
+6. 상대 공개 패를 파악해 위협적인 효과에 대비
+
+【응답 형식】JSON만 반환 (마크다운 금지):
+{
+  "thinking": "현재 상황 분석과 전략 (50자 이내)",
+  "deploy": [
+    {"action": "summonFromHand", "cardId": "카드ID", "reason": "이유"}
+  ],
+  "attack": [
+    {"action": "attack", "attackerId": "내몬스터ID", "targetIdx": 0, "reason": "이유"},
+    {"action": "directAttack", "attackerId": "내몬스터ID", "reason": "이유"}
+  ]
+}
+
+주의: summonFromHand는 monster 타입만 가능. 필드가 가득 차면(5장) 소환 불가. 이미 필드에 있는 몬스터는 다시 소환 불가.`;
+
   var resp = await fetch(_WORKER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'llama-3.1-8b-instant', temperature: 0.2, max_tokens: 400,
+      model: 'llama-3.3-70b-versatile',
+      temperature: 0.3,
+      max_tokens: 600,
       response_format: { type: 'json_object' },
       messages: [
-        { role: 'system', content: '당신은 카드게임 AI. 목표: 상대 패 0장. 전투: 내ATK>상대ATK→상대 몬스터 제거+차이만큼 상대패 손실. 직접공격→ATK만큼 상대패 손실. summonFromHand는 monster만. JSON만 반환:\n{"thinking":"전략","deploy":[{"action":"summonFromHand","cardId":"ID"}],"attack":[{"action":"attack","attackerId":"ID","targetIdx":0},{"action":"directAttack","attackerId":"ID"}]}' },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: JSON.stringify(state) },
       ],
     }),
@@ -412,6 +471,29 @@ function _buildAttackPlan() {
 }
 
 // ─────────────────────────────────────────────
+// 플레이어 체인 응답 대기 — AI 액션 후 호출
+// 플레이어가 패스하거나 체인 처리가 끝날 때까지 대기
+// ─────────────────────────────────────────────
+function _waitForPlayerChainResponse() {
+  return new Promise(function(resolve) {
+    // 체인이 활성 상태면 체인이 끝날 때까지 폴링
+    if (activeChainState && activeChainState.active) {
+      var poll = setInterval(function() {
+        if (!activeChainState || !activeChainState.active) {
+          clearInterval(poll);
+          setTimeout(resolve, 200);
+        }
+      }, 100);
+      return;
+    }
+
+    // 체인 없음 — 플레이어에게 잠깐 응답 기회 부여
+    // _aiStartChainEffect가 이미 플레이어 우선권 처리를 함
+    // 여기선 단순 대기만
+    setTimeout(resolve, 300);
+  });
+}
+
 async function _deploy(actions) {
   for (var i = 0; i < actions.length; i++) {
     var act = actions[i];
@@ -419,10 +501,19 @@ async function _deploy(actions) {
     if (!G.opHand.find(function(c) { return c.id === act.cardId; })) continue;
     var cd = CARDS[act.cardId];
     if (!cd || cd.cardType !== 'monster') continue;
+
+    // 소환 — AI 소환은 handleOpponentAction('summon')을 통해 플레이어에게 알림
     _aiSummon(act.cardId);
-    await _s(500);
-    await _trigger(act.cardId);
     renderAll();
+    await _s(400);
+
+    // 소환 유발효과 처리 — _trigger 내부에서 _aiStartChainEffect를 쓰므로
+    // 각 효과마다 플레이어 응답 기회가 주어지고 resolve될 때까지 대기
+    await _trigger(act.cardId);
+    await _waitForPlayerChainResponse();
+    renderAll();
+
+    if (!isMyTurn && G.myHand.length === 0) break;
   }
 }
 
@@ -520,7 +611,13 @@ async function _trigger(cardId) {
 
   if (cardId==='꼬마 펭귄' && !u(cardId,2)) {
     var t=AI.opDeck.find(function(c){ return CARDS[c.id]&&CARDS[c.id].theme==='펭귄'&&CARDS[c.id].cardType==='monster'; });
-    if(t){ m(cardId,2); _aiSummonDeck(t.id); await _s(400); renderAll(); }
+    if(t){
+      m(cardId,2);
+      await new Promise(function(done) {
+        _aiStartChainEffect({ type:'aiSummonDeck', label:'꼬마 펭귄 ②', cardId:t.id }, done);
+      });
+      await _s(300); renderAll();
+    }
   }
   if (cardId==='수문장 펭귄' && !u(cardId,1) && G.opHand.length>0) {
     var fi=G.opField.findIndex(function(c){ return c.id==='수문장 펭귄'; });
@@ -528,18 +625,30 @@ async function _trigger(cardId) {
       var wk=G.opHand.reduce(function(a,b){ return (CARDS[a.id]?CARDS[a.id].atk||0:0)<=(CARDS[b.id]?CARDS[b.id].atk||0:0)?a:b; });
       _aiDiscard(wk.id);
       await new Promise(function(done){
-        _aiStartChainEffect({ type:'aiForceDiscard', label:'수문장 펭귄 ①', count:1, by:'guest' }, done);
+        _aiStartChainEffect({ type:'aiForceDiscard', label:'수문장 펭귄 ①', count:1 }, done);
       });
       await _s(300);
     }
   }
   if (cardId==='젊은 라이온' && !u(cardId,2)) {
     var t2=AI.opDeck.find(function(c){ return c.id.includes('사자')||(CARDS[c.id]&&CARDS[c.id].theme==='라이온'); });
-    if(t2){ m(cardId,2); _aiSearch(t2.id); await _s(300); }
+    if(t2){
+      m(cardId,2);
+      await new Promise(function(done) {
+        _aiStartChainEffect({ type:'aiSearch', label:'젊은 라이온 ②', cardId:t2.id }, done);
+      });
+      await _s(300);
+    }
   }
   if (cardId==='젊은 타이거' && !u(cardId,2)) {
     var t3=AI.opDeck.find(function(c){ return CARDS[c.id]&&CARDS[c.id].theme==='타이거'&&CARDS[c.id].cardType==='monster'; });
-    if(t3){ m(cardId,2); _aiSummonDeck(t3.id); await _s(400); renderAll(); }
+    if(t3){
+      m(cardId,2);
+      await new Promise(function(done) {
+        _aiStartChainEffect({ type:'aiSummonDeck', label:'젊은 타이거 ②', cardId:t3.id }, done);
+      });
+      await _s(400); renderAll();
+    }
   }
   if (cardId==='베이비 타이거' && !u(cardId,1)) {
     m(cardId,1);
@@ -549,7 +658,7 @@ async function _trigger(cardId) {
     var bti=G.opField.findIndex(function(c){ return c.id==='베이비 타이거'; });
     if(bti>=0) G.opExile.push(G.opField.splice(bti,1)[0]);
     await new Promise(function(done){
-      _aiStartChainEffect({ type:'aiForceDiscard', label:'베이비 타이거 ②', count:1, by:'guest' }, done);
+      _aiStartChainEffect({ type:'aiForceDiscard', label:'베이비 타이거 ②', count:1 }, done);
     });
     await _s(400); renderAll();
   }
@@ -559,9 +668,9 @@ async function _trigger(cardId) {
       m(cardId,1);
       AI.opDeck.splice(AI.opDeck.findIndex(function(c){ return c.id==='태평양 속 르뤼에'; }),1);
       G.opDeckCount=AI.opDeck.length;
-      G.opFieldCard={id:'태평양 속 르뤼에',name:'태평양 속 르뤼에'};
-      handleOpponentAction({type:'fieldCard',cardId:'태평양 속 르뤼에',by:'guest',ts:Date.now()});
-      log('🤖 태평양 속 르뤼에 발동','opponent');
+      await new Promise(function(done) {
+        _aiStartChainEffect({ type:'aiFieldCard', label:'크툴루 ①: 르뤼에 발동', cardId:'태평양 속 르뤼에' }, done);
+      });
       await _s(300); renderAll();
     }
   }

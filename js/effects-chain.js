@@ -277,9 +277,19 @@ function resolveChain(chainState) {
 const CHAIN_RESOLVERS = {
   // 공용
   keyFetch:                  (link) => resolveKeyFetch(link.cardId),
+  // AI 효과 리졸버
   aiForceDiscard:            (link) => forceDiscard(Math.max(1, Number(link.count) || 1)),
-  // AI 눈에는 눈 — 체인 해결 시 AI 드로우 실행
   aiEyeForEye:               ()     => { _aiDrawN(2); log('🤖 눈에는 눈: 드로우 2장', 'opponent'); renderAll(); },
+  aiSummonDeck:              (link) => { if (link.cardId) { _aiSummonDeck(link.cardId); renderAll(); } },
+  aiSearch:                  (link) => { if (link.cardId) { _aiSearch(link.cardId); renderAll(); } },
+  aiFieldCard:               (link) => {
+    if (!link.cardId) return;
+    var card = CARDS[link.cardId] || { name: link.cardId };
+    G.opFieldCard = { id: link.cardId, name: card.name };
+    handleOpponentAction({ type:'fieldCard', cardId: link.cardId, by:'guest', ts: Date.now() });
+    log('🤖 ' + card.name + ' 발동', 'opponent');
+    renderAll();
+  },
   // 플레이어 눈에는 눈 — 상대 서치에 대응, 체인 해결 시 드로우
   eyeForEyePlayer:           ()     => { drawN(2); log('눈에는 눈: 드로우 2장!', 'mine'); sendGameState(); renderAll(); },
   // 펭귄 마을
