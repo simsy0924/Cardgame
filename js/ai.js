@@ -137,6 +137,25 @@ function _chainSig(state) {
   return `${state.chainId || ''}|${links}#${state.priority}#${state.passCount}`;
 }
 
+
+function _forceAIPassCurrentChain(reason) {
+  var cur = activeChainState;
+  if (!cur || !cur.active || cur.priority !== 'guest') return;
+  var next = Object.assign({}, cur);
+  next.passCount = (next.passCount || 0) + 1;
+  next.priority = 'host';
+  activeChainState = next;
+  window.AI.chain.lastSig = _chainSig(next);
+  log('🤖 AI: 강제 체인 패스' + (reason ? ' (' + reason + ')' : ''), 'system');
+  _setAIThinkingState(false);
+  renderChainActions();
+  if (next.passCount >= 2 || !_playerHasChainResponse()) {
+    var fin = Object.assign({}, next);
+    fin.passCount = 2;
+    resolveChain(fin);
+  }
+}
+
 function _clearAIChainTimer() {
   if (window.AI.chain.timer) {
     clearTimeout(window.AI.chain.timer);
@@ -184,6 +203,14 @@ function _runAIChainResponse() {
   if (!playerActedLast && !playerPassed) { _setAIThinkingState(false); return; }
 
   window.AI.chain.lastSig = sig; // 처리 마킹
+
+  setTimeout(() => {
+    var st = activeChainState;
+    if (!st || !st.active) return;
+    if (st.priority !== 'guest') return;
+    if (_chainSig(st) !== sig) return;
+    _forceAIPassCurrentChain('watchdog');
+  }, 1800);
 
   // 응답 옵션 수집
   var options = _collectAIChainOptions(live);
