@@ -152,7 +152,7 @@ function _startChainWatcher() {
     if (!live || !live.active) return;
     if (live.priority !== 'guest') return;
     var sig = _chainSig(live);
-    if (sig === window.AI.chain.lastSig) return;
+    if (sig === window.AI.chain.lastSig) { _setAIThinkingState(false); return; }
     if (window.AI.chain.timer) return; // 이미 예약됨
     // 500ms 내에 아무것도 없으면 폴백 트리거
     window.AI.chain.timer = setTimeout(() => _runAIChainResponse(), 500);
@@ -173,15 +173,8 @@ function _runAIChainResponse() {
   if (sig === window.AI.chain.lastSig) return;
   window.AI.chain.lastSig = sig; // 처리 마킹
 
-  // 응답 가능 조건: 마지막 링크가 플레이어 것이거나 플레이어가 패스
-  var links = live.links || [];
-  var last  = links[links.length - 1] || {};
-  // AI 로컬전에서는 플레이어=host, AI=guest로 고정.
-  // myRole이 다른 로직에서 임시 변경되어도(컨텍스트 스왑) 판정이 흔들리지 않도록
-  // guest가 아닌 마지막 링크를 플레이어 행동으로 간주한다.
-  var playerActedLast = (last.by !== 'guest');
-  var playerPassed    = (live.passCount || 0) > 0;
-  if (!playerActedLast && !playerPassed) { _setAIThinkingState(false); return; }
+  // guest 우선권 상태라면 AI가 응답/패스 결정을 내려야 한다.
+  // (기존의 "마지막 행동자" 판정은 컨텍스트 스왑 타이밍에 오판할 수 있어 제거)
 
   // 응답 옵션 수집
   var options = _collectAIChainOptions(live);
