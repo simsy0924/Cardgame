@@ -547,7 +547,7 @@ function _aiStartChainEffect(effect, afterResolve) {
     var next = Object.assign({}, activeChainState);
     next.links = (next.links || []).concat([aiEffect]);
     next.passCount = 0;
-    next.priority = myRole; // 플레이어에게 응답 기회
+    next.priority = myRole; // 플레이어 우선 응답
     activeChainState = next;
     renderChainActions();
     if (_playerCanRespondInChain(next)) {
@@ -555,8 +555,8 @@ function _aiStartChainEffect(effect, afterResolve) {
     } else {
       setTimeout(function() {
         if (!activeChainState || !activeChainState.active) return;
-        resolveChain(Object.assign({}, activeChainState, { passCount: 2 }));
-      }, 300);
+        _aiChainResponse(activeChainState);
+      }, 180);
     }
     if (typeof afterResolve === 'function') {
       var _wait = function() {
@@ -568,7 +568,7 @@ function _aiStartChainEffect(effect, afterResolve) {
     return;
   }
 
-  // AI가 새 체인1을 여는 경우 — 직접 체인 상태 생성 후 플레이어에게 우선권
+  // AI가 새 체인1을 여는 경우 — 직접 체인 상태 생성 후 플레이어 우선 응답
   var chainState = {
     active: true,
     startedBy: getOtherRole(myRole),
@@ -583,13 +583,11 @@ function _aiStartChainEffect(effect, afterResolve) {
 
   if (_playerCanRespondInChain(chainState)) {
     notify(`상대가 ${aiEffect.label} 발동! 응답 또는 패스를 선택하세요.`);
-    // 플레이어가 패스하면 passChainPriority 훅에서 AI 재트리거
   } else {
-    // 플레이어 응답 수단 없음 → 즉시 해결
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) return;
-      resolveChain(Object.assign({}, activeChainState, { passCount: 2 }));
-    }, 500);
+      _aiChainResponse(activeChainState);
+    }, 220);
   }
 
   if (typeof afterResolve === 'function') {
