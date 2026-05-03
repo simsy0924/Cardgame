@@ -213,9 +213,12 @@ function _aiSummonDeck(cardId) {
 }
 
 function _aiDiscard(cardId) {
+  var before = G.opHand.length;
   _aiRemHand(cardId);
+  if (G.opHand.length === before) return false;
   G.opGrave.push({ id: cardId, name: CARDS[cardId] ? CARDS[cardId].name : cardId });
   handleOpponentAction({ type: 'discard', cardId: cardId, by: 'guest', ts: Date.now() });
+  return true;
 }
 
 function _aiSearch(cardId) {
