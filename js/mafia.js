@@ -75,12 +75,24 @@ function _resolveMafiaTransformChoice(picked) {
   }
   if (picked.includes('상대 필드의 몬스터 1장을 고르고 묘지로 보낸다')) {
     const mons = G.opField.slice();
-    if (mons.length > 0) forceSendOpFieldToGrave(mons[Math.floor(Math.random() * mons.length)], true);
+    if (mons.length > 0) {
+      openCardPicker(mons, '마피아 변형 효과: 묘지로 보낼 상대 몬스터 선택', 1, (sel) => {
+        if (!sel.length) return;
+        forceSendOpFieldToGrave(mons[sel[0]], true);
+        sendGameState(); renderAll();
+      }, true);
+    }
     return true;
   }
   if (picked.includes('상대 필드의 카드 1장을 고르고 묘지로 보낸다')) {
     const all = opFieldAll();
-    if (all.length > 0) forceSendOpFieldToGrave(all[Math.floor(Math.random() * all.length)], false);
+    if (all.length > 0) {
+      openCardPicker(all, '마피아 변형 효과: 묘지로 보낼 상대 필드 카드 선택', 1, (sel) => {
+        if (!sel.length) return;
+        forceSendOpFieldToGrave(all[sel[0]], false);
+        sendGameState(); renderAll();
+      }, true);
+    }
     return true;
   }
   if (picked.includes("상대는 묘지에서 '마피아'카드 1장을 패에 넣는다")) {
@@ -93,21 +105,35 @@ function _resolveMafiaTransformChoice(picked) {
     return true;
   }
   if (picked.includes("자신 필드의 '마피아'몬스터 1장의 공격력을 3 올린다")) {
-    const t = myMafiaMons()[0];
-    if (t) t.atk = (t.atk || t.atkBase || CARDS[t.id]?.atk || 0) + 3;
+    const targets = myMafiaMons();
+    if (targets.length > 0) {
+      openCardPicker(targets, '마피아 변형 효과: 공격력 +3 할 몬스터 선택', 1, (sel) => {
+        if (!sel.length) return;
+        const t = targets[sel[0]];
+        t.atk = (t.atk || t.atkBase || CARDS[t.id]?.atk || 0) + 3;
+        sendGameState(); renderAll();
+      }, true);
+    }
     return true;
   }
   if (picked.includes('자신 필드의 몬스터를 1장 묘지로 보내야 한다')) {
-    if (G.myField.length > 0) sendToGrave(G.myField[0].id, 'field');
+    if (G.myField.length > 0) {
+      openCardPicker([...G.myField], '마피아 변형 효과: 묘지로 보낼 내 몬스터 선택', 1, (sel) => {
+        if (!sel.length) return;
+        sendToGrave(G.myField[sel[0]].id, 'field');
+      }, true);
+    }
     return true;
   }
   if (picked.includes('2장 드로우하고, 패를 4장 고르고 버린다')) {
     drawN(2);
     const cnt = Math.min(4, G.myHand.length);
-    for (let i = 0; i < cnt; i++) {
-      const c = G.myHand.shift();
-      if (c) G.myGrave.push({ id: c.id, name: c.name || CARDS[c.id]?.name || c.id });
-    }
+    openCardPicker([...G.myHand], `마피아 변형 효과: 버릴 패 ${cnt}장 선택`, cnt, (sel) => {
+      sel.sort((a, b) => b - a).forEach(i => {
+        if (G.myHand[i]) G.myGrave.push(G.myHand.splice(i, 1)[0]);
+      });
+      sendGameState(); renderAll();
+    }, true);
     return true;
   }
   return false;
@@ -117,10 +143,15 @@ window.tryResolveMafiaChainTransform = function(link) {
   if (!_isMafiaTransformLink(link)) return false;
   const card = CARDS[link.cardId] || { name: link.cardId };
   const opts = ((link.mainText || '').match(/-\s*(.+)/g) || []).map(s => s.replace(/^\-\s*/, '').trim()).filter(Boolean);
-  const picked = opts.length > 0 ? opts[Math.floor(Math.random() * opts.length)] : '서로 1장 드로우한다.';
-  window._mafiaChainReplaceCount += 1;
-  log(`${card.name}: 상대 효과를 변형 → ${picked}`, 'mine');
-  _resolveMafiaTransformChoice(picked);
+  const optionCards = opts.map((txt, i) => ({ id: `_mafia_opt_${i}`, name: txt }));
+  if (optionCards.length === 0) optionCards.push({ id: '_mafia_opt_default', name: '서로 1장 드로우한다.' });
+  openCardPicker(optionCards, `${card.name}: 변형할 효과 선택`, 1, (sel) => {
+    if (!sel.length) return;
+    const picked = optionCards[sel[0]].name;
+    window._mafiaChainReplaceCount += 1;
+    log(`${card.name}: 상대 효과를 변형 → ${picked}`, 'mine');
+    _resolveMafiaTransformChoice(picked);
+  }, true);
   return true;
 };
 

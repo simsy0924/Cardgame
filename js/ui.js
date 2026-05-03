@@ -1070,6 +1070,8 @@ function viewFieldCard(who) {
 let builderMainDeck = {}; // {cardId: count}
 let builderKeyDeck = {};  // {cardId: 1}
 let currentPoolFilter = '전체';
+let deckSearchQuery = '';
+let deckSortMode = 'default';
 
 // 범용 카드 (테마 없는 것들)
 const GENERIC_CARDS = ['구사일생','일격필살','눈에는 눈','출입통제','단 한번의 기회','유혹의 황금사과','수호의 빛','신성한 수호자','서치 봉인의 항아리','단단한 카드 자물쇠'];
@@ -1078,6 +1080,22 @@ function openDeckBuilder() {
   document.getElementById('lobby').style.display = 'none';
   document.getElementById('deckBuilder').style.display = 'flex';
   filterDeckPool('전체');
+  renderBuilderDeck();
+}
+
+
+function setDeckSearch(q) {
+  deckSearchQuery = (q || '').trim().toLowerCase();
+  filterDeckPool(currentPoolFilter);
+}
+
+function sortBuilderDeckByName() {
+  deckSortMode = 'name';
+  renderBuilderDeck();
+}
+
+function sortBuilderDeckByCount() {
+  deckSortMode = 'count';
   renderBuilderDeck();
 }
 
@@ -1094,6 +1112,7 @@ function filterDeckPool(theme) {
       theme === '범용' ? GENERIC_CARDS.includes(card.id) :
       (card.theme === theme);
     if (!matchTheme) return;
+    if (deckSearchQuery && !card.name.toLowerCase().includes(deckSearchQuery)) return;
     const wrapper = document.createElement('div');
     wrapper.className = 'pool-card';
     wrapper.title = card.name;
@@ -1115,6 +1134,7 @@ function filterDeckPool(theme) {
   // 키카드 풀 (전체 또는 테마 탭에서 보임)
   if (theme !== '범용') {
     Object.values(CARDS).filter(c => c.isKeyCard && (theme === '전체' || c.theme === theme)).forEach(card => {
+      if (deckSearchQuery && !card.name.toLowerCase().includes(deckSearchQuery)) return;
       const wrapper = document.createElement('div');
       wrapper.className = 'pool-card';
       const el = renderCard({ id: card.id, name: card.name });
@@ -1176,7 +1196,11 @@ function renderBuilderDeck() {
   // 메인 덱 목록
   const mainList = document.getElementById('dbMainList');
   mainList.innerHTML = '';
-  Object.entries(builderMainDeck).forEach(([id, count]) => {
+  let mainEntries = Object.entries(builderMainDeck);
+  if (deckSortMode === 'name') mainEntries.sort((a, b) => (CARDS[a[0]]?.name || a[0]).localeCompare(CARDS[b[0]]?.name || b[0], 'ko'));
+  else if (deckSortMode === 'count') mainEntries.sort((a, b) => (b[1]-a[1]) || (CARDS[a[0]]?.name || a[0]).localeCompare(CARDS[b[0]]?.name || b[0], 'ko'));
+
+  mainEntries.forEach(([id, count]) => {
     const chip = document.createElement('div');
     chip.className = 'deck-card-chip';
     chip.innerHTML = `<span class="chip-count">${count}x</span>${CARDS[id]?.name || id}`;
@@ -1188,7 +1212,8 @@ function renderBuilderDeck() {
   // 키카드 덱 목록
   const keyList = document.getElementById('dbKeyList');
   keyList.innerHTML = '';
-  Object.keys(builderKeyDeck).forEach(id => {
+  const keyEntries = Object.keys(builderKeyDeck).sort((a, b) => (CARDS[a]?.name || a).localeCompare(CARDS[b]?.name || b, 'ko'));
+  keyEntries.forEach(id => {
     const chip = document.createElement('div');
     chip.className = 'deck-card-chip';
     chip.style.borderColor = '#7c5cbf';
@@ -1248,7 +1273,11 @@ function confirmDeck() {
   if (mainTotal < 40 || mainTotal > 60) { notify('메인 덱은 40~60장이어야 합니다.'); return; }
 
   const deckArr = [];
-  Object.entries(builderMainDeck).forEach(([id, count]) => {
+  let mainEntries = Object.entries(builderMainDeck);
+  if (deckSortMode === 'name') mainEntries.sort((a, b) => (CARDS[a[0]]?.name || a[0]).localeCompare(CARDS[b[0]]?.name || b[0], 'ko'));
+  else if (deckSortMode === 'count') mainEntries.sort((a, b) => (b[1]-a[1]) || (CARDS[a[0]]?.name || a[0]).localeCompare(CARDS[b[0]]?.name || b[0], 'ko'));
+
+  mainEntries.forEach(([id, count]) => {
     for (let i = 0; i < count; i++) deckArr.push(id);
   });
   const keyArr = Object.keys(builderKeyDeck);
