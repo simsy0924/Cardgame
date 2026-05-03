@@ -80,7 +80,7 @@ function resolveBulgasauiEffect(link) {
   }
 
   if (cardId === '불가사의한 적월') {
-    const max = Math.max(1, G.myField.filter(c => CARDS[c.id]?.theme === '불가사의').length);
+    const max = G.myField.filter(c => CARDS[c.id]?.theme === '불가사의').length;
     const myTargets = [...G.myField, ...(G.myFieldCard ? [G.myFieldCard] : [])];
     const opTargets = [...G.opField, ...(G.opFieldCard ? [G.opFieldCard] : [])];
     if (myTargets.length === 0 || opTargets.length === 0) return;
