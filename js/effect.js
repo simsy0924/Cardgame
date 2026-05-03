@@ -157,57 +157,28 @@ function forceDiscard(n, opponentPicks = false) {
 
   const actualN = Math.min(n, G.myHand.length);
 
-  if (opponentPicks) {
-    // 공개패 우선, 나머지 무작위
-    const publicCards  = G.myHand.filter(c => c.isPublic);
-    const privateCards = G.myHand.filter(c => !c.isPublic);
-    const toDiscard    = [];
-    let remaining      = actualN;
+  const pickerTitle = opponentPicks
+    ? `상대 효과: 버릴 패 ${actualN}장 직접 선택`
+    : `패를 ${actualN}장 버려야 합니다 (${actualN}장 선택)`;
 
-    publicCards.slice(0, remaining).forEach(c => { toDiscard.push(c); remaining--; });
-
-    while (remaining > 0 && privateCards.length > 0) {
-      const idx = Math.floor(Math.random() * privateCards.length);
-      toDiscard.push(privateCards.splice(idx, 1)[0]);
-      remaining--;
-    }
-
-    const names = toDiscard.map(c => c.name).join(', ');
-    log(`상대가 선택: ${names}`, 'mine');
-    notify(`상대 효과: ${names} 버림`);
-
-    toDiscard.forEach(c => {
-      const hi = G.myHand.findIndex(h => h.id === c.id && h.isPublic === c.isPublic);
-      if (hi >= 0) G.myGrave.push(G.myHand.splice(hi, 1)[0]);
-    });
-
-    sendGameState();
-    renderAll();
-    checkWinCondition();
-
-  } else {
-    // 내가 피커로 선택
-    openCardPicker(
-      G.myHand,
-      `패를 ${actualN}장 버려야 합니다 (${actualN}장 선택)`,
-      actualN,
-      (selected) => {
-        // 내림차순 정렬 후 제거 (인덱스 밀림 방지)
-        selected.sort((a, b) => b - a).forEach(i => {
-          if (G.myHand[i]) G.myGrave.push(G.myHand.splice(i, 1)[0]);
-        });
-        // 덜 선택했으면 나머지 무작위
-        const shortage = actualN - selected.length;
-        for (let i = 0; i < shortage && G.myHand.length > 0; i++) {
-          const ri = Math.floor(Math.random() * G.myHand.length);
-          G.myGrave.push(G.myHand.splice(ri, 1)[0]);
-        }
-        sendGameState();
-        renderAll();
-        checkWinCondition();
+  openCardPicker(
+    G.myHand,
+    pickerTitle,
+    actualN,
+    (selected) => {
+      if (!selected || selected.length < actualN) {
+        notify(`정확히 ${actualN}장을 선택해야 합니다.`);
+        return;
       }
-    );
-  }
+      selected.sort((a, b) => b - a).forEach(i => {
+        if (G.myHand[i]) G.myGrave.push(G.myHand.splice(i, 1)[0]);
+      });
+      sendGameState();
+      renderAll();
+      checkWinCondition();
+    },
+    true
+  );
 }
 
 // ─────────────────────────────────────────────
