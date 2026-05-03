@@ -213,9 +213,12 @@ function _aiSummonDeck(cardId) {
 }
 
 function _aiDiscard(cardId) {
+  var before = G.opHand.length;
   _aiRemHand(cardId);
+  if (G.opHand.length === before) return false;
   G.opGrave.push({ id: cardId, name: CARDS[cardId] ? CARDS[cardId].name : cardId });
   handleOpponentAction({ type: 'discard', cardId: cardId, by: 'guest', ts: Date.now() });
+  return true;
 }
 
 function _aiSearch(cardId) {
@@ -1047,22 +1050,47 @@ function _canAIRespondNow(state) {
 }
 
 function _collectAIChainOptions(chainState) {
-  var options = [];
   var liveChain = chainState || activeChainState;
-  if (!liveChain || !liveChain.active) return options;
-  if (!_canAIRespondNow(liveChain)) return options;
+  if (!liveChain || !liveChain.active) return [];
+  if (!_canAIRespondNow(liveChain)) return [];
 
+  // 플레이어와 동일한 체인 응답 엔진을 AI 컨텍스트로 재사용
+  // effects-chain.js의 collectChainOptions(aiCtx)가 전역 상태를 임시 스왑해
+  // condition/activate를 동일 규칙으로 실행해준다.
+  if (typeof collectChainOptions === 'function') {
+    var commonOptions = collectChainOptions({
+      hand: G.opHand,
+      field: G.opField,
+      grave: G.opGrave,
+      exile: G.opExile,
+      keyDeck: G.opKeyDeck,
+      role: 'guest',
+      usedFx: window.AI.usedFx,
+      isMyTurn: false,
+    }) || [];
+
+    var analysis = _aiAnalyzeChainState(liveChain);
+    return commonOptions.map(function(opt) {
+      var card = { id: opt.cardId || '', name: opt.label || '' };
+      return {
+        id: opt.cardId || opt.label || 'unknown',
+        label: opt.label || opt.cardId || '체인 응답',
+        score: 50 + _aiScoreChainOption({ score: 0 }, { analysis: analysis }, card),
+        activate: function() { return opt.activate(); },
+      };
+    });
+  }
+
+  // 폴백: 기존 AI 전용 응답 레지스트리 사용
+  var options = [];
   var hasHostChain = (liveChain.links || []).some(function(l) {
     var by = l && l.by;
     return by === myRole || by === 'host';
   });
-
   var ctx = { chainState: liveChain, hasHostChain: hasHostChain, analysis: _aiAnalyzeChainState(liveChain) };
-
   G.opHand.forEach(function(handCard, handIdx) {
     var entries = window.AI_CHAIN_HAND_RESPONSES[handCard.id];
     if (!entries || !entries.length) return;
-
     entries.forEach(function(entry) {
       if (!_aiCanUse(handCard.id, entry.effectNum)) return;
       if (entry.condition && !entry.condition(ctx, handIdx, handCard)) return;
@@ -1070,13 +1098,10 @@ function _collectAIChainOptions(chainState) {
         id: handCard.id,
         score: _aiScoreChainOption(entry, ctx, handCard),
         label: entry.label || handCard.id,
-        activate: function() {
-          return entry.activate(ctx, handIdx, handCard);
-        },
+        activate: function() { return entry.activate(ctx, handIdx, handCard); },
       });
     });
   });
-
   return options;
 }
 
