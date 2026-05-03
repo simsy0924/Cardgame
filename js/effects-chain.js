@@ -618,8 +618,14 @@ function executeChainLocally(links) {
       log(`무효: ${link.label || link.type}`, 'system');
       return;
     }
+    if (window.consumeMafiaChainReplacement && window.consumeMafiaChainReplacement(link)) {
+      return;
+    }
 
     if (link.by === myRole) {
+      if (window.tryResolveMafiaChainTransform && window.tryResolveMafiaChainTransform(link)) {
+        return;
+      }
       const resolver = CHAIN_RESOLVERS[link.type];
       if (resolver) resolver(link);
       else console.warn('[Chain] 알 수 없는 링크 타입:', link.type);
