@@ -406,10 +406,28 @@ function onSummon(cardId, from) {
     case '펭귄의 전설': triggerPenguinLegend(from); break;
     case '펭귄 마법사': triggerPenguinWizard(from); break;
     case '전원소의 지배자': triggerJibaejaJeon2(); break;
+    case '엘리멘츠의 불꽃정령':
+    case '엘리멘츠의 물정령':
+    case '엘리멘츠의 전기정령':
+    case '엘리멘츠의 바람정령':
+      if (window.THEME_EFFECT_HANDLERS?.['엘리멘츠']?.onElementsSummoned) {
+        window.THEME_EFFECT_HANDLERS['엘리멘츠'].onElementsSummoned(cardId);
+      }
+      break;
   }
   renderAll();
 }
-function onSentToGrave(cardId) { if (cardId === '펭귄 용사') autoTriggerHeroGrave(); }
+function onSentToGrave(cardId) {
+  if (cardId === '펭귄 용사') autoTriggerHeroGrave();
+  if (cardId === '엘리멘츠의 바람정령' && canUseEffect('엘리멘츠의 바람정령', 3)) {
+    markEffectUsed('엘리멘츠의 바람정령', 3);
+    const t = findAllInDeck(c => c.id === '엘리멘츠 in rainbow forest');
+    if (t.length > 0) {
+      searchToHand('엘리멘츠 in rainbow forest');
+      log('엘리멘츠의 바람정령 ③: 엘리멘츠 in rainbow forest 서치', 'mine');
+    }
+  }
+}
 
 // ─────────────────────────────────────────────────────────────
 // 중앙화된 내성 시스템

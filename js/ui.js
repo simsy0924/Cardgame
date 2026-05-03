@@ -110,6 +110,11 @@ function renderMyField() {
       atkEl.textContent = `ATK ${mon.atk ?? (card.atk ?? '?')}`;
       slot.appendChild(nameEl);
       slot.appendChild(atkEl);
+      const countersEl = document.createElement('div');
+      countersEl.style.cssText = 'font-size:.5rem;color:#9dd6ff;text-align:center;line-height:1.2;padding:0 2px 2px;';
+      const counterText = Object.entries(mon.counters || {}).filter(([, n]) => n > 0).map(([k, n]) => `${k}${n}`).join(' · ');
+      countersEl.textContent = counterText || '';
+      slot.appendChild(countersEl);
       slot.addEventListener('click', () => onMyFieldClick(i));
     } else {
       slot.style.cursor = 'default';
@@ -132,6 +137,11 @@ function renderOpField() {
     atkEl.textContent = `ATK ${mon.atk ?? '?'}`;
     slot.appendChild(nameEl);
     slot.appendChild(atkEl);
+    const countersEl = document.createElement('div');
+    countersEl.style.cssText = 'font-size:.5rem;color:#9dd6ff;text-align:center;line-height:1.2;padding:0 2px 2px;';
+    const counterText = Object.entries(mon.counters || {}).filter(([, n]) => n > 0).map(([k, n]) => `${k}${n}`).join(' · ');
+    countersEl.textContent = counterText || '';
+    slot.appendChild(countersEl);
     slot.addEventListener('click', () => onOpFieldClick(i));
     container.appendChild(slot);
   });
