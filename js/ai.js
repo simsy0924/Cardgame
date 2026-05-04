@@ -19,6 +19,17 @@ window.AI = {
   chainWatcher: null,
 };
 
+function _resetAIRuntime() {
+  if (window.AI.chainTimer) clearTimeout(window.AI.chainTimer);
+  if (window.AI.chainWatcher) clearInterval(window.AI.chainWatcher);
+  window.AI.thinking = false;
+  window.AI.usedFx = {};
+  window.AI.attacked = new Set();
+  window.AI.chainMemory = { respondedSig: null };
+  window.AI.chainTimer = null;
+  window.AI.chainWatcher = null;
+}
+
 var _s = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
 
 
@@ -45,7 +56,12 @@ _safeHook('enterGameWithDeck', function(_origEGWD) {
 _safeHook('endTurn', function(_origET) {
   return function() {
     _origET.apply(this, arguments);
-    if (window.AI.active && !isMyTurn) setTimeout(_aiTurn, 700);
+    if (!window.AI.active) return;
+    if (isMyTurn) return;
+    setTimeout(function() {
+      if (!window.AI.active || isMyTurn) return;
+      _aiTurn();
+    }, 500);
   };
 });
 
@@ -69,6 +85,7 @@ _safeHook('checkWinCondition', function(_origCWC) {
 // AI 모드 진입
 // ─────────────────────────────────────────────────────────────
 window.startAIMode = function() {
+  _resetAIRuntime();
   window.AI.active = true;
   window.roomRef   = null;   // !roomRef → confirmDeck에서 enterGameWithDeck 직행
   window.myRole    = 'host'; // 플레이어=선공, AI=후공
@@ -119,6 +136,7 @@ function _buildAIDeck() {
 // ─────────────────────────────────────────────────────────────
 function _setupAI() {
   if (!window.AI.active) return;
+  _resetAIRuntime();
 
   _buildAIDeck();
 
@@ -145,6 +163,9 @@ function _setupAI() {
   _aiBanner();
   log('🤖 AI (' + window.AI.deckPreset + ') 후공 참전! 패 ' + G.opHand.length + '장', 'system');
 
+  G.turn = 1;
+  G.activePlayer = 'host';
+  currentPhase = 'deploy';
   isMyTurn = true;
   advancePhase('deploy');
   renderAll();
@@ -771,6 +792,7 @@ function _aiEnd() {
   window.AI.usedFx   = {};
   window.AI.attacked = new Set();
   G.turn++;
+  G.activePlayer = 'host';
   isMyTurn = true;
   try { attackedMonstersThisTurn.clear(); } catch(e) {}
   gameClock.runningFor  = 'host';
