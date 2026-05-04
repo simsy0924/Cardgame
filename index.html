@@ -392,6 +392,17 @@ input[type="text"]::placeholder { color: var(--text-dim); }
   overflow: hidden;
 }
 
+/* 꾸미기 아이템 (보드/슬리브) */
+body[data-board='board_moon'] .player-area.opponent,
+body[data-board='board_moon'] .player-area.self {
+  background: linear-gradient(160deg, #0b1028 0%, #1a1738 45%, #0a0f22 100%);
+}
+body[data-sleeve='sleeve_aurora'] .card-back {
+  border-color: #7fd7ff;
+  background: linear-gradient(135deg, #0b2f47 0%, #5c3aa8 45%, #1a7a82 100%);
+  box-shadow: 0 0 10px #7fd7ff33;
+}
+
 .player-area {
   display: flex; flex-direction: column;
   padding: .7rem .9rem; gap: .4rem; min-height: 0;
