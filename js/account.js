@@ -76,6 +76,8 @@ async function ensureUserDoc(user) {
       starterDeckMain: ['펭귄 병사','펭귄 병사','펭귄 병사','황제 펭귄','황제 펭귄','펭귄 부부','전략 회의'],
       starterDeckKey: ['황제 펭귄'],
       tutorialCompleted: false, claimedMissions: [],
+      selectedStarterTheme: null,
+      isAdmin: false,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
@@ -225,6 +227,14 @@ async function checkAdminUI() {
   try {
     const adminDoc = await fsdb.collection('admins').doc(currentUser.uid).get();
     btn.closest('.lobby-card').style.display = adminDoc.exists ? '' : 'none';
+    if (currentUser && fsdb) {
+      await fsdb.collection('users').doc(currentUser.uid).set({
+        isAdmin: !!adminDoc.exists,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      userProfile = await getUserProfile(currentUser.uid);
+      window.userProfile = userProfile;
+    }
   } catch (e) {
     btn.closest('.lobby-card').style.display = 'none';
   }
