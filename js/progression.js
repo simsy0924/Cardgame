@@ -66,12 +66,12 @@ window.startTutorial = function() {
       closeModal('tutorialModal');
       if (window.currentUser && window.fsdb) {
         try {
-          await fsdb.runTransaction(async (tx) => {
-            const ref = fsdb.collection('users').doc(currentUser.uid); const snap = await tx.get(ref); if (!snap.exists) return;
+          await window.fsdb.runTransaction(async (tx) => {
+            const ref = window.fsdb.collection('users').doc(window.currentUser.uid); const snap = await tx.get(ref); if (!snap.exists) return;
             const d = snap.data(); if (d.tutorialCompleted) return;
             tx.update(ref, { tutorialCompleted:true, currency: Number(d.currency||0) + 300, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
           });
-          userProfile = await getUserProfile(currentUser.uid); window.userProfile = userProfile; if (window.renderProfileUI) renderProfileUI(currentUser);
+          userProfile = await window.getUserProfile(window.currentUser.uid); window.userProfile = userProfile; if (window.renderProfileUI) window.renderProfileUI(window.currentUser);
           notify('튜토리얼 완료! 보상 300골드를 획득했습니다.');
         } catch(e) {}
       }

@@ -88,6 +88,8 @@ async function getUserProfile(uid) {
   catch(e) { return null; }
 }
 
+window.getUserProfile = getUserProfile;
+
 async function recordGameResult(win) {
   if (!currentUser || !fsdb || gameResultRecorded) return;
   gameResultRecorded = true;
@@ -113,6 +115,7 @@ async function recordGameResult(win) {
       playedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     userProfile = await getUserProfile(currentUser.uid);
+    window.userProfile = userProfile;
     notify((win ? '🏆 승리' : '💀 패배') + '! ' + (earned > 0 ? ('재화 +' + earned) : '재화 획득 없음') + ' (합계: ' + (userProfile?.currency ?? '?') + ')');
   } catch(e) { console.error('결과 기록 실패:', e); }
 }
@@ -125,6 +128,7 @@ async function saveNickname() {
   try {
     await fsdb.collection('users').doc(currentUser.uid).update({ nickname: newNick, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
     userProfile = await getUserProfile(currentUser.uid);
+    window.userProfile = userProfile;
     const nameEl = document.getElementById('profileName');
     if (nameEl) nameEl.textContent = newNick;
     const playerNameEl = document.getElementById('playerName');
@@ -209,6 +213,7 @@ async function adminResetAllStats() {
 
     if (currentUser) {
       userProfile = await getUserProfile(currentUser.uid);
+      window.userProfile = userProfile;
       renderProfileUI(currentUser);
     }
   } catch (e) {
@@ -221,14 +226,15 @@ async function adminResetAllStats() {
 async function checkAdminUI() {
   const btn = document.getElementById('adminResetBtn');
   if (!btn) return;
-  if (!currentUser || !fsdb) { btn.closest('.lobby-card').style.display = 'none'; return; }
+  const card = btn.closest('.lobby-card');
+  if (!currentUser || !fsdb) { if (card) card.style.display = 'none'; return; }
   try {
     const adminDoc = await fsdb.collection('admins').doc(currentUser.uid).get();
     const isAdmin = adminDoc.exists;
-    btn.closest('.lobby-card').style.display = isAdmin ? '' : 'none';
+    if (card) card.style.display = isAdmin ? '' : 'none';
     if (userProfile) { userProfile.isAdmin = isAdmin; window.userProfile = userProfile; }
   } catch (e) {
-    btn.closest('.lobby-card').style.display = 'none';
+    if (card) card.style.display = 'none';
   }
 }
 // 페이지 로드 후 미리 SDK 로드 (로그인 버튼 응답 빠르게)
