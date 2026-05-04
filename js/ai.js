@@ -971,103 +971,63 @@ _safeHook('resolveChain', function(_origResolveChain) {
 // AI 체인 응답 판단
 // ─────────────────────────────────────────────────────────────
 
-window.AI_CHAIN_HAND_RESPONSES = window.AI_CHAIN_HAND_RESPONSES || {};
-
-function registerAIChainHandResponse(cardId, entries) {
-  window.AI_CHAIN_HAND_RESPONSES[cardId] = entries;
+function _canAIRespondWithSharedRules(chainState) {
+  if (!chainState || !chainState.active) return false;
+  if (typeof collectChainOptions !== 'function') return false;
+  var options = collectChainOptions({
+    hand: G.opHand,
+    field: G.opField,
+    grave: G.opGrave,
+    exile: G.opExile,
+    keyDeck: G.opKeyDeck,
+    role: 'guest',
+    usedFx: window.AI.usedFx,
+    isMyTurn: false,
+  }) || [];
+  return options.length > 0;
 }
 
-function _registerDefaultAIChainResponses() {
-  registerAIChainHandResponse('눈에는 눈', [{
-    effectNum: 1,
-    score: 40,
-    condition: function(ctx) {
-      return ctx.analysis && ctx.analysis.hasEyeForEyeTarget;
-    },
-    activate: function(ctx) {
-      _aiMarkUsed('눈에는 눈', 1);
-      _aiDiscard('눈에는 눈');
-      return { type: 'aiEyeForEye', label: '눈에는 눈 (AI)', by: getOtherRole(myRole) };
-    },
-  }]);
-
-  registerAIChainHandResponse('출입통제', [{
-    effectNum: 1,
-    score: 80,
-    condition: function(ctx) {
-      return ctx.hasHostChain;
-    },
-    activate: function(ctx) {
-      _aiMarkUsed('출입통제', 1);
-      _aiDiscard('출입통제');
-      return { type: 'genericNegate', label: '출입통제 (AI)', by: getOtherRole(myRole) };
-    },
-  }]);
-
-  registerAIChainHandResponse('펭귄의 일격', [{
-    effectNum: 1,
-    score: 95,
-    condition: function(ctx) {
-      if (!ctx.hasHostChain) return false;
-      return Array.isArray(G.opHand) && G.opHand.length >= 2;
-    },
-    activate: function() {
-      if (!_aiDiscard('펭귄의 일격')) return null;
-      var extraIdx = G.opHand.findIndex(function(c) {
-        return c && c.id !== '눈에는 눈' && c.id !== '출입통제';
-      });
-      if (extraIdx < 0) extraIdx = 0;
-      var extra = G.opHand.splice(extraIdx, 1)[0];
-      if (extra) G.opGrave.push(extra);
-      _aiMarkUsed('펭귄의 일격', 1);
-      return { type: 'genericNegate', label: '펭귄의 일격 ① (AI)', by: getOtherRole(myRole) };
-    },
-  }]);
-}
-
-_registerDefaultAIChainResponses();
-
-function _aiAnalyzeChainState(chainState) {
+function _scoreSharedChainOption(opt, chainState) {
+  var score = 50;
+  var label = String((opt && opt.label) || '');
   var links = (chainState && chainState.links) || [];
-  var hostLinks = links.filter(function(l) { return l && (l.by === myRole || l.by === 'host'); });
-  var aiLinks = links.filter(function(l) { return l && (l.by !== myRole && l.by !== 'host'); });
+  var last = links.length ? links[links.length - 1] : null;
+  var lastType = String((last && last.type) || '');
 
-  var hasEyeForEyeTarget = hostLinks.some(function(l) {
-    var t = String((l && l.type) || '');
-    return t === 'keyFetch' || t === 'aiSearch' || t === 'themeEffect' || t.indexOf('search') >= 0;
-  });
+  if (label.indexOf('무효') >= 0 || label.indexOf('출입통제') >= 0) score += 20;
+  if (label.indexOf('눈에는 눈') >= 0 && (lastType.indexOf('search') >= 0 || lastType === 'keyFetch' || lastType === 'aiSearch')) score += 15;
+  if (label.indexOf('묘지') >= 0 || label.indexOf('제외') >= 0) score += 10;
+  if (G.opHand.length <= 2) score -= 8;
 
-  var dangerous = hostLinks.some(function(l) {
-    var t = String((l && l.type) || '');
-    return t.indexOf('negate') >= 0 || t.indexOf('grave') >= 0 || t.indexOf('exile') >= 0 || t.indexOf('destroy') >= 0;
-  });
-
-  return {
-    links: links,
-    hostLinks: hostLinks,
-    aiLinks: aiLinks,
-    hostLinkCount: hostLinks.length,
-    aiLinkCount: aiLinks.length,
-    dangerousHostLink: dangerous,
-    hasEyeForEyeTarget: hasEyeForEyeTarget,
-    aiFieldCount: G.opField.length,
-    myFieldCount: G.myField.length,
-    aiHandCount: G.opHand.length,
-    myHandCount: G.myHand.length,
-    aiDeckCount: window.AI && window.AI.opDeck ? window.AI.opDeck.length : 0,
-  };
+  return score;
 }
 
-function _aiScoreChainOption(entry, ctx, handCard) {
-  var base = Number(entry.score) || 0;
-  var id = handCard && handCard.id ? handCard.id : '';
+function _collectAIChainOptions(chainState) {
+  var liveChain = chainState || activeChainState;
+  if (!liveChain || !liveChain.active) return [];
 
-  if (ctx.analysis.dangerousHostLink && id === '출입통제') base += 25;
-  if (ctx.analysis.myFieldCount === 0 && id === '눈에는 눈') base += 10;
-  if (ctx.analysis.aiHandCount <= 2 && id === '눈에는 눈') base += 15;
-  if (ctx.analysis.hostLinkCount > ctx.analysis.aiLinkCount) base += 8;
+  if (typeof collectChainOptions !== 'function') return [];
 
-  return base;
+  var commonOptions = collectChainOptions({
+    hand: G.opHand,
+    field: G.opField,
+    grave: G.opGrave,
+    exile: G.opExile,
+    keyDeck: G.opKeyDeck,
+    role: 'guest',
+    usedFx: window.AI.usedFx,
+    isMyTurn: false,
+  }) || [];
+
+  return commonOptions.map(function(opt) {
+    return {
+      id: opt.cardId || opt.label || 'unknown',
+      label: opt.label || opt.cardId || '체인 응답',
+      score: _scoreSharedChainOption(opt, liveChain),
+      activate: function() { opt.activate(); return null; },
+      rawActivate: function() { opt.activate(); },
+    };
+  });
 }
 
 function _canAIRespondNow(state) {
@@ -1080,63 +1040,6 @@ function _canAIRespondNow(state) {
   var opponentPassedToAI = (state.passCount || 0) > 0;
   return opponentLinkedLast || opponentPassedToAI;
 }
-
-function _collectAIChainOptions(chainState) {
-  var liveChain = chainState || activeChainState;
-  if (!liveChain || !liveChain.active) return [];
-  if (!_canAIRespondNow(liveChain)) return [];
-
-  // 플레이어와 동일한 체인 응답 엔진을 AI 컨텍스트로 재사용
-  // effects-chain.js의 collectChainOptions(aiCtx)가 전역 상태를 임시 스왑해
-  // condition/activate를 동일 규칙으로 실행해준다.
-  if (typeof collectChainOptions === 'function') {
-    var commonOptions = collectChainOptions({
-      hand: G.opHand,
-      field: G.opField,
-      grave: G.opGrave,
-      exile: G.opExile,
-      keyDeck: G.opKeyDeck,
-      role: 'guest',
-      usedFx: window.AI.usedFx,
-      isMyTurn: false,
-    }) || [];
-
-    var analysis = _aiAnalyzeChainState(liveChain);
-    return commonOptions.map(function(opt) {
-      var card = { id: opt.cardId || '', name: opt.label || '' };
-      return {
-        id: opt.cardId || opt.label || 'unknown',
-        label: opt.label || opt.cardId || '체인 응답',
-        score: 50 + _aiScoreChainOption({ score: 0 }, { analysis: analysis }, card),
-        activate: function() { return opt.activate(); },
-      };
-    });
-  }
-
-  // 폴백: 기존 AI 전용 응답 레지스트리 사용
-  var options = [];
-  var hasHostChain = (liveChain.links || []).some(function(l) {
-    var by = l && l.by;
-    return by === myRole || by === 'host';
-  });
-  var ctx = { chainState: liveChain, hasHostChain: hasHostChain, analysis: _aiAnalyzeChainState(liveChain) };
-  G.opHand.forEach(function(handCard, handIdx) {
-    var entries = window.AI_CHAIN_HAND_RESPONSES[handCard.id];
-    if (!entries || !entries.length) return;
-    entries.forEach(function(entry) {
-      if (!_aiCanUse(handCard.id, entry.effectNum)) return;
-      if (entry.condition && !entry.condition(ctx, handIdx, handCard)) return;
-      options.push({
-        id: handCard.id,
-        score: _aiScoreChainOption(entry, ctx, handCard),
-        label: entry.label || handCard.id,
-        activate: function() { return entry.activate(ctx, handIdx, handCard); },
-      });
-    });
-  });
-  return options;
-}
-
 
 function _chainSignature(state) {
   if (!state || !state.active) return '';
@@ -1233,23 +1136,21 @@ function _aiChainResponse(chainState) {
   // AI가 체인에 응답 카드 발동
   setTimeout(function() {
     if (!activeChainState || !activeChainState.active) return;
-    var link = picked.activate();
-    if (!link) return;
+    picked.rawActivate();
 
     log('🤖 ' + picked.id + ' 체인 발동!', 'opponent');
-    var next = Object.assign({}, activeChainState);
-    next.links = (next.links || []).concat([link]);
-    next.passCount = 0;
-    next.priority = myRole;
-    activeChainState = next;
+    var next = activeChainState;
+    if (!next || !next.active) return;
     _markAIChainHandled(next);
     if (roomRef) roomRef.child('chainState').set(next);
     renderChainActions();
     renderAll();
 
     if (_playerCanRespondInChain(next)) {
-      notify('체인 ' + next.links.length + ': ' + (link.label || picked.id) + '. 응답 또는 패스를 선택하세요.');
+      var lastLink = (next.links || [])[Math.max(0, (next.links || []).length - 1)] || {};
+      notify('체인 ' + next.links.length + ': ' + (lastLink.label || picked.id) + '. 응답 또는 패스를 선택하세요.');
     } else {
+      next = Object.assign({}, next);
       next.passCount = 1;
       activeChainState = next;
       setTimeout(function() {
@@ -1271,8 +1172,6 @@ function _playerCanRespondInChain(state) {
   return Array.isArray(G.myKeyDeck) && G.myKeyDeck.length > 0;
 }
 
-function _aiCanUse(id, n) { return !window.AI.usedFx[id+'_'+n]; }
-function _aiMarkUsed(id, n) { window.AI.usedFx[id+'_'+n] = 1; }
 window._aiChainResponse = _aiChainResponse;
 window._aiRespondToChain = function() {
   _aiChainResponse(activeChainState);
