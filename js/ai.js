@@ -40,6 +40,14 @@ function _safeHook(name, wrapper) {
   return true;
 }
 
+function _playerRole() {
+  return myRole || 'host';
+}
+
+function _aiRole() {
+  return _playerRole() === 'host' ? 'guest' : 'host';
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // 훅 — ai.js가 맨 마지막 로드되므로 즉시 등록 가능
@@ -903,7 +911,7 @@ _safeHook('beginChain', function(_origBeginChain) {
     if (!window.AI.active) return;
     // 플레이어가 체인1 발동 → priority='guest' → AI 응답 트리거
     var live = activeChainState;
-    if (!live || !live.active || live.priority !== 'guest') return;
+    if (!live || !live.active || live.priority !== _aiRole()) return;
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) return;
       _aiChainResponse(activeChainState);
@@ -917,7 +925,7 @@ _safeHook('addChainLink', function(_origAddChainLink) {
     if (!window.AI.active) return;
     // 플레이어가 체인N 추가 → AI 응답 트리거
     var live = activeChainState;
-    if (!live || !live.active || live.priority !== 'guest') return;
+    if (!live || !live.active || live.priority !== _aiRole()) return;
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) return;
       _aiChainResponse(activeChainState);
@@ -939,7 +947,7 @@ _safeHook('passChainPriority', function(_origPassChainPriority) {
     if (shouldHandleLocalAIPass) {
       var next = Object.assign({}, liveBefore);
       next.passCount = (next.passCount || 0) + 1;
-      next.priority = 'guest';
+      next.priority = _aiRole();
       activeChainState = next;
       log('체인 패스', 'system');
       renderChainActions();
@@ -980,7 +988,7 @@ function _canAIRespondWithSharedRules(chainState) {
     grave: G.opGrave,
     exile: G.opExile,
     keyDeck: G.opKeyDeck,
-    role: 'guest',
+    role: _aiRole(),
     usedFx: window.AI.usedFx,
     isMyTurn: false,
   }) || [];
@@ -1014,7 +1022,7 @@ function _collectAIChainOptions(chainState) {
     grave: G.opGrave,
     exile: G.opExile,
     keyDeck: G.opKeyDeck,
-    role: 'guest',
+    role: _aiRole(),
     usedFx: window.AI.usedFx,
     isMyTurn: false,
   }) || [];
@@ -1032,11 +1040,11 @@ function _collectAIChainOptions(chainState) {
 
 function _canAIRespondNow(state) {
   if (!state || !state.active) return false;
-  if (state.priority !== 'guest') return false;
+  if (state.priority !== _aiRole()) return false;
   var links = state.links || [];
   if (!links.length) return false;
   var last = links[links.length - 1] || {};
-  var opponentLinkedLast = last.by === myRole || last.by === 'host';
+  var opponentLinkedLast = last.by === _playerRole();
   var opponentPassedToAI = (state.passCount || 0) > 0;
   return opponentLinkedLast || opponentPassedToAI;
 }
@@ -1067,7 +1075,7 @@ function _startAIChainWatcher() {
     if (!window.AI.active) return;
     var live = activeChainState;
     if (!live || !live.active) return;
-    if (live.priority !== 'guest') return;
+    if (live.priority !== _aiRole()) return;
     _scheduleAIChainFallback();
   }, 500);
 }
@@ -1079,7 +1087,7 @@ function _scheduleAIChainFallback() {
     if (!window.AI.active) return;
     var live = activeChainState;
     if (!live || !live.active) return;
-    if (live.priority !== 'guest') return;
+    if (live.priority !== _aiRole()) return;
     _aiChainResponse(live);
   }, 1800);
 }
@@ -1165,7 +1173,7 @@ function _aiChainResponse(chainState) {
 
 function _playerCanRespondInChain(state) {
   if (!state || !state.active) return false;
-  if (state.priority !== 'host') return false;
+  if (state.priority !== _playerRole()) return false;
   if (typeof collectChainOptions === 'function') {
     return collectChainOptions().length > 0;
   }
