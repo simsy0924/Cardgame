@@ -222,7 +222,7 @@ function _aiSummon(cardId) {
     atk: card.atk != null ? card.atk : 0,
     atkBase: card.atk != null ? card.atk : 0 });
   log('🤖 소환: ' + card.name + ' ATK' + (card.atk != null ? card.atk : 0), 'opponent');
-  handleOpponentAction({ type: 'summon', cardId: cardId, by: 'guest', ts: Date.now(), localApplied: true });
+  handleOpponentAction({ type: 'summon', cardId: cardId, by: _aiRole(), ts: Date.now(), localApplied: true });
   return true;
 }
 
@@ -237,7 +237,7 @@ function _aiSummonDeck(cardId) {
     atk: card.atk != null ? card.atk : 0,
     atkBase: card.atk != null ? card.atk : 0 });
   log('🤖 덱→소환: ' + (card.name || cardId), 'opponent');
-  handleOpponentAction({ type: 'summon', cardId: cardId, by: 'guest', ts: Date.now(), localApplied: true });
+  handleOpponentAction({ type: 'summon', cardId: cardId, by: _aiRole(), ts: Date.now(), localApplied: true });
   return true;
 }
 
@@ -247,7 +247,7 @@ function _aiSendOwnFieldToGrave(cardId) {
   var card = G.opField.splice(idx, 1)[0];
   G.opGrave.push(card);
   log('🤖 ' + (card.name || cardId) + ' 묘지로', 'opponent');
-  handleOpponentAction({ type: 'toGrave', cardId: cardId, from: 'field', by: 'guest', ts: Date.now(), localApplied: true });
+  handleOpponentAction({ type: 'toGrave', cardId: cardId, from: 'field', by: _aiRole(), ts: Date.now(), localApplied: true });
   return true;
 }
 
@@ -256,7 +256,7 @@ function _aiDiscard(cardId) {
   _aiRemHand(cardId);
   if (G.opHand.length === before) return false;
   G.opGrave.push({ id: cardId, name: CARDS[cardId] ? CARDS[cardId].name : cardId });
-  handleOpponentAction({ type: 'discard', cardId: cardId, by: 'guest', ts: Date.now() });
+  handleOpponentAction({ type: 'discard', cardId: cardId, by: _aiRole(), ts: Date.now() });
   return true;
 }
 
@@ -267,7 +267,7 @@ function _aiSearch(cardId) {
   G.opHand.push({ id: cardId, name: CARDS[cardId] ? CARDS[cardId].name : cardId });
   G.opDeckCount = window.AI.opDeck.length;
   log('🤖 서치: ' + (CARDS[cardId] ? CARDS[cardId].name : cardId), 'opponent');
-  handleOpponentAction({ type: 'search', cardName: CARDS[cardId] ? CARDS[cardId].name : cardId, by: 'guest', ts: Date.now() });
+  handleOpponentAction({ type: 'search', cardName: CARDS[cardId] ? CARDS[cardId].name : cardId, by: _aiRole(), ts: Date.now() });
   return true;
 }
 
@@ -282,7 +282,7 @@ function _aiAttack(atkId, defIdx) {
     type: 'combat',
     atkCard: { id: atk.id, name: atk.name, atk: atk.atk },
     defCard: { id: def.id, name: def.name, atk: def.atk },
-    by: 'guest', ts: Date.now(),
+    by: _aiRole(), ts: Date.now(),
   });
   if (atk.atk !== 0 && atk.atk - def.atk <= 0) {
     var ri = G.opField.findIndex(function(c) { return c.id === atkId; });
@@ -300,7 +300,7 @@ function _aiDirect(atkId) {
   log('🤖 직접공격: ' + atk.name + '(' + atk.atk + ')', 'opponent');
   handleOpponentAction({ type: 'directAttack',
     card: { id: atk.id, name: atk.name, atk: atk.atk },
-    by: 'guest', ts: Date.now() });
+    by: _aiRole(), ts: Date.now() });
   return true;
 }
 
@@ -319,7 +319,7 @@ async function _aiTurn() {
     if (currentPhase === 'draw') {
       if (!_aiDrawOne()) { window.AI.thinking = false; return; }
       log('🤖 드로우 (패:' + G.opHand.length + ' 덱:' + window.AI.opDeck.length + ')', 'opponent');
-      gameClock.runningFor  = 'guest';
+      gameClock.runningFor  = _aiRole();
       gameClock.lastUpdated = Date.now();
       advancePhase('deploy');
       await _s(400);
@@ -646,7 +646,7 @@ function _buildAICtx(AI) {
     var cd=CARDS[cId]||{};
     G.opField.push({id:cId,name:cd.name||cId,atk:cd.atk||0,atkBase:cd.atk||0});
     log('🤖 덱→소환: '+(cd.name||cId),'opponent');
-    handleOpponentAction({type:'summon',cardId:cId,by:'guest',ts:Date.now(),localApplied:true});
+    handleOpponentAction({type:'summon',cardId:cId,by:_aiRole(),ts:Date.now(),localApplied:true});
     return true;
   };
   var deckToHand = function(cId){
@@ -664,7 +664,7 @@ function _buildAICtx(AI) {
     else{var gi=G.opGrave.findIndex(function(c){return c.id===cId;});if(gi>=0)G.opGrave.splice(gi,1);else return false;}
     var cd=CARDS[cId]||{};
     G.opFieldCard={id:cId,name:cd.name||cId};
-    handleOpponentAction({type:'fieldCard',cardId:cId,by:'guest',ts:Date.now()});
+    handleOpponentAction({type:'fieldCard',cardId:cId,by:_aiRole(),ts:Date.now()});
     log('🤖 필드 발동: '+(cd.name||cId),'opponent');
     return true;
   };
@@ -1118,7 +1118,7 @@ function _aiChainResponse(chainState) {
       if (!activeChainState || !activeChainState.active) return;
       var next = Object.assign({}, activeChainState);
       next.passCount = (next.passCount || 0) + 1;
-      next.priority = myRole; // 플레이어에게 우선권
+      next.priority = _playerRole(); // 플레이어에게 우선권
       log('🤖 AI: 패스', 'opponent');
       activeChainState = next;
       _markAIChainHandled(next);
