@@ -6,6 +6,9 @@ window.SHOP_ITEMS = [
   { id:'starter_lion', type:'starter_deck', name:'입문자 라이온 덱', priceGold:350 }
 ];
 
+window.STARTER_THEME_PRICE = 350;
+window.STARTER_THEME_PRESETS = ['펭귄','올드원','라이온','타이거','라이거','지배자','마피아','불가사의','엘리멘츠','범용'];
+
 window.MISSIONS = [
   { id:'first_win', name:'첫 승리', goal:1, reward:80, metric:'totalWins' },
   { id:'play_3', name:'3판 플레이', goal:3, reward:60, metric:'totalGames' },
@@ -72,12 +75,74 @@ window.startTutorial = function() {
       closeModal('tutorialModal');
       if (window.currentUser && window.fsdb) {
         try {
-          await fsdb.collection('users').doc(currentUser.uid).update({ tutorialCompleted:true, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+          await fsdb.runTransaction(async (tx) => {
+            const ref = fsdb.collection('users').doc(currentUser.uid);
+            const snap = await tx.get(ref);
+            if (!snap.exists) return;
+            const d = snap.data();
+            if (d.tutorialCompleted === true) return;
+            tx.update(ref, {
+              tutorialCompleted:true,
+              currency: Number(d.currency || 0) + 400,
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+          });
           userProfile = await getUserProfile(currentUser.uid);
+          window.userProfile = userProfile;
+          notify('튜토리얼 보상: 재화 +400');
+          if (!userProfile?.selectedStarterTheme && window.chooseStarterThemeWithCurrency) {
+            setTimeout(() => window.chooseStarterThemeWithCurrency(), 150);
+          }
         } catch(e) {}
       }
       return;
     }
     render();
   };
+};
+
+window.chooseStarterThemeWithCurrency = async function() {
+  if (!window.currentUser || !window.fsdb) { notify('로그인 후 선택할 수 있습니다.'); return; }
+  if (window.userProfile?.selectedStarterTheme) { notify('이미 스타터 테마를 선택했습니다.'); return; }
+
+  const price = Number(window.STARTER_THEME_PRICE || 350);
+  const themes = (window.STARTER_THEME_PRESETS || []).join(', ');
+  const picked = prompt(`원하는 스타터 테마를 입력하세요.\n선택 가능: ${themes}\n비용: ${price} 재화`);
+  if (!picked) return;
+  const theme = (picked || '').trim();
+  if (!(window.STARTER_THEME_PRESETS || []).includes(theme)) {
+    notify('선택할 수 없는 테마입니다.');
+    return;
+  }
+  if (!window.createStarterDeckFromTheme) {
+    notify('스타터 덱 생성기를 찾을 수 없습니다.');
+    return;
+  }
+  const starter = window.createStarterDeckFromTheme(theme);
+  if (!starter || !starter.main?.length) { notify('스타터 덱 생성 실패'); return; }
+
+  try {
+    await fsdb.runTransaction(async (tx) => {
+      const ref = fsdb.collection('users').doc(currentUser.uid);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new Error('유저 정보 없음');
+      const d = snap.data();
+      if (d.selectedStarterTheme) throw new Error('이미 선택 완료');
+      const currency = Number(d.currency || 0);
+      if (currency < price) throw new Error('재화가 부족합니다.');
+      tx.update(ref, {
+        currency: currency - price,
+        selectedStarterTheme: theme,
+        starterDeckMain: starter.main,
+        starterDeckKey: starter.key,
+        unlockedCards: Array.from(new Set([...(d.unlockedCards || []), ...starter.main, ...starter.key])),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+    userProfile = await getUserProfile(currentUser.uid);
+    window.userProfile = userProfile;
+    notify(`스타터 테마 [${theme}] 선택 완료!`);
+  } catch (e) {
+    notify('스타터 테마 선택 실패: ' + e.message);
+  }
 };

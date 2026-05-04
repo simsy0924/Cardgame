@@ -1086,6 +1086,22 @@ let deckSortMode = 'default';
 // 범용 카드 (테마 없는 것들)
 const GENERIC_CARDS = ['구사일생','일격필살','눈에는 눈','출입통제','단 한번의 기회','유혹의 황금사과','수호의 빛','신성한 수호자','서치 봉인의 항아리','단단한 카드 자물쇠'];
 
+function isAdminUser() {
+  return !!window.userProfile?.isAdmin;
+}
+
+function getOwnedCardSet() {
+  if (isAdminUser()) return null;
+  const owned = new Set(window.userProfile?.unlockedCards || []);
+  return owned;
+}
+
+function canUseCard(cardId) {
+  const owned = getOwnedCardSet();
+  if (!owned) return true;
+  return owned.has(cardId);
+}
+
 function openDeckBuilder() {
   document.getElementById('lobby').style.display = 'none';
   document.getElementById('deckBuilder').style.display = 'flex';
@@ -1126,6 +1142,7 @@ function filterDeckPool(theme) {
   const pool = document.getElementById('dbPool');
   pool.innerHTML = '';
   Object.values(CARDS).forEach(card => {
+    if (!canUseCard(card.id)) return;
     if (card.isKeyCard) return; // 키카드는 별도 처리
     const matchTheme = theme === '전체' ? true :
       theme === '범용' ? GENERIC_CARDS.includes(card.id) :
@@ -1153,6 +1170,7 @@ function filterDeckPool(theme) {
   // 키카드 풀 (전체 또는 테마 탭에서 보임)
   if (theme !== '범용') {
     Object.values(CARDS).filter(c => c.isKeyCard && (theme === '전체' || c.theme === theme)).forEach(card => {
+      if (!canUseCard(card.id)) return;
       if (deckSearchQuery && !card.name.toLowerCase().includes(deckSearchQuery)) return;
       const wrapper = document.createElement('div');
       wrapper.className = 'pool-card';
@@ -1177,6 +1195,7 @@ function filterDeckPool(theme) {
 function addToDeck(cardId, isKey) {
   const card = CARDS[cardId];
   if (!card) return;
+  if (!canUseCard(cardId)) { notify('보유한 카드만 사용할 수 있습니다.'); return; }
   if (isKey) {
     if (builderKeyDeck[cardId]) {
       delete builderKeyDeck[cardId];
@@ -1307,6 +1326,22 @@ function loadPreset(theme) {
   filterDeckPool(currentPoolFilter);
 }
 
+window.createStarterDeckFromTheme = function(theme) {
+  const prevMain = builderMainDeck;
+  const prevKey = builderKeyDeck;
+  builderMainDeck = {};
+  builderKeyDeck = {};
+  loadPreset(theme);
+  const main = [];
+  Object.entries(builderMainDeck).forEach(([id, count]) => { for (let i = 0; i < count; i++) main.push(id); });
+  const key = Object.keys(builderKeyDeck);
+  builderMainDeck = prevMain;
+  builderKeyDeck = prevKey;
+  renderBuilderDeck();
+  filterDeckPool(currentPoolFilter);
+  return { main, key };
+};
+
 function clearDeck() {
   builderMainDeck = {};
   builderKeyDeck = {};
@@ -1327,6 +1362,14 @@ function confirmDeck() {
     for (let i = 0; i < count; i++) deckArr.push(id);
   });
   const keyArr = Object.keys(builderKeyDeck);
+
+  if (!isAdminUser()) {
+    const invalid = [...new Set([...deckArr, ...keyArr].filter(id => !canUseCard(id)))];
+    if (invalid.length) {
+      notify('보유하지 않은 카드가 덱에 포함되어 있습니다: ' + invalid.slice(0, 5).join(', '));
+      return;
+    }
+  }
 
   window._confirmedDeck = deckArr;
   window._confirmedKeyDeck = keyArr;
