@@ -761,7 +761,8 @@ input[type="text"]::placeholder { color: var(--text-dim); }
 ═══════════════════════════════════════ */
 .hidden { display: none !important; }
 .flex-row { display: flex; align-items: center; gap: .5rem; }
-.spacer { flex: 1; }
+ .spacer { flex: 1; }
+.shop-row{display:flex;justify-content:space-between;align-items:center;padding:.45rem;border:1px solid var(--border2);border-radius:10px;margin:.35rem 0;background:#14141d;}
 
 @media (max-width: 480px) {
   .zone-slot  { width: 60px; height: 84px; }
@@ -842,6 +843,14 @@ input[type="text"]::placeholder { color: var(--text-dim); }
            style="text-transform:uppercase;letter-spacing:.25em;font-size:1.3rem;text-align:center;font-family:'Cinzel',serif;">
     <button id="joinRoomBtn" class="btn btn-secondary" onclick="joinRoom()">참가하기</button>
     <div id="joinStatus" class="status-msg hidden"></div>
+  </div>
+
+
+  <!-- 상점/미션 -->
+  <div class="lobby-card">
+    <h2><span class="icon">🛒</span>상점 & 미션</h2>
+    <button class="btn btn-primary" onclick="openShop()">상점 열기</button>
+    <button class="btn btn-secondary" onclick="startTutorial()">튜토리얼</button>
   </div>
 
   <!-- 관리자 (숨김) -->
@@ -1040,6 +1049,27 @@ input[type="text"]::placeholder { color: var(--text-dim); }
   </div>
 </div>
 
+
+<div class="modal-overlay hidden" id="shopModal">
+  <div class="modal">
+    <h2>상점</h2>
+    <div id="shopItems"></div>
+    <h2 style="margin-top:.8rem">미션 보상</h2>
+    <div id="missionItems"></div>
+    <div class="modal-actions"><button class="btn btn-secondary" onclick="closeModal('shopModal')">닫기</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="tutorialModal">
+  <div class="modal">
+    <h2>초보자 튜토리얼</h2>
+    <p id="tutorialText"></p>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="tutorialNextBtn">다음</button>
+    </div>
+  </div>
+</div>
+
 <!-- ════════════ SCRIPTS ════════════ -->
 <script src="js/cards.js"></script>
 <script src="js/engine.js"></script>
@@ -1058,6 +1088,7 @@ input[type="text"]::placeholder { color: var(--text-dim); }
 <script src="js/bulgasaui.js"></script>
 <script src="js/Elements.js"></script>
 <script src="js/effects-theme.js"></script>
+<script src="js/progression.js"></script>
 <script src="js/account.js"></script>
 <script src="js/patch.js"></script>
 <script src="js/ai.js"></script>
