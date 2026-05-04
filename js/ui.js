@@ -8,6 +8,24 @@ function renderCard(cardData, opts = {}) {
   const el = document.createElement('div');
   el.className = 'card' + (cardData.isPublic ? ' public-card' : '') + (opts.selected ? ' selected' : '');
 
+  const imageCandidates = resolveCardImageCandidates(cardData.id, card);
+  if (imageCandidates.length > 0) {
+    const art = document.createElement('img');
+    art.className = 'card-art';
+    art.alt = `${card.name} 일러스트`;
+    art.loading = 'lazy';
+    art.decoding = 'async';
+    let idx = 0;
+    art.src = imageCandidates[idx];
+    art.onerror = () => {
+      idx += 1;
+      if (idx < imageCandidates.length) art.src = imageCandidates[idx];
+      else art.remove();
+    };
+    el.appendChild(art);
+    el.classList.add('has-art');
+  }
+
   const color = CARD_TYPE_COLOR[card.cardType] || '#555';
   const typeBar = document.createElement('div');
   typeBar.className = 'card-type-bar';
@@ -34,6 +52,51 @@ function renderCard(cardData, opts = {}) {
   }
 
   return el;
+}
+
+function resolveCardImageCandidates(cardId, card) {
+  const candidates = [];
+  const pushIfSafe = (rawSrc) => {
+    const safeSrc = sanitizeCardImageSrc(rawSrc);
+    if (rawSrc && !safeSrc) console.warn('[card-art] blocked unsafe image src:', rawSrc);
+    if (safeSrc && !candidates.includes(safeSrc)) candidates.push(safeSrc);
+  };
+
+  pushIfSafe(card?.image);
+  pushIfSafe(window.CARD_IMAGE_MAP && window.CARD_IMAGE_MAP[cardId]);
+
+  // 파일명을 "카드명 그대로" 쓸 수 있도록 기본 경로 자동 후보 생성
+  // 예: /assets/cards/펭귄 용사.png
+  const base = `/assets/cards/${cardId}`;
+  ['png', 'webp', 'jpg', 'jpeg', 'gif', 'avif'].forEach(ext => {
+    pushIfSafe(`${base}.${ext}`);
+  });
+  return candidates;
+}
+
+function sanitizeCardImageSrc(rawSrc) {
+  if (typeof rawSrc !== 'string') return '';
+  const trimmed = rawSrc.trim();
+  if (!trimmed) return '';
+
+  // 외부 URL / data: / javascript: 스킴 차단 + 같은 오리진만 허용
+  let parsed;
+  try {
+    parsed = new URL(trimmed, window.location.origin);
+  } catch {
+    return '';
+  }
+  if (parsed.origin !== window.location.origin) return '';
+  if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+
+  // 카드 이미지는 프로젝트 내부의 assets/cards 하위만 허용
+  const normalizedPath = parsed.pathname.replace(/\/{2,}/g, '/');
+  if (!normalizedPath.startsWith('/assets/cards/')) return '';
+
+  // 이미지 확장자만 허용
+  if (!/\.(png|jpe?g|webp|gif|avif)$/i.test(normalizedPath)) return '';
+
+  return `${normalizedPath}${parsed.search}${parsed.hash}`;
 }
 
 function renderCardBack(cardData) {

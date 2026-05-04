@@ -522,6 +522,21 @@ body[data-sleeve='sleeve_aurora'] .card-back {
   position: relative; flex-shrink: 0;
   overflow: hidden; user-select: none;
 }
+.card-art {
+  position: absolute;
+  inset: 4px 4px 28px 4px;
+  width: calc(100% - 8px);
+  height: calc(100% - 32px);
+  object-fit: cover;
+  border-radius: 6px;
+  opacity: .95;
+  pointer-events: none;
+}
+.card.has-art .card-body {
+  margin-top: auto;
+  background: linear-gradient(180deg, transparent 0%, #080914d9 26%, #080914f2 100%);
+  z-index: 1;
+}
 .card:hover {
   transform: translateY(-8px) scale(1.05);
   box-shadow: 0 12px 28px #0008, 0 0 0 1px var(--border2);
