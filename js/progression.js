@@ -24,14 +24,15 @@ window.renderShopUI = function() {
   wrap.innerHTML = '';
   missionWrap.innerHTML = '';
   const p = window.userProfile || {};
-  const owned = new Set(p.ownedItems || []);
+  const isAdmin = !!p.isAdmin;
+  const owned = isAdmin ? new Set((window.SHOP_ITEMS || []).map(item => item.id)) : new Set(p.ownedItems || []);
 
   window.SHOP_ITEMS.forEach(item => {
     const row = document.createElement('div');
     row.className = 'shop-row';
     const own = owned.has(item.id);
     row.innerHTML = `<div><strong>${item.name}</strong><div style="font-size:.72rem;color:var(--text-dim)">${item.type}</div></div>
-      <div style="display:flex;gap:.4rem;align-items:center;"><span style="color:#f0c040">💰 ${item.priceGold}</span>
+      <div style="display:flex;gap:.4rem;align-items:center;"><span style="color:#f0c040">💰 ${isAdmin ? '∞' : item.priceGold}</span>
       <button class="btn btn-secondary" ${own?'disabled':''} onclick="purchaseShopItem('${item.id}')">${own?'보유중':'구매'}</button></div>`;
     wrap.appendChild(row);
   });
@@ -128,10 +129,11 @@ window.chooseStarterThemeWithCurrency = async function() {
       if (!snap.exists) throw new Error('유저 정보 없음');
       const d = snap.data();
       if (d.selectedStarterTheme) throw new Error('이미 선택 완료');
+      const isAdmin = !!d.isAdmin;
       const currency = Number(d.currency || 0);
-      if (currency < price) throw new Error('재화가 부족합니다.');
+      if (!isAdmin && currency < price) throw new Error('재화가 부족합니다.');
       tx.update(ref, {
-        currency: currency - price,
+        currency: isAdmin ? currency : (currency - price),
         selectedStarterTheme: theme,
         starterDeckMain: starter.main,
         starterDeckKey: starter.key,
