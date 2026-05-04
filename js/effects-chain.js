@@ -135,15 +135,17 @@ function _buildChainActivate(entry, idx, aiCtx) {
     G.opHand = s2.hand; G.opField = s2.field;
     G.opGrave = s2.grave; G.opExile = s2.exile;
     isMyTurn = aiCtx.isMyTurn || false;
-    myRole = 'guest';
+    myRole = aiCtx.role || 'guest';
 
     window.addChainLink = function(effect) {
       if (!activeChainState || !activeChainState.active) return;
-      const aiEffect = Object.assign({}, effect, { by: 'guest' });
+      const aiBy = aiCtx.role || 'guest';
+      const aiOpponent = getOpponentRole(aiBy);
+      const aiEffect = Object.assign({}, effect, { by: aiBy });
       const next = Object.assign({}, activeChainState);
       next.links = (next.links || []).concat([aiEffect]);
       next.passCount = 0;
-      next.priority = 'host';
+      next.priority = aiOpponent;
       activeChainState = next;
       log('🤖 ' + (effect.label || effect.type) + ' 체인 발동!', 'opponent');
     };
@@ -200,10 +202,10 @@ function collectChainOptions(aiCtx) {
     G.opGrave = _swap.grave;
     G.opExile = _swap.exile;
     isMyTurn  = aiCtx.isMyTurn || false;
-    // ★ 핵심: myRole을 'guest'로 교체해야 _chainHasOpponentLink() 등이 올바르게 동작
-    // condition 내부의 l.by !== myRole 에서 myRole='guest'여야
-    // 플레이어(host) 링크를 "상대 링크"로 인식함
-    myRole = 'guest';
+    // ★ 핵심: myRole을 AI 역할로 교체해야 _chainHasOpponentLink() 등이 올바르게 동작
+    // condition 내부의 l.by !== myRole 기준이 AI 실제 역할과 일치해야
+    // 플레이어 링크를 올바르게 "상대 링크"로 인식함
+    myRole = aiCtx.role || 'guest';
   }
 
   const _restore = () => {
