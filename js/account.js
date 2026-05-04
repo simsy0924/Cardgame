@@ -255,15 +255,16 @@ async function purchaseShopItem(itemId) {
       const snap = await tx.get(ref);
       if (!snap.exists) throw new Error('유저 정보 없음');
       const d = snap.data();
+      const isAdmin = !!d.isAdmin;
       const owned = new Set(d.ownedItems || []);
       if (owned.has(item.id)) throw new Error('이미 구매한 아이템입니다.');
       const currency = Number(d.currency || 0);
-      if (currency < item.priceGold) throw new Error('재화가 부족합니다.');
+      if (!isAdmin && currency < item.priceGold) throw new Error('재화가 부족합니다.');
       owned.add(item.id);
       const unlocked = new Set(d.unlockedCards || []);
       (item.rewardCards || []).forEach(c => unlocked.add(c));
       tx.update(ref, {
-        currency: currency - item.priceGold,
+        currency: isAdmin ? currency : (currency - item.priceGold),
         ownedItems: Array.from(owned),
         unlockedCards: Array.from(unlocked),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
