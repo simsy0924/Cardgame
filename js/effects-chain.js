@@ -729,6 +729,11 @@ function resolveKeyFetch(cardId) {
   const idx = G.myKeyDeck.findIndex(c => c.id === cardId);
   if (idx < 0) { notify(`키 카드 덱에 ${CARDS[cardId]?.name || cardId}가 없습니다.`); return; }
 
+  if (['카드의 흑기사','풀려난 항아리의 마귀','카드 세계의 영웅'].includes(cardId)) {
+    notify(`${CARDS[cardId]?.name || cardId}는 패로 가져올 수 없습니다.`);
+    return;
+  }
+
   if (cardId === '펭귄 용사') {
     if (G.opField.length === 0) {
       notify('펭귄 용사: 상대 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
@@ -781,6 +786,37 @@ function renderFieldZones() {}
         sendAction({ type: 'negate', reason: '출입통제' });
         addChainLink({ type: 'genericNegate', label: '출입통제' });
         sendGameState(); renderAll();
+      },
+    },
+  ]);
+
+
+  registerChainHandResponse('영웅의 탄생', [
+    {
+      effectNum: 1,
+      label: '① 상대 효과 무효',
+      condition: () => _chainHasOpponentSearchLink() || _chainHasOpponentLink(),
+      activate: (handIdx) => {
+        G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
+        markEffectUsed('영웅의 탄생', 1);
+        sendAction({ type: 'negate', reason: '영웅의 탄생' });
+        addChainLink({ type: 'genericNegate', label: '영웅의 탄생' });
+        sendGameState(); renderAll();
+      },
+    },
+  ]);
+
+  registerChainHandResponse('풀려난 항아리의 마귀', [
+    {
+      effectNum: 1,
+      label: "① '서치 봉인의 항아리' 무효",
+      condition: () => _chainHasOpponentLink(),
+      activate: (handIdx) => {
+        const hasJar = (window.chainLinks||[]).some(l => (l.label||'').includes('서치 봉인의 항아리'));
+        if (!hasJar) { notify('체인에 서치 봉인의 항아리가 없습니다.'); return; }
+        sendAction({ type: 'negate', reason: '풀려난 항아리의 마귀 ①' });
+        G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
+        _doForcedDiscardOne('풀려난 항아리의 마귀 ①: 패 1장 버리기', ()=>{ sendGameState(); renderAll(); });
       },
     },
   ]);
