@@ -223,8 +223,10 @@ function collectChainOptions(aiCtx) {
   try {
     // 1) 키카드 가져오기 (플레이어 전용 — AI는 키카드 별도 처리)
     if (!aiCtx && !usedKeyFetchInChain[myRole]) {
+      const noHandFetchKeyMonsters = new Set(['카드의 흑기사', '풀려난 항아리의 마귀', '카드 세계의 영웅']);
       (G.myKeyDeck || []).forEach(c => {
         let canFetch = true;
+        if (noHandFetchKeyMonsters.has(c.id)) canFetch = false;
         if (c.id === '펭귄 용사'   && G.opField.length === 0) canFetch = false;
         if (c.id === '펭귄의 전설' && G.myField.length === 0) canFetch = false;
         if (!canFetch) return;

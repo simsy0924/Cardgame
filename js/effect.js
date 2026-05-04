@@ -433,9 +433,11 @@ function startKeyFetchEffect() {
     return;
   }
 
+  const noHandFetchKeyMonsters = new Set(['카드의 흑기사', '풀려난 항아리의 마귀', '카드 세계의 영웅']);
   const options = (G.myKeyDeck || []).map(c => {
     let canFetch = true;
     let reason   = '';
+    if (noHandFetchKeyMonsters.has(c.id))              { canFetch = false; reason = '(패로 가져올 수 없는 카드)'; }
     if (c.id === '펭귄 용사'   && G.opField.length === 0)  { canFetch = false; reason = '(상대 필드에 몬스터 필요)'; }
     if (c.id === '펭귄의 전설' && G.myField.length === 0)  { canFetch = false; reason = '(내 필드에 몬스터 필요)'; }
     return { id: c.id, name: canFetch ? c.name : `${c.name} ${reason} — 불가`, canFetch };
@@ -465,6 +467,10 @@ function resolveKeyFetch(cardId) {
   const idx = G.myKeyDeck.findIndex(c => c.id === cardId);
   if (idx < 0) {
     notify(`키 카드 덱에 ${CARDS[cardId]?.name || cardId}가 없습니다.`);
+    return;
+  }
+  if (['카드의 흑기사', '풀려난 항아리의 마귀', '카드 세계의 영웅'].includes(cardId)) {
+    notify(`${CARDS[cardId]?.name || cardId}: 패로 가져올 수 없는 카드입니다.`);
     return;
   }
   if (cardId === '펭귄 용사'   && G.opField.length === 0) { notify('펭귄 용사: 상대 필드에 몬스터가 없어 패에 넣을 수 없습니다.'); return; }
