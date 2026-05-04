@@ -1200,7 +1200,7 @@ function addToDeck(cardId, isKey) {
     if (builderKeyDeck[cardId]) {
       delete builderKeyDeck[cardId];
     } else {
-      if (Object.keys(builderKeyDeck).length >= 5) { notify('키카드 덱은 최대 5종입니다.'); return; }
+      if (Object.keys(builderKeyDeck).length >= 10) { notify('키카드 덱은 최대 10종입니다.'); return; }
       builderKeyDeck[cardId] = 1;
     }
   } else {
