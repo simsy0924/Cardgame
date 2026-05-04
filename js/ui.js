@@ -443,6 +443,11 @@ function resolveKeyFetch(cardId) {
   if (idx < 0) { notify(`키 카드 덱에 ${CARDS[cardId]?.name || cardId}가 없습니다.`); return; }
 
   // ★ 카드별 가져오기 조건 체크
+  if (['카드의 흑기사','풀려난 항아리의 마귀','카드 세계의 영웅'].includes(cardId)) {
+    notify(`${CARDS[cardId]?.name || cardId}는 패로 가져올 수 없습니다.`);
+    return;
+  }
+
   if (cardId === '펭귄 용사') {
     // "상대 필드에 몬스터가 존재할 경우에만 패에 넣을 수 있다"
     if (G.opField.length === 0) {
@@ -697,6 +702,9 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
             if (handIdx >= 0 && currentPhase !== 'draw')
               addBtn('① 드로우 1장', 'btn-primary', () => activateCard(handIdx));
             if (handIdx >= 0) addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
+          } else if (cardId === '카드의 흑기사' || cardId === '풀려난 항아리의 마귀' || cardId === '카드 세계의 영웅') {
+            if (isMyTurn && currentPhase === 'deploy')
+              addBtn('소환', 'btn-primary', () => activateCard(handIdx));
           } else if (card.theme === '지배자') {
             // ── 지배자/지배룡 카드 버튼 ──
             const canAnyTurn = isMyTurn || hasKeyCardMonsterOnField();
@@ -816,6 +824,19 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
               case '펭귄의 전설':
                 if (!isMyTurn && canUseEffect('펭귄의 전설', 2))
                   addBtn('② 패로 + 묘지 소환', 'btn-secondary', () => activatePenguinFieldEffect(fieldIdx, 2));
+                break;
+              case '카드의 흑기사':
+                if (canUseEffect('카드의 흑기사',1))
+                  addBtn('① 필드 카드 1장 묘지로', 'btn-secondary', () => activateFieldEffect(fieldIdx, 1));
+                if (canUseEffect('카드의 흑기사',2))
+                  addBtn('② 상대 효과 무효(체인)', 'btn-secondary', () => notify('카드의 흑기사 ②는 상대 효과 발동 시 체인으로 자동 선택됩니다.'));
+                break;
+              case '풀려난 항아리의 마귀':
+                if (isMyTurn && currentPhase === 'attack' && canUseEffect('풀려난 항아리의 마귀',2))
+                  addBtn('② 서치 + 공격력 +1', 'btn-secondary', () => activateFieldEffect(fieldIdx, 2));
+                break;
+              case '카드 세계의 영웅':
+                addBtn('② 영웅의 탄생 서치(체인)', 'btn-secondary', () => notify('상대 조건 효과 발동 시 체인으로 자동 선택됩니다.'));
                 break;
               case '펭귄 마법사':
                 addBtn('③ 자동 트리거 효과 (수동 발동 불가)', 'btn-secondary', () => notify('펭귄 마법사 ③은 펭귄 마을 효과로 묘지로 보내졌을 때 자동 발동합니다.'));
@@ -1084,7 +1105,8 @@ let deckSearchQuery = '';
 let deckSortMode = 'default';
 
 // 범용 카드 (테마 없는 것들)
-const GENERIC_CARDS = ['구사일생','일격필살','눈에는 눈','출입통제','단 한번의 기회','유혹의 황금사과','수호의 빛','신성한 수호자','서치 봉인의 항아리','단단한 카드 자물쇠'];
+const GENERIC_CARDS = ['구사일생','눈에는 눈','출입통제','유혹의 황금사과','수호의 빛','신성한 수호자','서치 봉인의 항아리','단단한 카드 자물쇠','영웅의 탄생'];
+const GENERIC_KEY_CARDS = ['일격필살','단 한번의 기회','카드의 흑기사','풀려난 항아리의 마귀','카드 세계의 영웅'];
 
 function isAdminUser() {
   return !!window.userProfile?.isAdmin;
@@ -1167,9 +1189,10 @@ function filterDeckPool(theme) {
     wrapper.appendChild(el);
     pool.appendChild(wrapper);
   });
-  // 키카드 풀 (전체 또는 테마 탭에서 보임)
-  if (theme !== '범용') {
-    Object.values(CARDS).filter(c => c.isKeyCard && (theme === '전체' || c.theme === theme)).forEach(card => {
+  // 키카드 풀
+  Object.values(CARDS).filter(c => c.isKeyCard).forEach(card => {
+    const keyMatchTheme = theme === '전체' ? true : (theme === '범용' ? GENERIC_KEY_CARDS.includes(card.id) : card.theme === theme);
+    if (!keyMatchTheme) return;
       if (!canUseCard(card.id)) return;
       if (deckSearchQuery && !card.name.toLowerCase().includes(deckSearchQuery)) return;
       const wrapper = document.createElement('div');
@@ -1189,7 +1212,6 @@ function filterDeckPool(theme) {
       wrapper.appendChild(el);
       pool.appendChild(wrapper);
     });
-  }
 }
 
 function addToDeck(cardId, isKey) {
@@ -1200,7 +1222,7 @@ function addToDeck(cardId, isKey) {
     if (builderKeyDeck[cardId]) {
       delete builderKeyDeck[cardId];
     } else {
-      if (Object.keys(builderKeyDeck).length >= 5) { notify('키카드 덱은 최대 5종입니다.'); return; }
+      if (Object.keys(builderKeyDeck).length >= 10) { notify('키카드 덱은 최대 10종입니다.'); return; }
       builderKeyDeck[cardId] = 1;
     }
   } else {
@@ -1274,7 +1296,7 @@ function loadPreset(theme) {
       '수문장 펭귄':4,'펭귄!돌격!':4,'펭귄의 영광':4,
       '펭귄이여 영원하라':4,'펭귄 마법사':4,'구사일생':2,'눈에는 눈':2,
     };
-    builderKeyDeck = { '펭귄 용사':1, '펭귄의 일격':1, '펭귄의 전설':1, '일격필살':1, '단 한번의 기회':1 };
+    builderKeyDeck = { '펭귄 용사':1, '펭귄의 일격':1, '펭귄의 전설':1, '일격필살':1, '단 한번의 기회':1, '카드의 흑기사':1, '풀려난 항아리의 마귀':1, '카드 세계의 영웅':1 };
     notify('펭귄 기본 덱 로드!');
   } else if (theme === '지배자') {
     // 지배자/지배룡 기본덱
@@ -1291,7 +1313,7 @@ function loadPreset(theme) {
     // 키카드덱: 사원소 2종 + 기적 + 범용 2종
     builderKeyDeck = {
       '사원소의 지배룡':1, '사원소의 지배자':1,
-      '사원소의 기적':1, '일격필살':1, '단 한번의 기회':1,
+      '사원소의 기적':1, '일격필살':1, '단 한번의 기회':1, '카드의 흑기사':1, '풀려난 항아리의 마귀':1, '카드 세계의 영웅':1,
     };
     notify('지배자/지배룡 기본 덱 로드!');
   } else if (theme === '마피아') {
@@ -1304,7 +1326,7 @@ function loadPreset(theme) {
     };
     builderKeyDeck = {
       '마피아 집결':1, '마피아의 도시':1,
-      '일격필살':1, '단 한번의 기회':1, '유혹의 황금사과':1,
+      '일격필살':1, '단 한번의 기회':1, '유혹의 황금사과':1, '카드의 흑기사':1, '풀려난 항아리의 마귀':1, '카드 세계의 영웅':1,
     };
     notify('마피아 기본 덱 로드!');
   } else if (theme === '엘리멘츠') {
@@ -1318,7 +1340,7 @@ function loadPreset(theme) {
     };
     builderKeyDeck = {
       '엘리멘츠의 ♤♡◇♧':1, '엘리멘츠의 궁극신':1,
-      '엘리멘츠의 궁극 창조신':1, '일격필살':1, '단 한번의 기회':1,
+      '엘리멘츠의 궁극 창조신':1, '일격필살':1, '단 한번의 기회':1, '카드의 흑기사':1, '풀려난 항아리의 마귀':1, '카드 세계의 영웅':1,
     };
     notify('엘리멘츠 기본 덱 로드!');
   }

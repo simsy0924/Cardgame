@@ -520,6 +520,33 @@ function _forcedDiscardOne(title, callback) {
 // ─────────────────────────────────────────────
 // CARD ACTIVATE (범용)
 // ─────────────────────────────────────────────
+
+function activateFieldEffect(fieldIdx, effectNum) {
+  const mon = G.myField[fieldIdx];
+  if (!mon) return;
+  if (mon.id === '카드의 흑기사' && effectNum === 1) {
+    const targets = [...G.opField, ...G.myField.filter((_,i)=>i!==fieldIdx), ...(G.opFieldCard?[G.opFieldCard]:[]), ...(G.myFieldCard?[G.myFieldCard]:[])];
+    if (!targets.length) { notify('대상이 없습니다.'); return; }
+    openCardPicker(targets, '카드의 흑기사 ①: 필드 카드 1장 묘지로', 1, (sel)=>{
+      if (!sel.length) return;
+      const t = targets[sel[0]];
+      sendAction({ type:'sendToGrave', cardId:t.id, reason:'카드의 흑기사 ①' });
+      markEffectUsed('카드의 흑기사', 1);
+      log('카드의 흑기사 ① 발동', 'mine'); sendGameState(); renderAll();
+    });
+    return;
+  }
+  if (mon.id === '풀려난 항아리의 마귀' && effectNum === 2) {
+    if (!canUseEffect('풀려난 항아리의 마귀', 2)) { notify('이번 턴에는 이미 사용했습니다.'); return; }
+    if (!G.myDeck.length) { notify('덱이 비어 있습니다.'); return; }
+    const pick = G.myDeck.shift();
+    G.myHand.push({ id:pick.id, name:pick.name, isPublic:true });
+    mon.atk = (mon.atk || 5) + 1;
+    markEffectUsed('풀려난 항아리의 마귀', 2);
+    log('풀려난 항아리의 마귀 ②: 서치 + 공격력 1 상승', 'mine');
+    sendGameState(); renderAll();
+  }
+}
 function activateCard(handIdx) {
   const c = G.myHand[handIdx];
   if (!c) return;
@@ -531,18 +558,66 @@ function activateCard(handIdx) {
       return;
 
     case '눈에는 눈':
-      G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
-      drawN(2);
-      log('눈에는 눈: 드로우 2장!', 'mine');
-      sendGameState(); renderAll();
+      notify('눈에는 눈은 상대 서치 계열 효과에 체인으로만 발동할 수 있습니다.');
       return;
 
     case '출입통제':
-      G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
-      log('출입통제 발동! 상대 소환 효과 무효', 'mine');
-      sendAction({ type: 'negate', reason: '출입통제', cardId: c.id });
-      sendGameState(); renderAll();
+      notify('출입통제는 상대 효과에 체인으로만 발동할 수 있습니다.');
       return;
+
+
+    case '영웅의 탄생':
+      notify('영웅의 탄생은 상대의 서치/묘지이동/묘지·제외 활용 효과에 체인으로 발동할 수 있습니다.');
+      return;
+
+    case '카드의 흑기사': {
+      if (G.myField.length < 2) { notify('소환 불가: 필드 몬스터 2장 이상이 필요합니다.'); return; }
+      const targets = [...G.myField];
+      openCardPicker(targets, '카드의 흑기사 소환 코스트: 공격력 합계 10 이상이 되도록 몬스터 선택', Math.min(5, targets.length), (sel) => {
+        if (!sel.length) return;
+        const picked = sel.map(i => targets[i]);
+        const sumAtk = picked.reduce((a,m)=>a+((m&&m.atk)||0),0);
+        if (picked.length < 2 || sumAtk < 10) { notify('소환 불가: 2장 이상, 공격력 합계 10 이상이 필요합니다.'); return; }
+        for (const m of picked) { const idx = G.myField.findIndex(x => x===m || (x.id===m.id && x.atk===m.atk)); if (idx>=0) G.myGrave.push(G.myField.splice(idx,1)[0]); }
+        G.myField.push({ id:c.id, name:c.name, atk:5, summonedFrom:'keyDeck' });
+        G.myHand.splice(handIdx,1);
+        log('카드의 흑기사 소환!', 'mine'); sendGameState(); renderAll();
+      });
+      return;
+    }
+
+    case '풀려난 항아리의 마귀': {
+      if (G.myField.length < 3) { notify('소환 불가: 필드 몬스터 3장이 필요합니다.'); return; }
+      const targets = [...G.myField];
+      openCardPicker(targets, '풀려난 항아리의 마귀 소환 코스트: 몬스터 3장 선택', 3, (sel)=>{
+        if (sel.length!==3) return;
+        sel.sort((a,b)=>b-a).forEach(i=>G.myGrave.push(G.myField.splice(i,1)[0]));
+        G.myField.push({ id:c.id, name:c.name, atk:5, summonedFrom:'keyDeck' });
+        G.myHand.splice(handIdx,1);
+        log('풀려난 항아리의 마귀 소환!', 'mine'); sendGameState(); renderAll();
+      });
+      return;
+    }
+
+    case '카드 세계의 영웅': {
+      const hasPot = G.myField.some(m=>m.id==='풀려난 항아리의 마귀');
+      if (!hasPot || G.myField.length < 2) { notify('소환 불가: 필드의 풀려난 항아리의 마귀 1장과 다른 몬스터 1장이 필요합니다.'); return; }
+      const potIdx = G.myField.findIndex(m=>m.id==='풀려난 항아리의 마귀');
+      const otherIdx = G.myField.findIndex((m,i)=>i!==potIdx);
+      G.myGrave.push(G.myField.splice(Math.max(potIdx,otherIdx),1)[0]);
+      G.myGrave.push(G.myField.splice(Math.min(potIdx,otherIdx),1)[0]);
+      G.myField.push({ id:c.id, name:c.name, atk:5, summonedFrom:'keyDeck' });
+      G.myHand.splice(handIdx,1);
+      const addHero = ()=>{
+        const d=G.myDeck.findIndex(x=>x.id==='영웅의 탄생'); if(d>=0){const z=G.myDeck.splice(d,1)[0]; G.myHand.push({id:z.id,name:z.name,isPublic:true}); return true;}
+        const g=G.myGrave.findIndex(x=>x.id==='영웅의 탄생'); if(g>=0){const z=G.myGrave.splice(g,1)[0]; G.myHand.push({id:z.id,name:z.name,isPublic:true}); return true;}
+        const e=G.myExile.findIndex(x=>x.id==='영웅의 탄생'); if(e>=0){const z=G.myExile.splice(e,1)[0]; G.myHand.push({id:z.id,name:z.name,isPublic:true}); return true;}
+        return false;
+      };
+      if (addHero()) log('카드 세계의 영웅 ①: 영웅의 탄생을 패에 추가', 'mine');
+      log('카드 세계의 영웅 소환!', 'mine'); sendGameState(); renderAll();
+      return;
+    }
 
     case '단단한 카드 자물쇠': {
       if (G.opField.length === 0 && !G.opFieldCard) { notify('대상으로 할 카드가 없습니다.'); return; }
