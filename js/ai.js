@@ -233,6 +233,16 @@ function _aiSummonDeck(cardId) {
   return true;
 }
 
+function _aiSendOwnFieldToGrave(cardId) {
+  var idx = G.opField.findIndex(function(c) { return c.id === cardId; });
+  if (idx < 0) return false;
+  var card = G.opField.splice(idx, 1)[0];
+  G.opGrave.push(card);
+  log('🤖 ' + (card.name || cardId) + ' 묘지로', 'opponent');
+  handleOpponentAction({ type: 'toGrave', cardId: cardId, from: 'field', by: 'guest', ts: Date.now(), localApplied: true });
+  return true;
+}
+
 function _aiDiscard(cardId) {
   var before = G.opHand.length;
   _aiRemHand(cardId);
@@ -743,7 +753,7 @@ async function _trigger(cardId) {
   });
   registerAISummonTrigger('에이스 타이거', async function(c){
     if(c.u('에이스 타이거',1)) return; c.m('에이스 타이거',1);
-    if(G.opField.length>0){var wk=G.opField.reduce(function(a,b){return(a.atk||0)<=(b.atk||0)?a:b;});sendToGrave(wk.id,'field');}
+    if(G.opField.length>0){var wk=G.opField.reduce(function(a,b){return(a.atk||0)<=(b.atk||0)?a:b;});_aiSendOwnFieldToGrave(wk.id);}
     if(G.myField.length>0) await c.chain({type:'aiGraveOpField',label:'에이스 타이거 ①',count:1});
     await D(300);
   });

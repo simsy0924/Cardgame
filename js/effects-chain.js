@@ -114,6 +114,62 @@ function _chainHasOpponentSearchLink() {
  *   usedFx: window.AI.usedFx,  // AI usedFx
  * }
  */
+function _buildChainActivate(entry, idx, aiCtx) {
+  if (!aiCtx) return () => entry.activate(idx);
+  return () => {
+    const s2 = {
+      hand: G.myHand, field: G.myField,
+      grave: G.myGrave, exile: G.myExile,
+      keyDeck: G.myKeyDeck,
+      opHand: G.opHand, opField: G.opField,
+      opGrave: G.opGrave, opExile: G.opExile,
+      isMyTurn_val: isMyTurn,
+      myRole_val: myRole,
+      addChainLink: window.addChainLink,
+      markEffectUsed: window.markEffectUsed,
+    };
+
+    G.myHand = aiCtx.hand; G.myField = aiCtx.field;
+    G.myGrave = aiCtx.grave; G.myExile = aiCtx.exile;
+    G.myKeyDeck = aiCtx.keyDeck || [];
+    G.opHand = s2.hand; G.opField = s2.field;
+    G.opGrave = s2.grave; G.opExile = s2.exile;
+    isMyTurn = aiCtx.isMyTurn || false;
+    myRole = 'guest';
+
+    window.addChainLink = function(effect) {
+      if (!activeChainState || !activeChainState.active) return;
+      const aiEffect = Object.assign({}, effect, { by: 'guest' });
+      const next = Object.assign({}, activeChainState);
+      next.links = (next.links || []).concat([aiEffect]);
+      next.passCount = 0;
+      next.priority = 'host';
+      activeChainState = next;
+      log('🤖 ' + (effect.label || effect.type) + ' 체인 발동!', 'opponent');
+    };
+
+    if (aiCtx.usedFx) {
+      window.markEffectUsed = function(id, n) {
+        aiCtx.usedFx[id + '_' + n] = 1;
+      };
+    }
+
+    try {
+      entry.activate(idx);
+    } finally {
+      G.myHand = s2.hand; G.myField = s2.field;
+      G.myGrave = s2.grave; G.myExile = s2.exile;
+      G.myKeyDeck = s2.keyDeck;
+      G.opHand = s2.opHand; G.opField = s2.opField;
+      G.opGrave = s2.opGrave; G.opExile = s2.opExile;
+      isMyTurn = s2.isMyTurn_val;
+      myRole = s2.myRole_val || 'host';
+      window.addChainLink = s2.addChainLink;
+      window.markEffectUsed = s2.markEffectUsed;
+    }
+  };
+}
+
 function collectChainOptions(aiCtx) {
   const options = [];
   if (!activeChainState || !activeChainState.active) return options;
@@ -197,70 +253,12 @@ function collectChainOptions(aiCtx) {
         // condition 실행 (전역 변수가 이미 교체된 상태)
         if (entry.condition && !entry.condition(handIdx)) return;
 
-        // activate 클로저: aiCtx가 있으면 실행 시점에도 스왑을 다시 적용
-        // (condition은 수집 시점, activate는 나중에 실행되므로 별도 처리 필요)
-        const _makeActivate = (capturedCtx, capturedEntry, capturedIdx) => {
-          if (!capturedCtx) return () => capturedEntry.activate(capturedIdx);
-          return () => {
-            // 실행 시점에 전역 변수 스왑 + addChainLink를 AI용으로 래핑
-            const s2 = {
-              hand: G.myHand, field: G.myField,
-              grave: G.myGrave, exile: G.myExile,
-              keyDeck: G.myKeyDeck,
-              opHand: G.opHand, opField: G.opField,
-              opGrave: G.opGrave, opExile: G.opExile,
-              isMyTurn_val: isMyTurn,
-              myRole_val: myRole,
-              addChainLink: window.addChainLink,
-              markEffectUsed: window.markEffectUsed,
-            };
-            // AI 데이터 → "내" 것처럼
-            G.myHand = capturedCtx.hand; G.myField = capturedCtx.field;
-            G.myGrave = capturedCtx.grave; G.myExile = capturedCtx.exile;
-            G.myKeyDeck = capturedCtx.keyDeck || [];
-            // 플레이어 데이터 → "상대" 것처럼
-            G.opHand = s2.hand; G.opField = s2.field;
-            G.opGrave = s2.grave; G.opExile = s2.exile;
-            isMyTurn = capturedCtx.isMyTurn || false;
-            myRole = 'guest'; // ★ condition/_chainHasOpponentLink가 올바로 동작하도록
-            // addChainLink → AI용 (by:'guest')
-            window.addChainLink = function(effect, opts) {
-              if (!activeChainState || !activeChainState.active) return;
-              const aiEffect = Object.assign({}, effect, { by: 'guest' });
-              const next = Object.assign({}, activeChainState);
-              next.links = (next.links || []).concat([aiEffect]);
-              next.passCount = 0;
-              next.priority = 'host'; // 플레이어에게 우선권 (myRole이 교체됐을 수 있으므로 하드코딩)
-              activeChainState = next;
-              log('🤖 ' + (effect.label || effect.type) + ' 체인 발동!', 'opponent');
-            };
-            // markEffectUsed → AI usedFx로
-            if (capturedCtx.usedFx) {
-              window.markEffectUsed = function(id, n) {
-                capturedCtx.usedFx[id + '_' + n] = 1;
-              };
-            }
-            try {
-              capturedEntry.activate(capturedIdx);
-            } finally {
-              G.myHand = s2.hand; G.myField = s2.field;
-              G.myGrave = s2.grave; G.myExile = s2.exile;
-              G.myKeyDeck = s2.keyDeck;
-              G.opHand = s2.opHand; G.opField = s2.opField;
-              G.opGrave = s2.opGrave; G.opExile = s2.opExile;
-              isMyTurn = s2.isMyTurn_val;
-              myRole = s2.myRole_val || 'host';
-              window.addChainLink = s2.addChainLink;
-              window.markEffectUsed = s2.markEffectUsed;
-            }
-          };
-        };
 
         options.push({
           label:   `[패] ${handCard.name} ${entry.label}`,
           cardId:  handCard.id,
           handIdx,
-          activate: _makeActivate(aiCtx, entry, handIdx),
+          activate: _buildChainActivate(entry, handIdx, aiCtx),
         });
       });
     });
@@ -283,7 +281,7 @@ function collectChainOptions(aiCtx) {
           cardId:  fieldCard.id,
           handIdx: -3,
           fieldIdx,
-          activate: _makeActivate ? _makeActivate(aiCtx, entry, fieldIdx) : () => entry.activate(fieldIdx),
+          activate: _buildChainActivate(entry, fieldIdx, aiCtx),
         });
       });
     });
