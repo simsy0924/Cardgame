@@ -364,19 +364,34 @@ function listenGameActions() {
   });
 }
 
+
+function _discardMyHandByIndices(indices) {
+  const sorted = [...new Set(indices)].sort((a, b) => b - a);
+  sorted.forEach((i) => {
+    if (Number.isInteger(i) && i >= 0 && i < G.myHand.length) {
+      G.myGrave.push(G.myHand.splice(i, 1)[0]);
+    }
+  });
+}
+
+function _discardOpponentHandRandomly(n, reason) {
+  const count = Math.max(0, Math.min(n || 0, G.opHand.length));
+  if (count <= 0) return 0;
+  log(`🤖 AI: 패 ${count}장 버리기 (${reason || '효과'})`, 'opponent');
+  for (let i = 0; i < count; i++) {
+    const idx = Math.floor(Math.random() * G.opHand.length);
+    const c = G.opHand.splice(idx, 1)[0];
+    G.opGrave.push({ id: c.id, name: c.name || '?' });
+    if (c.id && c.id !== 'unknown') log(`🤖 버림: ${c.name}`, 'opponent');
+  }
+  return count;
+}
 function sendAction(action) {
   if (!roomRef) {
     // AI 모드: forceDiscard는 AI가 직접 처리
     if (action.type === 'forceDiscard' && window.AI && window.AI.active) {
       const n = action.count || 1;
-      log(`🤖 AI: 패 ${n}장 버리기 (${action.reason || '효과'})`, 'opponent');
-      // AI 패에서 무작위 n장 버리기
-      for (let i = 0; i < n && G.opHand.length > 0; i++) {
-        const idx = Math.floor(Math.random() * G.opHand.length);
-        const c = G.opHand.splice(idx, 1)[0];
-        G.opGrave.push({ id: c.id, name: c.name || '?' });
-        if (c.id && c.id !== 'unknown') log(`🤖 버림: ${c.name}`, 'opponent');
-      }
+      _discardOpponentHandRandomly(n, action.reason);
       sendGameState(); renderAll(); checkWinCondition();
     }
     return;
@@ -468,10 +483,10 @@ function handleOpponentAction(action) {
           // 내 패를 공개 상태로 표시해서 picker 열기
           const handSnapshot = G.myHand.map((c, i) => ({ ...c, _handIdx: i }));
           openCardPicker(handSnapshot, `상대가 선택: 패 ${cnt}장 버리기${reason}`, cnt, (sel) => {
-            sel.sort((a, b) => b - a).forEach(i => {
-              const realIdx = handSnapshot[i]._handIdx;
-              if (G.myHand[realIdx]) G.myGrave.push(G.myHand.splice(realIdx, 1)[0]);
-            });
+            const realIndices = sel
+              .map(i => handSnapshot[i]?._handIdx)
+              .filter(i => Number.isInteger(i));
+            _discardMyHandByIndices(realIndices);
             sendGameState(); renderAll(); checkWinCondition();
           }, true);
         } else {
