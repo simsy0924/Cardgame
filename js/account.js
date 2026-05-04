@@ -149,6 +149,7 @@ function renderProfileUI(user) {
   if (currEl) currEl.textContent = '💰 ' + (userProfile?.currency ?? 0);
   const nickInput = document.getElementById('nicknameInput');
   if (nickInput) nickInput.placeholder = userProfile?.nickname || user.displayName || '닉네임 변경';
+  if (window.applyCosmeticsUI) window.applyCosmeticsUI(userProfile);
   if (window.renderShopUI) window.renderShopUI();
   if (userProfile && userProfile.tutorialCompleted === false && window.startTutorial) {
     setTimeout(() => window.startTutorial(), 300);

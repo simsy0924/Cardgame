@@ -31,9 +31,15 @@ window.renderShopUI = function() {
     const row = document.createElement('div');
     row.className = 'shop-row';
     const own = owned.has(item.id);
+    const equipType = (item.type === 'sleeve' || item.type === 'board') ? item.type : null;
+    const equippedId = equipType === 'sleeve' ? (p.equippedSleeve || 'default') : (equipType === 'board' ? (p.equippedBoard || 'default') : null);
+    const canEquip = !!equipType && own;
+    const equipped = canEquip && equippedId === item.id;
     row.innerHTML = `<div><strong>${item.name}</strong><div style="font-size:.72rem;color:var(--text-dim)">${item.type}</div></div>
       <div style="display:flex;gap:.4rem;align-items:center;"><span style="color:#f0c040">💰 ${isAdmin ? '∞' : item.priceGold}</span>
-      <button class="btn btn-secondary" ${own?'disabled':''} onclick="purchaseShopItem('${item.id}')">${own?'보유중':'구매'}</button></div>`;
+      <button class="btn btn-secondary" ${own?'disabled':''} onclick="purchaseShopItem('${item.id}')">${own?'보유중':'구매'}</button>
+      ${canEquip ? `<button class="btn btn-secondary" ${equipped?'disabled':''} onclick="equipShopItem('${item.id}')">${equipped?'장착중':'장착'}</button>` : ''}
+      </div>`;
     wrap.appendChild(row);
   });
 
@@ -49,6 +55,38 @@ window.renderShopUI = function() {
     <button class="btn btn-secondary" ${(!done||isClaimed)?'disabled':''} onclick="claimMissionReward('${m.id}')">${isClaimed?'수령완료':'수령'}</button></div>`;
     missionWrap.appendChild(row);
   });
+};
+
+window.applyCosmeticsUI = function(profile) {
+  const p = profile || window.userProfile || {};
+  document.body.dataset.board = p.equippedBoard || 'default';
+  document.body.dataset.sleeve = p.equippedSleeve || 'default';
+};
+
+window.equipShopItem = async function(itemId) {
+  if (!currentUser || !fsdb) { notify('로그인 필요'); return; }
+  const item = (window.SHOP_ITEMS || []).find(x => x.id === itemId);
+  if (!item || !['sleeve', 'board'].includes(item.type)) { notify('장착할 수 없는 아이템입니다.'); return; }
+  try {
+    await fsdb.runTransaction(async (tx) => {
+      const ref = fsdb.collection('users').doc(currentUser.uid);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new Error('유저 정보 없음');
+      const d = snap.data();
+      const isAdmin = !!d.isAdmin;
+      const owned = new Set(d.ownedItems || []);
+      if (!isAdmin && !owned.has(item.id)) throw new Error('보유하지 않은 아이템입니다.');
+      const patch = { updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+      if (item.type === 'sleeve') patch.equippedSleeve = item.id;
+      if (item.type === 'board') patch.equippedBoard = item.id;
+      tx.update(ref, patch);
+    });
+    userProfile = await getUserProfile(currentUser.uid);
+    window.userProfile = userProfile;
+    if (window.applyCosmeticsUI) window.applyCosmeticsUI(userProfile);
+    if (window.renderShopUI) renderShopUI();
+    notify('장착 완료: ' + item.name);
+  } catch(e) { notify('장착 실패: ' + e.message); }
 };
 
 window.openShop = function(){
