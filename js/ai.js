@@ -1159,34 +1159,9 @@ setTimeout(_lobby, 800); // SPA 동적 렌더링 대비 1회만
 //   원본을 우회하고 _notifyAIChainOpened로 AI를 깨움.
 _safeHook('beginChain', function(_origBeginChain) {
   return function(effect) {
-    // AI 모드 + 로컬(roomRef 없음) 에서만 개입
-    if (!window.AI.active || roomRef) {
-      _origBeginChain.apply(this, arguments);
-      return;
-    }
-
-    // 원본이 즉시 resolve하기 전에 체인 상태를 직접 설정
-    var chainState = {
-      active:    true,
-      startedBy: myRole,
-      priority:  typeof getOpponentRole === 'function' ? getOpponentRole(myRole) : _aiRole(),
-      passCount: 0,
-      links:     [Object.assign({}, effect, { by: myRole })],
-    };
-    activeChainState = chainState;
-    if (effect.type === 'keyFetch' && typeof usedKeyFetchInChain !== 'undefined') {
-      usedKeyFetchInChain[myRole] = true;
-    }
-    log('체인 1: ' + (effect.label || effect.type) + ' 발동', 'mine');
-    renderChainActions();
-    renderAll();
-
-    // AI에게 응답 기회 부여
-    console.log('[AI Chain] beginChain hook: chain set, priority=' + chainState.priority + ', calling _notifyAIChainOpened');
-    setTimeout(function() {
-      if (!activeChainState || !activeChainState.active) { console.log('[AI Chain] beginChain hook: chain gone before notify'); return; }
-      _notifyAIChainOpened();
-    }, 0);
+    // effects-chain.js에서 AI 로컬 모드를 이미 처리하므로 원본 로직을 사용한다.
+    // (중복 가로채기는 priority/passCount 불일치로 체인 정산 누락을 유발할 수 있음)
+    _origBeginChain.apply(this, arguments);
   };
 });
 
@@ -1240,6 +1215,32 @@ function _collectAIChainOptions(chainState) {
       rawActivate: function() { opt.activate(); },
     };
   });
+}
+
+
+function _debugAIChainOptionState(liveChain) {
+  try {
+    var hand = G.opHand || [];
+    var field = G.opField || [];
+    var handRegistered = hand.filter(function(c){ return !!(window.CHAIN_HAND_RESPONSES && window.CHAIN_HAND_RESPONSES[c.id]); });
+    var fieldRegistered = field.filter(function(c){ return !!(window.CHAIN_FIELD_RESPONSES && window.CHAIN_FIELD_RESPONSES[c.id]); });
+    var links = (liveChain && liveChain.links) || [];
+    var last = links.length ? links[links.length - 1] : null;
+    console.log('[AI Chain] option-debug', {
+      priority: liveChain && liveChain.priority,
+      aiRole: _aiRole(),
+      passCount: liveChain && liveChain.passCount,
+      links: links.map(function(l){ return { by: l.by, type: l.type, label: l.label }; }),
+      lastLink: last ? { by: last.by, type: last.type, label: last.label } : null,
+      handCount: hand.length,
+      fieldCount: field.length,
+      handRegistered: handRegistered.map(function(c){ return c.id; }),
+      fieldRegistered: fieldRegistered.map(function(c){ return c.id; }),
+      usedFxKeys: Object.keys((window.AI && window.AI.usedFx) || {}),
+    });
+  } catch (e) {
+    console.warn('[AI Chain] option-debug failed:', e && e.message ? e.message : e);
+  }
 }
 
 function _canAIRespondNow(state) {
@@ -1315,6 +1316,7 @@ function _aiChainResponse(chainState) {
 
   var options = _collectAIChainOptions(activeChainState || chainState);
   console.log('[AI Chain] options count:', options.length, options.map(function(o){return o.label;}));
+  if (!options.length) _debugAIChainOptionState(activeChainState || chainState);
   options.sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
   var picked = options[0] || null;
 
