@@ -1140,65 +1140,58 @@ setTimeout(_lobby, 800); // SPA 동적 렌더링 대비 1회만
 
 
 // ─────────────────────────────────────────────────────────────
-// 체인 훅 (beginChain / addChainLink / passChainPriority / resolveChain)
+// 체인 훅
+//
+// 핵심 구조 (effects-chain.js 새 버전 기준):
+//   beginChain  : roomRef 없고 AI 아닌 경우 → 즉시 resolveChain (데모모드)
+//                 ★ AI 모드 분기가 없음 → 여기서 가로채야 함
+//   addChainLink: roomRef 없으면 _notifyAIChainOpened 호출 → OK
+//   passChainPriority: roomRef 없고 AI 모드 → _notifyAIChainOpened 호출 → OK
+//   resolveChain: chainMemory 초기화 필요 → 훅 유지
+//
+// 따라서 beginChain만 앞에서 가로채면 됩니다.
 // ─────────────────────────────────────────────────────────────
+
+// ★ 핵심 수정: beginChain을 AI 모드에서 가로채기
+// effects-chain.js의 beginChain은 roomRef=null이면 즉시 resolveChain()을 호출해버려서
+// 플레이어가 체인 1을 열면 AI가 응답할 기회 자체가 없었음.
+// → 원본 호출 전에 AI 모드인지 확인하고, AI 모드면 직접 체인 상태를 구성한 뒤
+//   원본을 우회하고 _notifyAIChainOpened로 AI를 깨움.
 _safeHook('beginChain', function(_origBeginChain) {
   return function(effect) {
-    _origBeginChain.apply(this, arguments);
-    if (!window.AI.active || roomRef) return;
-    var live = activeChainState;
-    if (!live || !live.active || live.priority !== _aiRole()) return;
-    setTimeout(function() {
-      if (!activeChainState || !activeChainState.active) return;
-      _aiChainResponse(activeChainState);
-    }, 350);
-  };
-});
-
-_safeHook('addChainLink', function(_origAddChainLink) {
-  return function(effect) {
-    _origAddChainLink.apply(this, arguments);
-    if (!window.AI.active || roomRef) return;
-    var live = activeChainState;
-    if (!live || !live.active || live.priority !== _aiRole()) return;
-    setTimeout(function() {
-      if (!activeChainState || !activeChainState.active) return;
-      _aiChainResponse(activeChainState);
-    }, 350);
-  };
-});
-
-_safeHook('passChainPriority', function(_origPassChainPriority) {
-  return function() {
-    if (!window.AI.active) {
-      _origPassChainPriority.apply(this, arguments);
+    // AI 모드 + 로컬(roomRef 없음) 에서만 개입
+    if (!window.AI.active || roomRef) {
+      _origBeginChain.apply(this, arguments);
       return;
     }
-    var liveBefore = activeChainState;
-    // AI 모드 + roomRef 없음 + 플레이어 우선권일 때 직접 처리
-    var shouldHandleLocal = !roomRef && liveBefore && liveBefore.active && liveBefore.priority === myRole;
-    if (shouldHandleLocal) {
-      // [BUG-08 FIX] links 딥카피
-      var next       = Object.assign({}, liveBefore);
-      next.links     = (liveBefore.links || []).slice();
-      next.passCount = (next.passCount || 0) + 1;
-      next.priority  = _aiRole();
-      activeChainState = next;
-      log('체인 패스', 'system');
-      renderChainActions();
-      if (next.passCount >= 2) {
-        resolveChain(next);
-      } else {
-        setTimeout(function() {
-          if (!activeChainState || !activeChainState.active) return;
-          _aiChainResponse(activeChainState);
-        }, 400);
-      }
-    } else {
-      _origPassChainPriority.apply(this, arguments);
+
+    // 원본이 즉시 resolve하기 전에 체인 상태를 직접 설정
+    var chainState = {
+      active:    true,
+      startedBy: myRole,
+      priority:  typeof getOpponentRole === 'function' ? getOpponentRole(myRole) : _aiRole(),
+      passCount: 0,
+      links:     [Object.assign({}, effect, { by: myRole })],
+    };
+    activeChainState = chainState;
+    if (effect.type === 'keyFetch' && typeof usedKeyFetchInChain !== 'undefined') {
+      usedKeyFetchInChain[myRole] = true;
     }
+    log('체인 1: ' + (effect.label || effect.type) + ' 발동', 'mine');
+    renderChainActions();
+    renderAll();
+
+    // AI에게 응답 기회 부여
+    setTimeout(function() {
+      if (!activeChainState || !activeChainState.active) return;
+      _notifyAIChainOpened();
+    }, 0);
   };
 });
+
+// addChainLink / passChainPriority는 effects-chain.js 새 버전이
+// 이미 AI 모드 분기에서 _notifyAIChainOpened()를 호출하므로 훅 불필요.
+// (중복 호출하면 오히려 _alreadyHandledChainState 충돌 위험)
 
 _safeHook('resolveChain', function(_origResolveChain) {
   return function(chainState) {
