@@ -522,20 +522,25 @@ body[data-sleeve='sleeve_aurora'] .card-back {
   position: relative; flex-shrink: 0;
   overflow: hidden; user-select: none;
 }
-.card-art {
-  position: absolute;
-  inset: 4px 4px 28px 4px;
-  width: calc(100% - 8px);
-  height: calc(100% - 32px);
-  object-fit: cover;
+.card-art-wrap {
+  margin: 4px 4px 0;
+  height: 52px;
   border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #ffffff14;
+  background: #0a0a14;
+  flex-shrink: 0;
+}
+.card-art {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   opacity: .95;
   pointer-events: none;
+  display: block;
 }
 .card.has-art .card-body {
-  margin-top: auto;
-  background: linear-gradient(180deg, transparent 0%, #080914d9 26%, #080914f2 100%);
-  z-index: 1;
+  background: linear-gradient(180deg, #090914e8 0%, #080914f2 100%);
 }
 .card:hover {
   transform: translateY(-8px) scale(1.05);
