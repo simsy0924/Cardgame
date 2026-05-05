@@ -66,8 +66,8 @@ function resolveCardImageCandidates(cardId, card) {
   pushIfSafe(window.CARD_IMAGE_MAP && window.CARD_IMAGE_MAP[cardId]);
 
   // 파일명을 "카드명 그대로" 쓸 수 있도록 기본 경로 자동 후보 생성
-  // 예: /assets/cards/펭귄 용사.png
-  const base = `/assets/cards/${cardId}`;
+  // 예: /js/assets/cards/펭귄 용사.png
+  const base = `/js/assets/cards/${cardId}`;
   ['png', 'webp', 'jpg', 'jpeg', 'gif', 'avif'].forEach(ext => {
     pushIfSafe(`${base}.${ext}`);
   });
@@ -91,7 +91,7 @@ function sanitizeCardImageSrc(rawSrc) {
 
   // 카드 이미지는 프로젝트 내부의 assets/cards 하위만 허용
   const normalizedPath = parsed.pathname.replace(/\/{2,}/g, '/');
-  if (!normalizedPath.startsWith('/assets/cards/')) return '';
+  if (!normalizedPath.startsWith('/js/assets/cards/')) return '';
 
   // 이미지 확장자만 허용
   if (!/\.(png|jpe?g|webp|gif|avif)$/i.test(normalizedPath)) return '';
