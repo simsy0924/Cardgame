@@ -1,3 +1,4 @@
+
 // ============================================================
 // ai.js — AI 대전 모듈
 // index.html 로드 순서: patch.js → ai.js (맨 마지막)
@@ -909,7 +910,10 @@ _safeHook('beginChain', function(_origBeginChain) {
   return function(effect) {
     _origBeginChain.apply(this, arguments);
     if (!window.AI.active) return;
-    // 플레이어가 체인1 발동 → priority='guest' → AI 응답 트리거
+    // [BUG FIX] effects-chain.js beginChain 내부에서 이미 _notifyAIChainOpened를 호출하므로
+    // 이 훅은 roomRef가 있는(멀티플레이) 경우에만 직접 트리거
+    // roomRef 없는 AI 모드에서는 _notifyAIChainOpened에 위임 (중복 실행 방지)
+    if (!roomRef) return;
     var live = activeChainState;
     if (!live || !live.active || live.priority !== _aiRole()) return;
     setTimeout(function() {
@@ -923,7 +927,8 @@ _safeHook('addChainLink', function(_origAddChainLink) {
   return function(effect) {
     _origAddChainLink.apply(this, arguments);
     if (!window.AI.active) return;
-    // 플레이어가 체인N 추가 → AI 응답 트리거
+    // [BUG FIX] 동일하게 roomRef 없는 AI 모드는 _notifyAIChainOpened에 위임
+    if (!roomRef) return;
     var live = activeChainState;
     if (!live || !live.active || live.priority !== _aiRole()) return;
     setTimeout(function() {
@@ -1053,7 +1058,11 @@ function _chainSignature(state) {
   if (!state || !state.active) return '';
   var links = state.links || [];
   var chainId = String(state.chainId || '');
-  return chainId + '|' + links.map(function(l){ return String((l && l.by) || '') + ':' + String((l && l.type) || ''); }).join('|') + '#p' + String(state.priority || '') + '#c' + String(state.passCount || 0);
+  // [BUG FIX] passCount를 시그니처에서 제거
+  // passCount가 포함되면 패스할 때마다 시그니처가 달라져
+  // _alreadyHandledChainState가 이미 처리한 상태를 새 상태로 오인,
+  // watcher가 동일 체인에 중복 응답하는 버그 발생
+  return chainId + '|' + links.map(function(l){ return String((l && l.by) || '') + ':' + String((l && l.type) || ''); }).join('|') + '#p' + String(state.priority || '');
 }
 
 function _markAIChainHandled(state) {
@@ -1179,6 +1188,23 @@ function _playerCanRespondInChain(state) {
   }
   return Array.isArray(G.myKeyDeck) && G.myKeyDeck.length > 0;
 }
+
+// ─────────────────────────────────────────────────────────────
+// [BUG FIX] _notifyAIChainOpened
+// effects-chain.js의 beginChain / passChainPriority / addChainLink에서
+// 호출하지만 정의가 없어서 AI가 체인에 전혀 반응하지 못했던 버그 수정
+// ─────────────────────────────────────────────────────────────
+function _notifyAIChainOpened() {
+  if (!window.AI || !window.AI.active) return;
+  var live = activeChainState;
+  if (!live || !live.active) return;
+  if (live.priority !== _aiRole()) return;
+  setTimeout(function() {
+    if (!activeChainState || !activeChainState.active) return;
+    _aiChainResponse(activeChainState);
+  }, 350);
+}
+window._notifyAIChainOpened = _notifyAIChainOpened;
 
 window._aiChainResponse = _aiChainResponse;
 window._aiRespondToChain = function() {
