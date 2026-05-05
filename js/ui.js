@@ -10,6 +10,8 @@ function renderCard(cardData, opts = {}) {
 
   const imageCandidates = resolveCardImageCandidates(cardData.id, card);
   if (imageCandidates.length > 0) {
+    const artWrap = document.createElement('div');
+    artWrap.className = 'card-art-wrap';
     const art = document.createElement('img');
     art.className = 'card-art';
     art.alt = `${card.name} 일러스트`;
@@ -20,9 +22,10 @@ function renderCard(cardData, opts = {}) {
     art.onerror = () => {
       idx += 1;
       if (idx < imageCandidates.length) art.src = imageCandidates[idx];
-      else art.remove();
+      else artWrap.remove();
     };
-    el.appendChild(art);
+    artWrap.appendChild(art);
+    el.appendChild(artWrap);
     el.classList.add('has-art');
   }
 
