@@ -1212,18 +1212,45 @@ function _collectAIChainOptions(chainState) {
   if (!liveChain || !liveChain.active) return [];
   if (typeof collectChainOptions !== 'function') return [];
 
+  var aiRole = _aiRole();
+  var options = [];
+
+  // AI도 플레이어와 동일하게 체인 중 키카드 가져오기 선택지를 가진다.
+  // (collectChainOptions의 기본 구현은 aiCtx가 있을 때 키카드 옵션을 생략하므로 여기서 보강)
+  if (!usedKeyFetchInChain[aiRole]) {
+    (G.opKeyDeck || []).forEach(function(c) {
+      if (!c || !c.id) return;
+      options.push({
+        cardId: c.id,
+        label: '[키카드] ' + (c.name || c.id) + ' 가져오기',
+        activate: function() {
+          if (!activeChainState || !activeChainState.active) return;
+          var next = Object.assign({}, activeChainState);
+          var effect = { type: 'keyFetch', label: '키 카드 가져오기 (' + (c.name || c.id) + ')', cardId: c.id, by: aiRole };
+          next.links = (activeChainState.links || []).slice().concat([effect]);
+          next.passCount = 0;
+          next.priority = _playerRole();
+          activeChainState = next;
+          usedKeyFetchInChain[aiRole] = true;
+        },
+      });
+    });
+  }
+
   var commonOptions = collectChainOptions({
     hand:    G.opHand,
     field:   G.opField,
     grave:   G.opGrave,
     exile:   G.opExile,
     keyDeck: G.opKeyDeck,
-    role:    _aiRole(),
+    role:    aiRole,
     usedFx:  window.AI.usedFx,
     isMyTurn: false,
   }) || [];
 
-  return commonOptions.map(function(opt) {
+  options = options.concat(commonOptions);
+
+  return options.map(function(opt) {
     var score = 50;
     var label = String((opt && opt.label) || '');
     var links = (liveChain && liveChain.links) || [];
