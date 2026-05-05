@@ -67,7 +67,7 @@ function resolveCardImageCandidates(cardId, card) {
 
   // 파일명을 "카드명 그대로" 쓸 수 있도록 기본 경로 자동 후보 생성
   // 예: /js/assets/cards/펭귄 용사.png
-  const base = `/js/assets/cards/${cardId}`;
+  const base = `js/assets/cards/${cardId}`;
   ['png', 'webp', 'jpg', 'jpeg', 'gif', 'avif'].forEach(ext => {
     pushIfSafe(`${base}.${ext}`);
   });
@@ -82,21 +82,23 @@ function sanitizeCardImageSrc(rawSrc) {
   // 외부 URL / data: / javascript: 스킴 차단 + 같은 오리진만 허용
   let parsed;
   try {
-    parsed = new URL(trimmed, window.location.origin);
+    parsed = new URL(trimmed, window.location.href);
   } catch {
     return '';
   }
   if (parsed.origin !== window.location.origin) return '';
   if (!['http:', 'https:'].includes(parsed.protocol)) return '';
 
-  // 카드 이미지는 프로젝트 내부의 assets/cards 하위만 허용
+  // 카드 이미지는 현재 앱 기준 경로 또는 루트 경로의 assets/cards 하위만 허용
   const normalizedPath = parsed.pathname.replace(/\/{2,}/g, '/');
-  if (!normalizedPath.startsWith('/js/assets/cards/')) return '';
+  const appBasePath = new URL('./', window.location.href).pathname.replace(/\/{2,}/g, '/');
+  const baseCardsPath = `${appBasePath.endsWith('/') ? appBasePath : appBasePath + '/'}js/assets/cards/`;
+  if (!normalizedPath.startsWith(baseCardsPath) && !normalizedPath.startsWith('/js/assets/cards/')) return '';
 
   // 이미지 확장자만 허용
   if (!/\.(png|jpe?g|webp|gif|avif)$/i.test(normalizedPath)) return '';
 
-  return `${normalizedPath}${parsed.search}${parsed.hash}`;
+  return parsed.href;
 }
 
 function renderCardBack(cardData) {
