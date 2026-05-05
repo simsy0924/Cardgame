@@ -1182,8 +1182,9 @@ _safeHook('beginChain', function(_origBeginChain) {
     renderAll();
 
     // AI에게 응답 기회 부여
+    console.log('[AI Chain] beginChain hook: chain set, priority=' + chainState.priority + ', calling _notifyAIChainOpened');
     setTimeout(function() {
-      if (!activeChainState || !activeChainState.active) return;
+      if (!activeChainState || !activeChainState.active) { console.log('[AI Chain] beginChain hook: chain gone before notify'); return; }
       _notifyAIChainOpened();
     }, 0);
   };
@@ -1305,13 +1306,15 @@ function _alreadyHandledChainState(state) {
 // AI 체인 응답 실행
 // ─────────────────────────────────────────────────────────────
 function _aiChainResponse(chainState) {
-  if (!window.AI.active) return;
+  if (!window.AI.active) { console.log('[AI Chain] response: AI not active'); return; }
   _clearAIChainTimer();
-  if (!activeChainState || !activeChainState.active) return;
-  if (!_canAIRespondNow(activeChainState)) return;
-  if (_alreadyHandledChainState(activeChainState)) return;
+  if (!activeChainState || !activeChainState.active) { console.log('[AI Chain] response: no active chain'); return; }
+  if (!_canAIRespondNow(activeChainState)) { console.log('[AI Chain] response: _canAIRespondNow=false priority=' + activeChainState.priority + ' aiRole=' + _aiRole()); return; }
+  if (_alreadyHandledChainState(activeChainState)) { console.log('[AI Chain] response: already handled'); return; }
+  console.log('[AI Chain] response: proceeding, links=' + (activeChainState.links||[]).length);
 
   var options = _collectAIChainOptions(activeChainState || chainState);
+  console.log('[AI Chain] options count:', options.length, options.map(function(o){return o.label;}));
   options.sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
   var picked = options[0] || null;
 
@@ -1345,24 +1348,50 @@ function _aiChainResponse(chainState) {
   }
 
   // AI가 카드 발동
+  // rawActivate() 내부의 _buildChainActivate는 addChainLink를 임시 교체하여
+  // activeChainState에 AI 링크를 추가하고 끝냄 (렌더/notify 없음).
+  // 따라서 rawActivate 전후 링크 수를 비교해 명시적으로 체인 상태를 정리한다.
   setTimeout(function() {
     if (!activeChainState || !activeChainState.active) return;
+
+    var linksBefore = (activeChainState.links || []).length;
+
     picked.rawActivate();
-    log('🤖 ' + picked.id + ' 체인 발동!', 'opponent');
+
+    if (!activeChainState || !activeChainState.active) return;
+
+    var linksAfter = (activeChainState.links || []).length;
+
+    // rawActivate가 링크를 추가하지 않은 경우 → 직접 AI 링크 추가
+    if (linksAfter === linksBefore) {
+      var aiEffect = { type: picked.id, label: picked.label, by: _aiRole() };
+      var nextA    = Object.assign({}, activeChainState);
+      nextA.links  = (activeChainState.links || []).slice().concat([aiEffect]);
+      nextA.passCount = 0;
+      nextA.priority  = _playerRole();
+      activeChainState = nextA;
+    } else {
+      // 링크가 추가됐으면 priority만 플레이어로 교정
+      var nextB      = Object.assign({}, activeChainState);
+      nextB.links    = (activeChainState.links || []).slice();
+      nextB.passCount = 0;
+      nextB.priority  = _playerRole();
+      activeChainState = nextB;
+    }
 
     var next = activeChainState;
     if (!next || !next.active) return;
+
+    log('🤖 ' + picked.label + ' 체인 발동!', 'opponent');
     _markAIChainHandled(next);
     renderChainActions();
     renderAll();
 
     if (_playerCanRespondInChain(next)) {
       var lastLink = (next.links || [])[(next.links || []).length - 1] || {};
-      notify('체인 ' + next.links.length + ': ' + (lastLink.label || picked.id) + '. 응답 또는 패스를 선택하세요.');
+      notify('체인 ' + next.links.length + ': ' + (lastLink.label || picked.label) + '. 응답 또는 패스를 선택하세요.');
     } else {
-      // [BUG-08 FIX] links 딥카피
-      next = Object.assign({}, next, { links: (next.links || []).slice(), passCount: 1 });
-      activeChainState = next;
+      // 플레이어도 응답 불가 → 즉시 resolve
       setTimeout(function() {
         if (!activeChainState || !activeChainState.active) return;
         var final = Object.assign({}, activeChainState, { passCount: 2 });
@@ -1396,12 +1425,13 @@ function _playerCanRespondInChain(state) {
 // _notifyAIChainOpened — effects-chain.js에서 호출
 // ─────────────────────────────────────────────────────────────
 function _notifyAIChainOpened() {
-  if (!window.AI || !window.AI.active) return;
+  if (!window.AI || !window.AI.active) { console.log('[AI Chain] _notifyAIChainOpened: AI not active'); return; }
   var live = activeChainState;
-  if (!live || !live.active) return;
-  if (live.priority !== _aiRole()) return;
+  if (!live || !live.active) { console.log('[AI Chain] _notifyAIChainOpened: no active chain'); return; }
+  if (live.priority !== _aiRole()) { console.log('[AI Chain] _notifyAIChainOpened: priority=' + live.priority + ' aiRole=' + _aiRole() + ' mismatch'); return; }
+  console.log('[AI Chain] _notifyAIChainOpened: scheduling response, links=' + (live.links||[]).length);
   setTimeout(function() {
-    if (!activeChainState || !activeChainState.active) return;
+    if (!activeChainState || !activeChainState.active) { console.log('[AI Chain] chain gone before response'); return; }
     _aiChainResponse(activeChainState);
   }, 350);
 }
