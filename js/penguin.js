@@ -314,7 +314,11 @@ function resolvePenguinCharge2() {
 function activatePenguinGlory1(handIdx) {
   const source = G.myHand[handIdx];
   if (!source || source.id !== '펭귄의 영광') { notify('패의 펭귄의 영광 카드가 필요합니다.'); return; }
-  activateIgnitionEffect({
+  if (currentPhase !== 'deploy') {
+    notify('펭귄의 영광 ①은 자신/상대 전개 단계에만 발동할 수 있습니다.');
+    return;
+  }
+  activateQuickEffect({
     type:             'ignitionPenguinGlory1',
     label:            '펭귄의 영광 ①',
     sourceInstanceId: ensureCardInstanceId(source),
