@@ -466,6 +466,20 @@ function activateIgnitionEffect(effect) {
   beginChain(effect);
 }
 
+
+function activateDeployPhaseEffect(effect) {
+  // 전개단계 기동효과: 자신/상대 전개 단계, 체인 1로만 발동 가능
+  if (currentPhase !== 'deploy') {
+    notify('이 효과는 전개 단계에만 발동할 수 있습니다.');
+    return;
+  }
+  if (activeChainState && activeChainState.active) {
+    notify('이 효과는 체인 1로만 발동할 수 있습니다.');
+    return;
+  }
+  beginChain(effect);
+}
+
 function ensureCardInstanceId(card) {
   if (!card) return null;
   if (!card._iid) {
