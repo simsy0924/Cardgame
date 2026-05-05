@@ -1,5 +1,38 @@
 
 // ui.js — UI 렌더링, 모달, 카드 픽커, 덱 빌더
+
+// ─────────────────────────────────────────────
+// 이미지 캐시 — 성능 최적화 (A+B+C 방법 통합)
+//   _imgCache  : cardId → 로드 성공한 src
+//   _imgFailed : 모든 후보가 실패한 cardId 집합
+// ─────────────────────────────────────────────
+const _imgCache  = new Map();
+const _imgFailed = new Set();
+
+/**
+ * 덱(배열)의 카드 이미지를 백그라운드에서 미리 로드합니다.
+ * 게임 시작 시 호출하면 게임 중 첫 표시가 즉시 됩니다.
+ */
+function preloadDeckImages(deck) {
+  if (!Array.isArray(deck)) return;
+  deck.forEach(card => {
+    const id = card.id || card;
+    if (!id || _imgCache.has(id) || _imgFailed.has(id)) return;
+    const cardData = CARDS[id] || {};
+    const candidates = resolveCardImageCandidates(id, cardData);
+    if (!candidates.length) { _imgFailed.add(id); return; }
+    let idx = 0;
+    const img = new Image();
+    img.onload  = () => { _imgCache.set(id, img.src); };
+    img.onerror = () => {
+      idx++;
+      if (idx < candidates.length) { img.src = candidates[idx]; }
+      else { _imgFailed.add(id); }
+    };
+    img.src = candidates[0];
+  });
+}
+
 // CARD RENDERING
 // ─────────────────────────────────────────────
 function renderCard(cardData, opts = {}) {
@@ -39,7 +72,7 @@ function renderCard(cardData, opts = {}) {
   };
 
   const imageCandidates = resolveCardImageCandidates(cardData.id, card);
-  if (imageCandidates.length > 0) {
+  if (imageCandidates.length > 0 && !_imgFailed.has(cardData.id)) {
     const artWrap = document.createElement('div');
     artWrap.className = 'card-art-wrap';
     const art = document.createElement('img');
@@ -47,17 +80,31 @@ function renderCard(cardData, opts = {}) {
     art.alt = `${card.name} 일러스트`;
     art.loading = 'lazy';
     art.decoding = 'async';
-    let idx = 0;
-    art.src = imageCandidates[idx];
-    art.onerror = () => {
-      idx += 1;
-      if (idx < imageCandidates.length) art.src = imageCandidates[idx];
-      else {
-        artWrap.remove();
-        el.classList.remove('has-art');
-        showFallbackUI();
-      }
-    };
+
+    if (_imgCache.has(cardData.id)) {
+      // ✅ 캐시 히트 — 즉시 표시
+      art.src = _imgCache.get(cardData.id);
+    } else {
+      // 첫 로드 — 순차 후보 시도 후 캐시에 저장
+      let idx = 0;
+      art.src = imageCandidates[idx];
+      art.onload = () => {
+        _imgCache.set(cardData.id, art.src); // ✅ 성공한 src 기록
+      };
+      art.onerror = () => {
+        idx += 1;
+        if (idx < imageCandidates.length) {
+          art.src = imageCandidates[idx];
+        } else {
+          // ✅ 모든 후보 실패 — 이후 즉시 fallback
+          _imgFailed.add(cardData.id);
+          artWrap.remove();
+          el.classList.remove('has-art');
+          showFallbackUI();
+        }
+      };
+    }
+
     artWrap.appendChild(art);
     el.appendChild(artWrap);
     el.classList.add('has-art');
@@ -82,7 +129,7 @@ function resolveCardImageCandidates(cardId, card) {
   // 파일명을 "카드명 그대로" 쓸 수 있도록 기본 경로 자동 후보 생성
   // 예: /js/assets/cards/펭귄 용사.png
   const base = `js/assets/cards/${cardId}`;
-  ['png', 'webp', 'jpg', 'jpeg', 'gif', 'avif'].forEach(ext => {
+  ['png', 'webp', 'jpg'].forEach(ext => {  // 실제 사용 확장자만 (성능 최적화)
     pushIfSafe(`${base}.${ext}`);
   });
   return candidates;
