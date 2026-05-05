@@ -109,6 +109,36 @@ function _payThemeCost(card, handIdx, costText, done) {
   done(true);
 }
 
+function canResolveThemeEffectFromText(mainText, card, opts = {}) {
+  const text = String(mainText || '');
+  const count = _readCount(text, 1);
+  const themePredicate = _inferThemePredicate(card?.theme);
+
+  // 수치 변화/무효/보호 계열은 타깃 없이도 처리 가능하므로 허용
+  if (text.includes('무효') || text.includes('공격력') || text.includes('카운터')) return true;
+
+  if (text.includes('드로우')) return true;
+
+  if (text.includes('덱') && (text.includes('서치') || text.includes('패에 넣'))) {
+    return findAllInDeck(dc => themePredicate(dc)).length >= Math.min(1, count);
+  }
+
+  if (text.includes('덱') && text.includes('소환')) {
+    return findAllInDeck(dc => CARDS[dc.id]?.cardType === 'monster' && themePredicate(dc)).length >= 1;
+  }
+
+  if (text.includes('묘지') && text.includes('소환')) {
+    return G.myGrave.some(gc => CARDS[gc.id]?.cardType === 'monster' && themePredicate(gc));
+  }
+
+  if (text.includes('상대') && text.includes('묘지')) {
+    return G.opField.length > 0;
+  }
+
+  // 규칙 적용 범위 밖의 문장은 기존 카드별 체크/해결 로직에 위임
+  return true;
+}
+
 function activateThemeCardEffectFromHand(handIdx, effectNum = 1) {
   const c = G.myHand[handIdx];
   if (!c) return;
@@ -119,6 +149,11 @@ function activateThemeCardEffectFromHand(handIdx, effectNum = 1) {
   const effectText = _extractEffectText(card, effectNum);
   if (!effectText) { notify('효과 텍스트를 찾을 수 없습니다.'); return; }
   const { costText, mainText } = _splitCostAndMain(effectText);
+
+  if (!canResolveThemeEffectFromText(mainText, card)) {
+    notify('효과를 처리할 수 없어 발동할 수 없습니다.');
+    return;
+  }
 
   const chainEffect = {
     type: 'themeEffect',
