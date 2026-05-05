@@ -8,6 +8,36 @@ function renderCard(cardData, opts = {}) {
   const el = document.createElement('div');
   el.className = 'card' + (cardData.isPublic ? ' public-card' : '') + (opts.selected ? ' selected' : '');
 
+  const showFallbackUI = () => {
+    if (el.dataset.fallbackShown === '1') return;
+    el.dataset.fallbackShown = '1';
+
+    const color = CARD_TYPE_COLOR[card.cardType] || '#555';
+    const typeBar = document.createElement('div');
+    typeBar.className = 'card-type-bar';
+    typeBar.style.background = color;
+    el.appendChild(typeBar);
+
+    const body = document.createElement('div');
+    body.className = 'card-body';
+    const typeLabel = document.createElement('div');
+    typeLabel.className = 'card-type-label';
+    typeLabel.textContent = CARD_TYPE_LABEL[card.cardType] || '';
+    const nameEl2 = document.createElement('div');
+    nameEl2.className = 'card-name';
+    nameEl2.textContent = card.name;
+    body.appendChild(typeLabel);
+    body.appendChild(nameEl2);
+    el.appendChild(body);
+
+    if (card.cardType === 'monster' && card.atk !== undefined) {
+      const atk = document.createElement('div');
+      atk.className = 'card-atk';
+      atk.textContent = `ATK ${card.atk}`;
+      el.appendChild(atk);
+    }
+  };
+
   const imageCandidates = resolveCardImageCandidates(cardData.id, card);
   if (imageCandidates.length > 0) {
     const artWrap = document.createElement('div');
@@ -22,36 +52,17 @@ function renderCard(cardData, opts = {}) {
     art.onerror = () => {
       idx += 1;
       if (idx < imageCandidates.length) art.src = imageCandidates[idx];
-      else artWrap.remove();
+      else {
+        artWrap.remove();
+        el.classList.remove('has-art');
+        showFallbackUI();
+      }
     };
     artWrap.appendChild(art);
     el.appendChild(artWrap);
     el.classList.add('has-art');
-  }
-
-  const color = CARD_TYPE_COLOR[card.cardType] || '#555';
-  const typeBar = document.createElement('div');
-  typeBar.className = 'card-type-bar';
-  typeBar.style.background = color;
-  el.appendChild(typeBar);
-
-  const body = document.createElement('div');
-  body.className = 'card-body';
-  const typeLabel = document.createElement('div');
-  typeLabel.className = 'card-type-label';
-  typeLabel.textContent = CARD_TYPE_LABEL[card.cardType] || '';
-  const nameEl2 = document.createElement('div');
-  nameEl2.className = 'card-name';
-  nameEl2.textContent = card.name;
-  body.appendChild(typeLabel);
-  body.appendChild(nameEl2);
-  el.appendChild(body);
-
-  if (card.cardType === 'monster' && card.atk !== undefined) {
-    const atk = document.createElement('div');
-    atk.className = 'card-atk';
-    atk.textContent = `ATK ${card.atk}`;
-    el.appendChild(atk);
+  } else {
+    showFallbackUI();
   }
 
   return el;
