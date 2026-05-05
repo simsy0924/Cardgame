@@ -1084,11 +1084,29 @@ let deckSearchQuery = '';
 let deckSortMode = 'default';
 
 // 범용 카드 (테마 없는 것들)
+
+function isCardUsable(cardId) {
+  // 비로그인/프로필 미연동 상태(로컬/테스트/AI)는 전체 사용 허용
+  if (!window.currentUser || !window.userProfile) return true;
+  if (window.userProfile?.isAdmin) return true;
+  const unlocked = new Set(window.userProfile?.unlockedCards || []);
+  return unlocked.has(cardId);
+}
+
 const GENERIC_CARDS = ['구사일생','일격필살','눈에는 눈','출입통제','단 한번의 기회','유혹의 황금사과','수호의 빛','신성한 수호자','서치 봉인의 항아리','단단한 카드 자물쇠'];
 
 function openDeckBuilder() {
   document.getElementById('lobby').style.display = 'none';
   document.getElementById('deckBuilder').style.display = 'flex';
+  const noDeck = Object.keys(builderMainDeck).length === 0;
+  const starter = window.userProfile?.starterDeckMain || [];
+  if (noDeck && starter.length) {
+    builderMainDeck = {};
+    starter.forEach(id => { builderMainDeck[id] = (builderMainDeck[id] || 0) + 1; });
+    builderKeyDeck = {};
+    (window.userProfile?.starterDeckKey || []).forEach(id => { builderKeyDeck[id] = 1; });
+    notify('신규 유저 스타터 덱이 적용되었습니다.');
+  }
   filterDeckPool('전체');
   renderBuilderDeck();
 }
@@ -1122,6 +1140,7 @@ function filterDeckPool(theme) {
       theme === '범용' ? GENERIC_CARDS.includes(card.id) :
       (card.theme === theme);
     if (!matchTheme) return;
+    if (!isCardUsable(card.id)) return;
     if (deckSearchQuery && !card.name.toLowerCase().includes(deckSearchQuery)) return;
     const wrapper = document.createElement('div');
     wrapper.className = 'pool-card';
@@ -1144,7 +1163,8 @@ function filterDeckPool(theme) {
   // 키카드 풀 (전체 또는 테마 탭에서 보임)
   if (theme !== '범용') {
     Object.values(CARDS).filter(c => c.isKeyCard && (theme === '전체' || c.theme === theme)).forEach(card => {
-      if (deckSearchQuery && !card.name.toLowerCase().includes(deckSearchQuery)) return;
+      if (!isCardUsable(card.id)) return;
+    if (deckSearchQuery && !card.name.toLowerCase().includes(deckSearchQuery)) return;
       const wrapper = document.createElement('div');
       wrapper.className = 'pool-card';
       const el = renderCard({ id: card.id, name: card.name });
@@ -1168,6 +1188,7 @@ function filterDeckPool(theme) {
 function addToDeck(cardId, isKey) {
   const card = CARDS[cardId];
   if (!card) return;
+  if (!isCardUsable(cardId)) { notify('아직 해금하지 않은 카드입니다.'); return; }
   if (isKey) {
     if (builderKeyDeck[cardId]) {
       delete builderKeyDeck[cardId];
@@ -1240,6 +1261,7 @@ function renderBuilderDeck() {
 }
 
 function loadPreset(theme) {
+  if (window.currentUser && window.userProfile && !window.userProfile?.isAdmin) { notify('로그인 계정은 상점 해금 카드로 덱을 구성해야 합니다.'); return; }
   if (theme === '펭귄') {
     builderMainDeck = {
       '펭귄 마을':4,'꼬마 펭귄':4,'펭귄 부부':4,'현자 펭귄':4,

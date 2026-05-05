@@ -4,6 +4,9 @@
 let fsdb = null;
 let currentUser = null;
 let userProfile = null;
+window.fsdb = null;
+window.currentUser = null;
+window.userProfile = null;
 let gameResultRecorded = false;
 let authInitialized = false;
 
@@ -12,18 +15,22 @@ function initAuth() {
   authInitialized = true;
   if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
   fsdb = firebase.firestore();
+  window.fsdb = fsdb;
   firebase.auth().getRedirectResult().catch(e => console.warn('redirect:', e));
   firebase.auth().onAuthStateChanged(async (user) => {
     currentUser = user;
+    window.currentUser = user;
     if (user) {
       await ensureUserDoc(user);
       userProfile = await getUserProfile(user.uid);
+      window.userProfile = userProfile;
       renderProfileUI(user);
       checkAdminUI();
       const ni = document.getElementById('playerName');
       if (ni && !ni.value.trim()) ni.value = userProfile?.nickname || user.displayName || '';
     } else {
       userProfile = null;
+      window.userProfile = null;
       renderLoggedOutUI();
       checkAdminUI();
     }
@@ -66,6 +73,9 @@ async function ensureUserDoc(user) {
       email: user.email || '', photoURL: user.photoURL || '',
       currency: 0, totalWins: 0, totalLosses: 0, totalGames: 0, rank: 1000,
       ownedItems: [], equippedSleeve: 'default', equippedBoard: 'default', unlockedCards: [],
+      unlockedThemes: [], hasPickedTheme: false,
+      starterDeckMain: [], starterDeckKey: [],
+      tutorialCompleted: false, claimedMissions: [],
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
@@ -78,10 +88,12 @@ async function getUserProfile(uid) {
   catch(e) { return null; }
 }
 
+window.getUserProfile = getUserProfile;
+
 async function recordGameResult(win) {
   if (!currentUser || !fsdb || gameResultRecorded) return;
   gameResultRecorded = true;
-  const earned = win ? 30 : 10;
+  const earned = win ? 40 : 0;
   try {
     await fsdb.runTransaction(async (tx) => {
       const ref = fsdb.collection('users').doc(currentUser.uid);
@@ -103,7 +115,8 @@ async function recordGameResult(win) {
       playedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
     userProfile = await getUserProfile(currentUser.uid);
-    notify((win ? '🏆 승리' : '💀 패배') + '! 재화 +' + earned + ' (합계: ' + (userProfile?.currency ?? '?') + ')');
+    window.userProfile = userProfile;
+    notify((win ? '🏆 승리' : '💀 패배') + '! ' + (earned > 0 ? ('재화 +' + earned) : '재화 획득 없음') + ' (합계: ' + (userProfile?.currency ?? '?') + ')');
   } catch(e) { console.error('결과 기록 실패:', e); }
 }
 
@@ -115,6 +128,7 @@ async function saveNickname() {
   try {
     await fsdb.collection('users').doc(currentUser.uid).update({ nickname: newNick, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
     userProfile = await getUserProfile(currentUser.uid);
+    window.userProfile = userProfile;
     const nameEl = document.getElementById('profileName');
     if (nameEl) nameEl.textContent = newNick;
     const playerNameEl = document.getElementById('playerName');
@@ -137,6 +151,10 @@ function renderProfileUI(user) {
   if (currEl) currEl.textContent = '💰 ' + (userProfile?.currency ?? 0);
   const nickInput = document.getElementById('nicknameInput');
   if (nickInput) nickInput.placeholder = userProfile?.nickname || user.displayName || '닉네임 변경';
+  if (window.renderShopUI) window.renderShopUI();
+  if (userProfile && userProfile.tutorialCompleted === false && window.startTutorial) {
+    setTimeout(() => window.startTutorial(), 300);
+  }
 }
 
 function renderLoggedOutUI() {
@@ -195,6 +213,7 @@ async function adminResetAllStats() {
 
     if (currentUser) {
       userProfile = await getUserProfile(currentUser.uid);
+      window.userProfile = userProfile;
       renderProfileUI(currentUser);
     }
   } catch (e) {
@@ -207,15 +226,121 @@ async function adminResetAllStats() {
 async function checkAdminUI() {
   const btn = document.getElementById('adminResetBtn');
   if (!btn) return;
-  if (!currentUser || !fsdb) { btn.closest('.lobby-card').style.display = 'none'; return; }
+  const card = btn.closest('.lobby-card');
+  if (!currentUser || !fsdb) { if (card) card.style.display = 'none'; return; }
   try {
     const adminDoc = await fsdb.collection('admins').doc(currentUser.uid).get();
-    btn.closest('.lobby-card').style.display = adminDoc.exists ? '' : 'none';
+    const isAdmin = adminDoc.exists;
+    if (card) card.style.display = isAdmin ? '' : 'none';
+    if (userProfile) { userProfile.isAdmin = isAdmin; window.userProfile = userProfile; }
   } catch (e) {
-    btn.closest('.lobby-card').style.display = 'none';
+    if (card) card.style.display = 'none';
   }
 }
 // 페이지 로드 후 미리 SDK 로드 (로그인 버튼 응답 빠르게)
 window.addEventListener('load', () => loadFirebase(() => {}));
 
 
+
+
+
+
+function _starterDeckForTheme(theme) {
+  const genericCards = ['구사일생','일격필살','눈에는 눈','출입통제','단 한번의 기회','유혹의 황금사과','수호의 빛','신성한 수호자','서치 봉인의 항아리','단단한 카드 자물쇠'];
+  const isGeneric = (id) => genericCards.includes(id);
+  const inTheme = (id) => {
+    const c = CARDS[id];
+    if (!c) return false;
+    return theme === '범용' ? isGeneric(id) : c.theme === theme;
+  };
+  const main = [];
+  Object.values(CARDS || {}).forEach(c => {
+    if (!c || c.isKeyCard) return;
+    if (inTheme(c.id) || isGeneric(c.id)) {
+      for (let i=0;i<2;i++) main.push(c.id);
+    }
+  });
+  const key = [];
+  Object.values(CARDS || {}).forEach(c => {
+    if (!c || !c.isKeyCard) return;
+    if (inTheme(c.id)) key.push(c.id);
+  });
+  return { main: main.slice(0,40), key: key.slice(0,5) };
+}
+
+function _cardsForTheme(theme) {
+  const list = [];
+  Object.values(CARDS || {}).forEach(c => {
+    if (theme === '범용') { if (!c.theme || c.theme === '범용') list.push(c.id); }
+    else if (c.theme === theme) list.push(c.id);
+  });
+  return list;
+}
+
+async function purchaseShopItem(itemId) {
+  if (!currentUser || !fsdb) { notify('로그인 필요'); return; }
+  const item = (window.SHOP_ITEMS || []).find(x => x.id === itemId);
+  if (!item) { notify('존재하지 않는 상품입니다.'); return; }
+  try {
+    await fsdb.runTransaction(async (tx) => {
+      const ref = fsdb.collection('users').doc(currentUser.uid);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new Error('유저 정보 없음');
+      const d = snap.data();
+      const owned = new Set(d.ownedItems || []);
+      const themes = new Set(d.unlockedThemes || []);
+      if (owned.has(item.id)) throw new Error('이미 구매한 아이템입니다.');
+      if (d.hasPickedTheme && !themes.has(item.theme)) throw new Error('이미 테마 선택을 완료했습니다.');
+      const currency = Number(d.currency || 0);
+      if (currency < item.priceGold) throw new Error('재화가 부족합니다.');
+      owned.add(item.id);
+      themes.add(item.theme);
+      const unlocked = new Set(d.unlockedCards || []);
+      _cardsForTheme(item.theme).forEach(c => unlocked.add(c));
+      tx.update(ref, {
+        currency: currency - item.priceGold,
+        ownedItems: Array.from(owned),
+        unlockedThemes: Array.from(themes),
+        hasPickedTheme: true,
+        unlockedCards: Array.from(unlocked),
+        starterDeckMain: _starterDeckForTheme(item.theme).main,
+        starterDeckKey: _starterDeckForTheme(item.theme).key,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+    userProfile = await getUserProfile(currentUser.uid);
+    window.userProfile = userProfile;
+    renderProfileUI(currentUser);
+    if (window.renderShopUI) renderShopUI();
+    notify('구매 완료: ' + item.name);
+  } catch(e) { notify('구매 실패: ' + e.message); }
+}
+
+async function claimMissionReward(missionId) {
+  if (!currentUser || !fsdb) { notify('로그인 필요'); return; }
+  const mission = (window.MISSIONS || []).find(m => m.id === missionId);
+  if (!mission) { notify('미션 없음'); return; }
+  try {
+    await fsdb.runTransaction(async (tx) => {
+      const ref = fsdb.collection('users').doc(currentUser.uid);
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new Error('유저 없음');
+      const d = snap.data();
+      const claimed = new Set(d.claimedMissions || []);
+      if (claimed.has(mission.id)) throw new Error('이미 수령한 미션입니다.');
+      const progress = Number(d[mission.metric] || 0);
+      if (progress < mission.goal) throw new Error('미션 조건 미달성');
+      claimed.add(mission.id);
+      tx.update(ref, {
+        currency: Number(d.currency || 0) + mission.reward,
+        claimedMissions: Array.from(claimed),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+    userProfile = await getUserProfile(currentUser.uid);
+    window.userProfile = userProfile;
+    renderProfileUI(currentUser);
+    if (window.renderShopUI) renderShopUI();
+    notify('미션 보상 수령 완료');
+  } catch(e) { notify('보상 수령 실패: ' + e.message); }
+}
