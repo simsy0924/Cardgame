@@ -18,14 +18,43 @@
     return null;
   }
 
+  function _triggerCounterSideEffects(type, mon, prevCount, nextCount) {
+    if (!mon) return;
+
+    if (type === '전기') {
+      const prevPairs = Math.floor(prevCount / 2);
+      const nextPairs = Math.floor(nextCount / 2);
+      const gainedPairs = Math.max(0, nextPairs - prevPairs);
+      for (let i = 0; i < gainedPairs; i++) {
+        sendAction({ type: 'forceDiscard', count: 1, reason: '엘리멘츠의 전기정령 카운터 효과' });
+        log('전기 카운터 2개 달성: 상대가 패 1장 버립니다.', 'mine');
+      }
+    }
+
+    if (type === '바람') {
+      const prevPairs = Math.floor(prevCount / 2);
+      const nextPairs = Math.floor(nextCount / 2);
+      const gainedPairs = Math.max(0, nextPairs - prevPairs);
+      for (let i = 0; i < gainedPairs; i++) {
+        drawOne();
+        log('바람 카운터 2개 달성: 1장 드로우.', 'mine');
+      }
+    }
+  }
+
   function addCounterToOpponent(opFieldIdx, type, amount = 1) {
     const mon = G.opField[opFieldIdx];
-    if (!mon || !type) return 0;
+    if (!mon || !type || amount <= 0) return 0;
+
     const map = _ensureCounterMap(mon);
-    map[type] = (map[type] || 0) + amount;
+    const prev = map[type] || 0;
+    const next = prev + amount;
+    map[type] = next;
 
     if (type === '화염') mon.atk = (mon.atk ?? CARDS[mon.id]?.atk ?? 0) - amount;
     if (type === '궁극') mon.atk = (mon.atk ?? CARDS[mon.id]?.atk ?? 0) + amount;
+
+    _triggerCounterSideEffects(type, mon, prev, next);
     return amount;
   }
 
@@ -48,6 +77,8 @@
         const mon = G.opField[it.mi];
         if (!mon?.counters?.[it.type]) return;
         mon.counters[it.type] -= 1;
+        if (it.type === '화염') mon.atk = (mon.atk ?? CARDS[mon.id]?.atk ?? 0) + 1;
+        if (it.type === '궁극') mon.atk = (mon.atk ?? CARDS[mon.id]?.atk ?? 0) - 1;
         if (mon.counters[it.type] <= 0) delete mon.counters[it.type];
         removed += 1;
       });
@@ -79,6 +110,8 @@
 
     if (id === '엘리멘츠의 불꽃정령' && effectNum === 3) {
       if (!canUseEffect(id, 3)) return notify('이미 사용했습니다.');
+      const hasAnyCounter = G.opField.some(m => Object.values(m?.counters || {}).some(n => n > 0));
+      if (!hasAnyCounter) return notify('제거할 카운터가 없습니다.');
       markEffectUsed(id, 3);
       const r = removeCountersFromOpponent(2);
       if (r === 0) notify('제거할 카운터가 없습니다.');

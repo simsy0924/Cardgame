@@ -217,6 +217,33 @@ function renderOpHand() {
   document.getElementById('opHandCount').textContent = G.opHand.length;
 }
 
+
+function createCounterUI(mon) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-wrap:wrap;justify-content:center;gap:2px;padding:2px 2px 3px;min-height:16px;';
+
+  const entries = Object.entries(mon?.counters || {}).filter(([, n]) => n > 0);
+  if (entries.length === 0) return wrap;
+
+  const colorByType = {
+    '화염': '#ff7a7a',
+    '물': '#64b5ff',
+    '전기': '#ffd75e',
+    '바람': '#9cffb5',
+    '궁극': '#d1a3ff'
+  };
+
+  entries.forEach(([type, count]) => {
+    const badge = document.createElement('span');
+    const color = colorByType[type] || '#9dd6ff';
+    badge.style.cssText = `font-size:.5rem;line-height:1;padding:2px 4px;border-radius:999px;border:1px solid ${color};color:${color};background:rgba(0,0,0,.25);`;
+    badge.textContent = `${type} ${count}`;
+    wrap.appendChild(badge);
+  });
+
+  return wrap;
+}
+
 function renderMyField() {
   const container = document.getElementById('myField');
   container.innerHTML = '';
@@ -236,11 +263,7 @@ function renderMyField() {
       atkEl.textContent = `ATK ${mon.atk ?? (card.atk ?? '?')}`;
       slot.appendChild(nameEl);
       slot.appendChild(atkEl);
-      const countersEl = document.createElement('div');
-      countersEl.style.cssText = 'font-size:.5rem;color:#9dd6ff;text-align:center;line-height:1.2;padding:0 2px 2px;';
-      const counterText = Object.entries(mon.counters || {}).filter(([, n]) => n > 0).map(([k, n]) => `${k}${n}`).join(' · ');
-      countersEl.textContent = counterText || '';
-      slot.appendChild(countersEl);
+      slot.appendChild(createCounterUI(mon));
       slot.addEventListener('click', () => onMyFieldClick(i));
     } else {
       slot.style.cursor = 'default';
@@ -263,11 +286,7 @@ function renderOpField() {
     atkEl.textContent = `ATK ${mon.atk ?? '?'}`;
     slot.appendChild(nameEl);
     slot.appendChild(atkEl);
-    const countersEl = document.createElement('div');
-    countersEl.style.cssText = 'font-size:.5rem;color:#9dd6ff;text-align:center;line-height:1.2;padding:0 2px 2px;';
-    const counterText = Object.entries(mon.counters || {}).filter(([, n]) => n > 0).map(([k, n]) => `${k}${n}`).join(' · ');
-    countersEl.textContent = counterText || '';
-    slot.appendChild(countersEl);
+    slot.appendChild(createCounterUI(mon));
     slot.addEventListener('click', () => onOpFieldClick(i));
     container.appendChild(slot);
   });
