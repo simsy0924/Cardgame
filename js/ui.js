@@ -760,11 +760,12 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                 break;
 
               case '펭귄의 영광':
-                // ①: 패에 펭귄 용사 또는 펭귄의 전설(용사 취급)이 있어야 함
-                // 키카드 덱에서는 소환 불가 — 패에 있을 때만
+                // ①: 자신/상대 전개 단계 + 패에 펭귄 용사 또는 펭귄의 전설(용사 취급) 필요
                 { const heroAvail = G.myHand.some(c => c.id === '펭귄 용사' || c.id === '펭귄의 전설');
-                  if (heroAvail)
+                  if (currentPhase === 'deploy' && heroAvail)
                     addBtn('① 펭귄 용사/전설 소환 + 상대 패 공개', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                  else if (currentPhase !== 'deploy')
+                    addBtn('① 전개 단계에서만 발동 가능', 'btn-secondary', () => notify('펭귄의 영광 ①은 자신/상대 전개 단계에만 발동할 수 있습니다.'));
                   else
                     addBtn('① 발동 불가 (패에 용사/전설 없음)', 'btn-secondary', () => notify('패에 펭귄 용사 또는 펭귄의 전설이 있어야 합니다.'));
                 }
