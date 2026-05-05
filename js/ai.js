@@ -1167,6 +1167,7 @@ _safeHook('beginChain', function(_origBeginChain) {
 
     // 원본이 즉시 resolve하기 전에 체인 상태를 직접 설정
     var chainState = {
+      chainId:   (typeof nextChainId === 'function' ? nextChainId() : ('ai_chain_' + Date.now())),
       active:    true,
       startedBy: myRole,
       priority:  typeof getOpponentRole === 'function' ? getOpponentRole(myRole) : _aiRole(),
@@ -1242,6 +1243,32 @@ function _collectAIChainOptions(chainState) {
   });
 }
 
+
+function _debugAIChainOptionState(liveChain) {
+  try {
+    var hand = G.opHand || [];
+    var field = G.opField || [];
+    var handRegistered = hand.filter(function(c){ return !!(window.CHAIN_HAND_RESPONSES && window.CHAIN_HAND_RESPONSES[c.id]); });
+    var fieldRegistered = field.filter(function(c){ return !!(window.CHAIN_FIELD_RESPONSES && window.CHAIN_FIELD_RESPONSES[c.id]); });
+    var links = (liveChain && liveChain.links) || [];
+    var last = links.length ? links[links.length - 1] : null;
+    console.log('[AI Chain] option-debug', {
+      priority: liveChain && liveChain.priority,
+      aiRole: _aiRole(),
+      passCount: liveChain && liveChain.passCount,
+      links: links.map(function(l){ return { by: l.by, type: l.type, label: l.label }; }),
+      lastLink: last ? { by: last.by, type: last.type, label: last.label } : null,
+      handCount: hand.length,
+      fieldCount: field.length,
+      handRegistered: handRegistered.map(function(c){ return c.id; }),
+      fieldRegistered: fieldRegistered.map(function(c){ return c.id; }),
+      usedFxKeys: Object.keys((window.AI && window.AI.usedFx) || {}),
+    });
+  } catch (e) {
+    console.warn('[AI Chain] option-debug failed:', e && e.message ? e.message : e);
+  }
+}
+
 function _canAIRespondNow(state) {
   if (!state || !state.active) return false;
   if (state.priority !== _aiRole()) return false;
@@ -1315,6 +1342,7 @@ function _aiChainResponse(chainState) {
 
   var options = _collectAIChainOptions(activeChainState || chainState);
   console.log('[AI Chain] options count:', options.length, options.map(function(o){return o.label;}));
+  if (!options.length) _debugAIChainOptionState(activeChainState || chainState);
   options.sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
   var picked = options[0] || null;
 
