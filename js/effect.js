@@ -557,6 +557,19 @@ function activateCard(handIdx) {
   const c = G.myHand[handIdx];
   if (!c) return;
 
+  // 공통 필드 카드 처리:
+  // 개별 카드 케이스(예: 수호의 빛)로 분기하지 않는 필드 카드는 필드 존에 놓는다.
+  // 기존 필드 카드가 있으면 묘지로 보낸다.
+  if (c.cardType === 'field' && c.id !== '수호의 빛') {
+    if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
+    G.myFieldCard = { id: c.id, name: c.name };
+    G.myHand.splice(handIdx, 1);
+    log(`필드 발동: ${c.name}`, 'mine');
+    sendAction({ type: 'fieldCard', cardId: c.id });
+    sendGameState(); renderAll();
+    return;
+  }
+
   switch (c.id) {
 
     case '구사일생':
