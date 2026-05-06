@@ -1,4 +1,8 @@
-// effects-theme.js — 입장/덱 초기화/테마 카드 공용 처리
+// effects-theme.js — 테마 카드 공용 처리 및 activateCard 정의
+
+// ─────────────────────────────────────────────
+// 게임 입장 / 초기화
+// ─────────────────────────────────────────────
 function enterGame() {
   opName = myRole === 'host' ? '게스트' : '호스트';
   myName = document.getElementById('playerName').value.trim() || (myRole === 'host' ? '호스트' : '게스트');
@@ -142,126 +146,169 @@ function initDecks() {
   G.opDeckCount = 40;
 }
 
+// ─────────────────────────────────────────────
+// activateCard — 패 카드 발동 진입점
+// 테마별로 전용 핸들러에 위임 후, 범용 switch로 처리
+// ─────────────────────────────────────────────
 function activateCard(handIdx) {
   const c = G.myHand[handIdx];
   if (!c) return;
   const card = CARDS[c.id];
 
-  // ── 펭귄 테마 카드: 전용 라우터로 위임 ──
+  // ── 공통 필드 카드 처리 (테마 라우팅 전에 먼저 처리) ──
+  // [BUG FIX] 엘리멘츠 in rainbow forest 등 테마 필드 카드가 테마 핸들러로 잘못 라우팅 방지
+  if (card && card.cardType === 'field' && c.id !== '수호의 빛') {
+    if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
+    G.myFieldCard = { id: c.id, name: c.name };
+    G.myHand.splice(handIdx, 1);
+    log(`필드 발동: ${c.name}`, 'mine');
+    sendAction({ type: 'fieldCard', cardId: c.id });
+    sendGameState(); renderAll();
+    return;
+  }
+
+  // ── 펭귄 테마 카드 ──
   if (card && card.theme === '펭귄') {
-    if (typeof activatePenguinCard === 'function') {
-      activatePenguinCard(handIdx, 1);
-    }
+    if (typeof activatePenguinCard === 'function') activatePenguinCard(handIdx, 1);
     return;
   }
 
-  // ── 동적 테마 핸들러 (올드원, 라이온, 타이거, 라이거, 마피아, 불가사의 등) ──
-  if (card && activateRegisteredThemeCardEffect(handIdx, 1)) {
-    return;
+  // ── 동적 테마 핸들러 (엘리멘츠, 올드원, 라이온, 타이거, 라이거, 마피아, 불가사의 등) ──
+  if (card && typeof activateRegisteredThemeCardEffect === 'function') {
+    if (activateRegisteredThemeCardEffect(handIdx, 1)) return;
   }
 
-  switch(c.id) {
+  switch (c.id) {
     case '구사일생':
       notify('구사일생은 전투 시 자동으로 발동 여부를 물어봅니다.');
       return;
 
     case '눈에는 눈':
-      // 상대 서치 시 자동 트리거 — 수동으로도 발동 가능
-      G.myHand.splice(handIdx, 1);
-      G.myGrave.push({ id: c.id, name: c.name });
-      drawN(2);
-      log('눈에는 눈: 드로우 2장!', 'mine');
-      sendGameState(); renderAll();
+      notify('눈에는 눈은 상대 서치 계열 효과에 체인으로만 발동할 수 있습니다.');
       return;
 
     case '출입통제':
-      G.myHand.splice(handIdx, 1);
-      G.myGrave.push({ id: c.id, name: c.name });
-      log('출입통제 발동! 상대 소환 효과 무효', 'mine');
-      sendAction({ type: 'negate', reason: '출입통제', cardId: c.id });
-      sendGameState(); renderAll();
+      notify('출입통제는 상대 효과에 체인으로만 발동할 수 있습니다.');
       return;
 
-    case '단단한 카드 자물쇠':
+    case '영웅의 탄생':
+      notify('영웅의 탄생은 상대의 서치/묘지이동/묘지·제외 활용 효과에 체인으로 발동할 수 있습니다.');
+      return;
+
+    case '카드의 흑기사': {
+      if (G.myField.length < 2) { notify('소환 불가: 필드 몬스터 2장 이상이 필요합니다.'); return; }
+      const targets = [...G.myField];
+      openCardPicker(targets, '카드의 흑기사 소환 코스트: 공격력 합계 10 이상이 되도록 몬스터 선택', Math.min(5, targets.length), (sel) => {
+        if (!sel.length) return;
+        const picked = sel.map(i => targets[i]);
+        const sumAtk = picked.reduce((a,m) => a + ((m && m.atk) || 0), 0);
+        if (picked.length < 2 || sumAtk < 10) { notify('소환 불가: 2장 이상, 공격력 합계 10 이상이 필요합니다.'); return; }
+        for (const m of picked) { const idx = G.myField.findIndex(x => x === m || (x.id === m.id && x.atk === m.atk)); if (idx >= 0) G.myGrave.push(G.myField.splice(idx, 1)[0]); }
+        G.myField.push({ id: c.id, name: c.name, atk: 5, summonedFrom: 'keyDeck' });
+        G.myHand.splice(handIdx, 1);
+        log('카드의 흑기사 소환!', 'mine'); sendGameState(); renderAll();
+      });
+      return;
+    }
+
+    case '풀려난 항아리의 마귀': {
+      if (G.myField.length < 3) { notify('소환 불가: 필드 몬스터 3장이 필요합니다.'); return; }
+      const targets = [...G.myField];
+      openCardPicker(targets, '풀려난 항아리의 마귀 소환 코스트: 몬스터 3장 선택', 3, (sel) => {
+        if (sel.length !== 3) return;
+        sel.sort((a, b) => b - a).forEach(i => G.myGrave.push(G.myField.splice(i, 1)[0]));
+        G.myField.push({ id: c.id, name: c.name, atk: 5, summonedFrom: 'keyDeck' });
+        G.myHand.splice(handIdx, 1);
+        log('풀려난 항아리의 마귀 소환!', 'mine'); sendGameState(); renderAll();
+      });
+      return;
+    }
+
+    case '카드 세계의 영웅': {
+      const hasPot = G.myField.some(m => m.id === '풀려난 항아리의 마귀');
+      if (!hasPot || G.myField.length < 2) { notify('소환 불가: 필드의 풀려난 항아리의 마귀 1장과 다른 몬스터 1장이 필요합니다.'); return; }
+      const potIdx = G.myField.findIndex(m => m.id === '풀려난 항아리의 마귀');
+      const otherIdx = G.myField.findIndex((m, i) => i !== potIdx);
+      G.myGrave.push(G.myField.splice(Math.max(potIdx, otherIdx), 1)[0]);
+      G.myGrave.push(G.myField.splice(Math.min(potIdx, otherIdx), 1)[0]);
+      G.myField.push({ id: c.id, name: c.name, atk: 5, summonedFrom: 'keyDeck' });
+      G.myHand.splice(handIdx, 1);
+      const addHero = () => {
+        const d = G.myDeck.findIndex(x => x.id === '영웅의 탄생'); if (d >= 0) { const z = G.myDeck.splice(d, 1)[0]; G.myHand.push({ id: z.id, name: z.name, isPublic: true }); return true; }
+        const g = G.myGrave.findIndex(x => x.id === '영웅의 탄생'); if (g >= 0) { const z = G.myGrave.splice(g, 1)[0]; G.myHand.push({ id: z.id, name: z.name, isPublic: true }); return true; }
+        const e = G.myExile.findIndex(x => x.id === '영웅의 탄생'); if (e >= 0) { const z = G.myExile.splice(e, 1)[0]; G.myHand.push({ id: z.id, name: z.name, isPublic: true }); return true; }
+        return false;
+      };
+      if (addHero()) log('카드 세계의 영웅 ①: 영웅의 탄생을 패에 추가', 'mine');
+      log('카드 세계의 영웅 소환!', 'mine'); sendGameState(); renderAll();
+      return;
+    }
+
+    case '단단한 카드 자물쇠': {
       if (G.opField.length === 0 && !G.opFieldCard) { notify('대상으로 할 카드가 없습니다.'); return; }
-      openCardPicker(
-        [...G.opField, ...(G.opFieldCard ? [G.opFieldCard] : [])],
-        '단단한 카드 자물쇠: 상대 필드 카드 1장 효과 무효',
-        1,
-        (selected) => {
-          const targets = [...G.opField, ...(G.opFieldCard ? [G.opFieldCard] : [])];
-          if (selected.length > 0) {
-            const t = targets[selected[0]];
-            log(`단단한 카드 자물쇠: ${t.name} 효과 턴 종료시까지 무효`, 'mine');
-            sendAction({ type: 'negateField', cardId: t.id });
+      const targets = [...G.opField, ...(G.opFieldCard ? [G.opFieldCard] : [])];
+      openCardPicker(targets, '단단한 카드 자물쇠: 상대 필드 카드 1장 효과 무효', 1, (selected) => {
+        if (selected.length > 0) {
+          const t = targets[selected[0]];
+          log(`단단한 카드 자물쇠: ${t.name} 효과 턴 종료시까지 무효`, 'mine');
+          sendAction({ type: 'negateField', cardId: t.id });
+        }
+        G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
+        sendGameState(); renderAll();
+      });
+      return;
+    }
+
+    case '서치 봉인의 항아리':
+      gameConfirm(
+        '서치 봉인의 항아리\n확인 = ① 덱으로 되돌리고 1장 드로우\n취소 = ② 버려서 이 턴 서치 봉인',
+        (choice) => {
+          if (choice) {
+            G.myHand.splice(handIdx, 1);
+            G.myDeck.push({ id: c.id, name: c.name });
+            G.myDeck = shuffle(G.myDeck);
+            drawOne();
+            log('서치 봉인의 항아리 ①: 덱으로 + 드로우', 'mine');
+          } else {
+            G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
+            log('서치 봉인의 항아리 ②: 이 턴 서치 봉인!', 'mine');
+            sendAction({ type: 'searchBan', reason: '서치 봉인의 항아리' });
           }
-          G.myHand.splice(handIdx, 1);
-          G.myGrave.push({ id: c.id, name: c.name });
           sendGameState(); renderAll();
         }
       );
       return;
 
-    case '서치 봉인의 항아리':
-      // ① 덱으로 되돌리고 드로우  ② 버려서 서치 봉인
-      gameConfirm('서치 봉인의 항아리\n확인 = ① 덱으로 되돌리고 1장 드로우\n취소 = ② 버려서 이 턴 서치 봉인', (choice) => {
-        if (choice) {
-          G.myHand.splice(handIdx, 1);
-          G.myDeck.push({ id: c.id, name: c.name });
-          G.myDeck = shuffle(G.myDeck);
-          drawOne();
-          log('서치 봉인의 항아리 ①: 덱으로 + 드로우', 'mine');
-        } else {
-          G.myHand.splice(handIdx, 1);
-          G.myGrave.push({ id: c.id, name: c.name });
-          log('서치 봉인의 항아리 ②: 이 턴 서치 봉인!', 'mine');
-          sendAction({ type: 'searchBan', reason: '서치 봉인의 항아리' });
-        }
-        sendGameState(); renderAll();
-      });
-      return;
-
     case '유혹의 황금사과':
-      G.myHand.splice(handIdx, 1);
-      G.myGrave.push({ id: c.id, name: c.name });
+      G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
       G.goldenAppleActive = true;
       log('유혹의 황금사과 발동! 이 턴 상대 소환 시마다 1장 드로우', 'mine');
       sendGameState(); renderAll();
       return;
 
     case '수호의 빛':
-      // 필드 마법
       if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
-      G.myHand.splice(handIdx, 1);
       G.myFieldCard = { id: c.id, name: c.name };
-      // 발동 시 제외된 카드 패에 넣기
+      G.myHand.splice(handIdx, 1);
       if (G.myExile.length > 0) {
-        openCardPicker(
-          G.myExile,
-          '수호의 빛: 제외된 카드 1장 패에 넣기 (선택)',
-          1,
-          (selected) => {
-            if (selected.length > 0) {
-              const ec = G.myExile.splice(selected[0], 1)[0];
-              G.myHand.push({ id: ec.id, name: ec.name, isPublic: true });
-              log(`수호의 빛: ${ec.name} 패로`, 'mine');
-            }
-            sendGameState(); renderAll();
+        openCardPicker(G.myExile, '수호의 빛: 제외된 카드 1장 패에 넣기 (선택)', 1, (selected) => {
+          if (selected.length > 0) {
+            const ec = G.myExile.splice(selected[0], 1)[0];
+            G.myHand.push({ id: ec.id, name: ec.name, isPublic: true });
+            log(`수호의 빛: ${ec.name} 패로`, 'mine');
           }
-        );
+          sendGameState(); renderAll();
+        });
       }
       log('수호의 빛 필드 발동!', 'mine');
       sendGameState(); renderAll();
       return;
 
-    case '신성한 수호자':
-      // ① 패에서 제외 → 이 턴 제외 불가
-      G.myHand.splice(handIdx, 1);
-      G.myExile.push({ id: c.id, name: c.name });
+    case '신성한 수호자': {
+      G.myExile.push(G.myHand.splice(handIdx, 1)[0]);
       G.exileBanActive = true;
       log('신성한 수호자 ①: 이 턴 서로 카드 제외 불가!', 'mine');
       sendAction({ type: 'exileBan' });
-      // ② 제외됐으면 수호의 빛 서치 자동
       const lightIdx = G.myDeck.findIndex(dc => dc.id === '수호의 빛');
       if (lightIdx >= 0) {
         G.myDeck.splice(lightIdx, 1);
@@ -270,34 +317,30 @@ function activateCard(handIdx) {
       }
       sendGameState(); renderAll();
       return;
+    }
 
     case '일격필살':
-      // 키카드 — 상대 패 1장 버리기
-      G.myHand.splice(handIdx, 1);
-      G.myGrave.push({ id: c.id, name: c.name });
+      G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
       log('일격필살: 상대 패 1장 버리기!', 'mine');
-      sendAction({ type: 'forceDiscard', count: 1, reason: '일격필살' });
+      sendAction({ type: 'forceDiscard', count: 1, reason: '일격필살', attackerPicks: true });
       sendGameState(); renderAll();
       return;
 
     case '단 한번의 기회':
-      // 키카드 — 드로우 1장
-      G.myHand.splice(handIdx, 1);
-      G.myGrave.push({ id: c.id, name: c.name });
+      G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
       drawOne();
       log('단 한번의 기회: 드로우!', 'mine');
       sendGameState(); renderAll();
       return;
 
     default:
-      // 기본 처리
-      G.myHand.splice(handIdx, 1);
-      G.myGrave.push({ id: c.id, name: c.name });
+      G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
       log(`발동: ${c.name}`, 'mine');
       notify(`${c.name} 발동! (효과를 수동으로 처리하세요)`);
       sendGameState(); renderAll();
   }
 }
+
 
 // ─────────────────────────────────────────────
 // LOBBY → DECK BUILDER 연결
