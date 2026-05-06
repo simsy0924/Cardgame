@@ -530,6 +530,10 @@ function _forcedDiscardOne(title, callback) {
 function activateFieldEffect(fieldIdx, effectNum) {
   const mon = G.myField[fieldIdx];
   if (!mon) return;
+  if (mon.effectNegatedUntilEndTurn) {
+    notify(`${mon.name}의 효과는 턴 종료시까지 무효입니다.`);
+    return;
+  }
   if (mon.id === '카드의 흑기사' && effectNum === 1) {
     const targets = [...G.opField, ...G.myField.filter((_,i)=>i!==fieldIdx), ...(G.opFieldCard?[G.opFieldCard]:[]), ...(G.myFieldCard?[G.myFieldCard]:[])];
     if (!targets.length) { notify('대상이 없습니다.'); return; }

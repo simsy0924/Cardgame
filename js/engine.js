@@ -501,10 +501,20 @@ function sendToGraveWithImmunityCheck(cardId, from = 'field', source = 'opponent
   return true;
 }
 
+
+function isMyFieldCardEffectNegated(cardId) {
+  if (!cardId) return false;
+  const mon = G.myField.find(c => c && c.id === cardId && c.effectNegatedUntilEndTurn);
+  if (mon) return true;
+  return !!(G.myFieldCard && G.myFieldCard.id === cardId && G.myFieldCard.effectNegatedUntilEndTurn);
+}
+
 function resetTurnEffects() {
   resetEffectUsed();
   if (G.penguinHeroAtkBuff) { G.myField.forEach(c => { if (isPenguinMonster(c.id)) c.atk = c.atkBase || CARDS[c.id]?.atk || 0; }); G.penguinHeroAtkBuff = false; }
   G.myField.forEach(c => { if (c.id === '수문장 펭귄') c.atk = c.atkBase || 3; });
   G.ligerKingImmune = false; // 라이거 킹 내성 턴 종료 시 해제
+  G.myField.forEach(c => { if (c) c.effectNegatedUntilEndTurn = false; });
+  if (G.myFieldCard) G.myFieldCard.effectNegatedUntilEndTurn = false;
   resetJibaeEffects();
 }

@@ -555,9 +555,18 @@ function handleOpponentAction(action) {
     case 'negateField': {
       // 상대 효과로 내 필드 카드 효과가 턴 종료까지 무효
       const nfName = CARDS[action.cardId]?.name || action.cardId;
+      let applied = false;
+      const mon = G.myField.find(c => c && c.id === action.cardId);
+      if (mon) {
+        mon.effectNegatedUntilEndTurn = true;
+        applied = true;
+      }
+      if (G.myFieldCard && G.myFieldCard.id === action.cardId) {
+        G.myFieldCard.effectNegatedUntilEndTurn = true;
+        applied = true;
+      }
       log(`상대 효과: ${nfName} 효과 무효 (턴 종료까지)`, 'opponent');
-      notify(`${nfName}의 효과가 무효됐습니다!`);
-      // 실제 무효 상태는 서버 없이 클라이언트에서 플래그 관리 불가 — 알림으로 처리
+      notify(applied ? `${nfName}의 효과가 턴 종료시까지 무효화되었습니다.` : `${nfName}의 효과가 무효됐습니다!`);
       renderAll();
       break;
     }
