@@ -353,20 +353,32 @@ function passChainPriority() {
 
   if (!roomRef) {
     if (!window.AI || !window.AI.active) {
-      // 비AI 로컬 모드: 상대도 즉시 패스 → resolve
+      // 비AI 로컬 모드: 즉시 resolve
       next.passCount = 2;
       resolveChain(next);
       return;
     }
-    // AI 모드: 상태 업데이트 후 우선권 소유자에게 응답 요청
+
     activeChainState = next;
     renderChainActions();
     renderAll();
-    if (next.priority === myRole) {
-      // 플레이어 차례 (AI가 패스한 경우)
+
+    if (next.passCount >= 2) {
+      resolveChain(next);
+      return;
+    }
+
+    // AI 모드: 다음 우선권 소유자가 누구인지 판단
+    // myRole은 호출 시점의 원래 역할 (교체됐을 수 있음)
+    // next.priority를 원래 playerRole/aiRole과 비교
+    var _plR = typeof _playerRole === 'function' ? _playerRole() : myRole;
+    var _aiR = typeof _aiRole    === 'function' ? _aiRole()    : (myRole === 'host' ? 'guest' : 'host');
+
+    if (next.priority === _plR) {
+      // 플레이어 차례 → 응답 요청 알림
       notify('🤖 AI가 패스했습니다. 응답하거나 패스해주세요.');
     } else {
-      // AI 차례 (플레이어가 패스한 경우) → AI에게 응답 요청
+      // AI 차례 → AI 응답 트리거
       setTimeout(() => {
         if (!activeChainState || !activeChainState.active) return;
         if (typeof window._aiChainResponse === 'function') {
