@@ -1354,7 +1354,7 @@ async function _aiChainResponse(chainState) {
   var snap = activeChainState;
   if (!snap || !snap.active) return;
   if (snap.priority !== _aiRole()) {
-    notify('[AI\ub514\ubc84\uadf8] priority=' + snap.priority + ' aiRole=' + _aiRole());
+    notify('[AI\ub514\ubc84\uadf8] priority=' + snap.priority + ' aiRole=' + _aiRole(), 10000);
     return;
   }
   if (_alreadyHandledChainState(snap)) return;

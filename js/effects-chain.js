@@ -365,7 +365,7 @@ function passChainPriority() {
   // [디버그] 호출 스택 추적
   try { throw new Error('passChainPriority caller'); } catch(e) {
     var stack = e.stack ? e.stack.split('\n').slice(1,4).join(' | ') : 'unknown';
-    notify('[AI디버그] passChainPriority 호출! priority=' + (activeChainState&&activeChainState.priority) + ' myRole=' + myRole + ' | ' + stack.slice(0,80));
+    notify('[AI디버그] passChainPriority 호출! priority=' + (activeChainState&&activeChainState.priority) + ' myRole=' + myRole + ' | ' + stack.slice(0,80), 10000);
   }
   if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
 
@@ -498,6 +498,7 @@ function normalizeTriggeredEffect(effect) {
 
 function flushTriggeredEffects() {
   if (pendingTriggerEffects.length === 0) return;
+  notify('[AI디버그] flush: activeChain=' + (activeChainState ? 'active='+activeChainState.active+' priority='+activeChainState.priority : 'null') + ' pending=' + pendingTriggerEffects.map(function(e){return e.label||e.type;}).join(','), 10000);
   if (activeChainState && activeChainState.active) return;
 
   const queued = [...pendingTriggerEffects];
