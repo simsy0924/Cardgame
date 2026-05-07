@@ -329,12 +329,11 @@ function _aiSearch(cardId) {
 
 // [BUG-02 FIX] 전투 판정: 동점 시 양쪽 묘지, ATK=0 예외 제거
 function _aiAttack(atkId, defIdx) {
-  if (window.AI.attacked.has(atkId)) return false;
-  var fi = G.opField.findIndex(function(c) { return c.id === atkId; });
+  var fi = G.opField.findIndex(function(c) { return c.id === atkId && !window.AI.attacked.has(c); });
   if (fi < 0 || !G.myField[defIdx]) return false;
-  window.AI.attacked.add(atkId);
 
   var atk  = G.opField[fi];
+  window.AI.attacked.add(atk);
   var def  = G.myField[defIdx];
   var diff = (atk.atk || 0) - (def.atk || 0);
 
@@ -361,11 +360,11 @@ function _aiAttack(atkId, defIdx) {
 }
 
 function _aiDirect(atkId) {
-  if (G.myField.length > 0 || window.AI.attacked.has(atkId)) return false;
-  var fi = G.opField.findIndex(function(c) { return c.id === atkId; });
+  if (G.myField.length > 0) return false;
+  var fi = G.opField.findIndex(function(c) { return c.id === atkId && !window.AI.attacked.has(c); });
   if (fi < 0) return false;
   var atk = G.opField[fi];
-  window.AI.attacked.add(atkId);
+  window.AI.attacked.add(atk);
   log('🤖 직접공격: ' + atk.name + '(' + atk.atk + ')', 'opponent');
   handleOpponentAction({
     type: 'directAttack',
