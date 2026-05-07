@@ -10,8 +10,25 @@ function getOpponentRole(role) {
 }
 
 function beginChain(effect) {
-  // [디버그] beginChain 진입 시 myRole 확인
-  notify('[AI디버그] beginChain 진입: myRole=' + myRole + ' getOpponent=' + getOpponentRole(myRole));
+  notify('[AI디버그] beginChain 진입: myRole=' + myRole + ' getOpponent=' + getOpponentRole(myRole), 10000);
+  // activeChainState 변경 감지 — Object.defineProperty로 setter 추가
+  (function() {
+    var _orig = activeChainState;
+    try {
+      Object.defineProperty(window, 'activeChainState', {
+        configurable: true,
+        get: function() { return _orig; },
+        set: function(v) {
+          if (_orig && _orig.active && v && v.active && v.priority !== _orig.priority) {
+            var stack = '';
+            try { throw new Error('t'); } catch(e) { stack = (e.stack||'').split('\n').slice(1,5).join(' | '); }
+            notify('[AI디버그] activeChainState.priority 변경: ' + _orig.priority + '->' + v.priority + ' | ' + stack.slice(0, 200), 10000);
+          }
+          _orig = v;
+        }
+      });
+    } catch(e) {}
+  })();
   const chainState = {
     chainId: nextChainId(),
     active: true,
