@@ -1,3 +1,4 @@
+
 // cthulhu.js — 크툴루/올드원 테마
 // 핵심: GOO "소환하고 발동할 수 있다" = 소환이 코스트, 효과는 체인으로 처리
 // _payThemeCost 호출 전 소환을 직접 처리, mainText만 체인에 담음
@@ -8,6 +9,10 @@ const _isOldOne   = dc => ['올드원','올드 원','크툴루'].includes(CARDS[
 
 // ─── 소환 헬퍼 (코스트로 소환) ───
 function _gooSummonFromHand(cardId) {
+  // [BUG FIX] 필드 슬롯 체크 추가
+  if (G.myField.length >= (typeof maxFieldSlots === 'function' ? maxFieldSlots() : 5)) {
+    notify('몬스터 존이 가득 찼습니다.'); return false;
+  }
   const hi = G.myHand.findIndex(h => h.id === cardId);
   if (hi < 0) return false;
   const cd = CARDS[cardId];
@@ -111,6 +116,46 @@ function _cthulhuActivate(handIdx, effectNum) {
     return;
   }
 
+  // [BUG FIX] 크툴루 ②: 코스트(필드 카드 1장 묘지)를 발동 선언 시 지불 — 체인 전에 처리
+  if (c.id === '그레이트 올드 원-크툴루' && effectNum === 2) {
+    const allField = [
+      ...G.myField.map((m,i)=>({...m,_src:'mine',_i:i})),
+      ...G.opField.map((m,i)=>({...m,_src:'op',_i:i}))
+    ];
+    if (!allField.length) { notify('필드에 카드가 없습니다.'); return; }
+    openCardPicker(allField,'크툴루 ②: [코스트] 필드 카드 1장 묘지',1,(sel)=>{
+      if (!sel.length) return;
+      const p=allField[sel[0]];
+      if (p._src==='mine') { const m=G.myField.splice(p._i,1)[0]; if(m) G.myGrave.push(m); }
+      else { const m=G.opField.splice(p._i,1)[0]; if(m){G.opGrave.push(m); sendAction({type:'opFieldRemove',cardId:m.id,to:'grave',isTargeting:true});} }
+      // 코스트 지불 완료 → 체인 등록 (패널티는 resolve에서 처리)
+      markEffectUsed(c.id, effectNum);
+      const chainEffect = { type:'themeEffect', label:`${c.name} ②`, cardId:c.id, effectNum, theme:'올드원', mainText, extra:{} };
+      if (activeChainState?.active) addChainLink(chainEffect);
+      else beginChain(chainEffect);
+      sendGameState(); renderAll();
+    });
+    return;
+  }
+
+  // [BUG FIX] 크투가 ②: 코스트(패 몬스터 소환)를 발동 선언 시 처리
+  if (c.id === '그레이트 올드 원-크투가' && effectNum === 2) {
+    const monsters = G.myHand.filter(h => CARDS[h.id]?.cardType==='monster' && h.id !== c.id);
+    if (!monsters.length) { notify('소환할 패 몬스터가 없습니다.'); return; }
+    openCardPicker(monsters,'크투가 ②: [코스트] 패에서 몬스터 소환',1,(sel)=>{
+      if (!sel.length) return;
+      const t=monsters[sel[0]]; const hi=G.myHand.findIndex(h=>h===t);
+      if (hi>=0) { const mon=G.myHand.splice(hi,1)[0]; G.myField.push({id:mon.id,name:mon.name,atk:CARDS[mon.id]?.atk??0,atkBase:CARDS[mon.id]?.atk??0}); log(`크투가 ②: ${mon.name} 소환(코스트)`,'mine'); }
+      // 코스트 완료 → 체인 등록 (패널티는 resolve에서 처리)
+      markEffectUsed(c.id, effectNum);
+      const chainEffect = { type:'themeEffect', label:`${c.name} ②`, cardId:c.id, effectNum, theme:'올드원', mainText, extra:{} };
+      if (activeChainState?.active) addChainLink(chainEffect);
+      else beginChain(chainEffect);
+      sendGameState(); renderAll();
+    });
+    return;
+  }
+
   // 나머지 (magic/trap/normal 카드, 덱 제외 코스트 등)
   _payThemeCost(card, handIdx, costText, (paid) => {
     if (!paid) return;
@@ -144,19 +189,11 @@ function _cthulhuResolve(link) {
         log('크툴루 ①: 태평양 속 르뤼에 배치','mine');
         sendGameState(); renderAll();
       } else if (effectNum === 2) {
-        // [코스트] 필드 1장 묘지 → [의무 패널티] 자신 필드 1장 묘지
-        const allField = [...G.myField.map((m,i)=>({...m,_src:'mine',_i:i})), ...G.opField.map((m,i)=>({...m,_src:'op',_i:i}))];
-        if (!allField.length) { sendGameState(); renderAll(); return; }
-        openCardPicker(allField,'크툴루 ②: [코스트] 필드 카드 1장 묘지',1,(sel)=>{
-          if (!sel.length) return;
-          const p=allField[sel[0]];
-          if (p._src==='mine') { const m=G.myField.splice(p._i,1)[0]; if(m) G.myGrave.push(m); }
-          else { const m=G.opField.splice(p._i,1)[0]; if(m){G.opGrave.push(m); sendAction({type:'opFieldRemove',cardId:m.id,to:'grave',isTargeting:true});} }
-          if (!G.myField.length) { sendGameState(); renderAll(); return; }
-          openCardPicker([...G.myField].map((m,i)=>({...m,_i:i})),'크툴루 ②: [패널티] 자신 필드 1장 묘지',1,(sel2)=>{
-            if (sel2.length) { const m=G.myField.splice(sel2[0],1)[0]; if(m) G.myGrave.push(m); }
-            sendGameState(); renderAll();
-          });
+        // [BUG FIX] 코스트는 activate에서 지불 완료 → resolve에서는 패널티(자신 필드 1장 묘지)만 처리
+        if (!G.myField.length) { sendGameState(); renderAll(); return; }
+        openCardPicker([...G.myField].map((m,i)=>({...m,_i:i})),'크툴루 ②: [패널티] 자신 필드 1장 묘지',1,(sel2)=>{
+          if (sel2.length) { const m=G.myField.splice(sel2[0],1)[0]; if(m) G.myGrave.push(m); }
+          sendGameState(); renderAll();
         });
       } else if (effectNum === 3) {
         const td = findAllInDeck(d=>_isGOO(d.id));
@@ -181,18 +218,11 @@ function _cthulhuResolve(link) {
           sendGameState(); renderAll();
         });
       } else if (effectNum === 2) {
-        // [코스트] 패 몬스터 소환 → [의무 패널티] 자신 필드 1장 묘지
-        const monsters = G.myHand.filter(h => CARDS[h.id]?.cardType==='monster');
-        openCardPicker(monsters,'크투가 ②: [코스트] 패에서 몬스터 소환',1,(sel)=>{
-          if (!sel.length) return;
-          const t=monsters[sel[0]]; const hi=G.myHand.findIndex(h=>h===t);
-          if (hi>=0) { const mon=G.myHand.splice(hi,1)[0]; G.myField.push({id:mon.id,name:mon.name,atk:CARDS[mon.id]?.atk??0,atkBase:CARDS[mon.id]?.atk??0}); }
+        // [BUG FIX] 코스트(몬스터 소환)는 activate에서 지불 완료 → resolve에서는 패널티만 처리
+        if (!G.myField.length) { sendGameState(); renderAll(); return; }
+        openCardPicker([...G.myField].map((m,i)=>({...m,_i:i})),'크투가 ②: [패널티] 자신 필드 1장 묘지',1,(sel2)=>{
+          if (sel2.length) { const m=G.myField.splice(sel2[0],1)[0]; if(m) G.myGrave.push(m); }
           sendGameState(); renderAll();
-          if (!G.myField.length) return;
-          openCardPicker([...G.myField].map((m,i)=>({...m,_i:i})),'크투가 ②: [패널티] 자신 필드 1장 묘지',1,(sel2)=>{
-            if (sel2.length) { const m=G.myField.splice(sel2[0],1)[0]; if(m) G.myGrave.push(m); }
-            sendGameState(); renderAll();
-          });
         });
       } else if (effectNum === 3) {
         // 묘지에서 2장 제외

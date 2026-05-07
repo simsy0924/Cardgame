@@ -1,3 +1,4 @@
+
 // Elements.js — 엘리멘츠 테마 전용 엔진
 
 (function initElementsTheme() {
@@ -71,6 +72,7 @@
 
     if (choices.length === 0) return 0;
 
+    // [BUG FIX] forced=true — 반드시 선택해야 효과 처리 (취소 불가)
     openCardPicker(choices.map(x => ({ id: `${x.mi}:${x.type}`, name: x.label })), '제거할 카운터 선택(최대 2)', Math.min(totalToRemove, choices.length), (sel) => {
       sel.forEach(i => {
         const it = choices[i];
@@ -84,7 +86,9 @@
       });
       if (removed > 0) {
         const targets = findAllInDeck(c => CARDS[c.id]?.theme === '엘리멘츠');
-        openCardPicker(targets, `엘리멘츠 불꽃정령 ③: ${removed}장 서치`, Math.min(removed, targets.length), (pick) => {
+        // [BUG FIX] 덱에 엘리멘츠 카드가 없으면 서치 피커 없이 바로 종료
+        if (targets.length === 0) { sendGameState(); renderAll(); return; }
+        openCardPicker(targets, `엘리멘츠의 불꽃정령 ③: 카운터 제거 ${removed}개 → 서치`, Math.min(removed, targets.length), (pick) => {
           pick.forEach(i => searchToHand(targets[i].id));
           sendGameState(); renderAll();
         });
@@ -100,8 +104,35 @@
 
     if (id.includes('정령') && effectNum === 1) {
       if (!canUseEffect(id, 1)) return notify('이미 사용했습니다.');
+      if (G.myField.length >= maxFieldSlots()) return notify('몬스터 존이 가득 찼습니다.');
+      // [BUG FIX] 필드가 비어있으면 자유 소환, 필드에 무언가 있으면 엘리멘츠 카드 필요
       const hasElements = G.myField.some(m => CARDS[m.id]?.theme === '엘리멘츠');
-      if (G.myField.length > 0 && !hasElements) return notify('내 필드에 엘리멘츠 카드가 없으면 소환할 수 없습니다.');
+      if (G.myField.length > 0 && !hasElements) {
+        return notify(`${CARDS[id]?.name || id} ①: 자신 필드에 엘리멘츠 카드가 존재할 경우에만 소환할 수 있습니다.`);
+      }
+      markEffectUsed(id, 1);
+      summonFromHand(handIdx);
+      sendGameState(); renderAll();
+      return;
+    }
+
+    // 엘리멘츠의 궁극신/창조신 — 소환 조건 체크
+    if ((id === '엘리멘츠의 궁극신' || id === '엘리멘츠의 궁극 창조신') && effectNum === 1) {
+      const requiredCounterTypes = id === '엘리멘츠의 궁극신' ? 2 : 4; // 궁극신: 4종×2개, 창조신: 4종×4개
+      const counterTypes = ['화염', '물', '전기', '바람'];
+      const typesPresent = counterTypes.filter(type =>
+        G.opField.some(m => (m.counters?.[type] || 0) >= (id === '엘리멘츠의 궁극신' ? 2 : 4))
+      );
+      if (typesPresent.length < 4) {
+        const need = id === '엘리멘츠의 궁극신' ? '4종류 각 2개' : '4종류 각 4개';
+        return notify(`${CARDS[id]?.name}: 소환 조건 불충족 (상대 필드 카운터 ${need} 필요)`);
+      }
+      // 조건 충족 — 카운터 제거 후 소환
+      counterTypes.forEach(type => {
+        const removeCount = id === '엘리멘츠의 궁극신' ? 2 : 4;
+        G.opField.forEach(m => { if (m.counters?.[type]) m.counters[type] = Math.max(0, (m.counters[type] || 0) - removeCount); });
+      });
+      log(`${CARDS[id]?.name} 소환 조건 충족 — 카운터 제거 후 소환`, 'mine');
       markEffectUsed(id, 1);
       summonFromHand(handIdx);
       sendGameState(); renderAll();
@@ -125,9 +156,10 @@
     const counterType = _inferCounterType(cardId);
     if (!counterType) return;
     if (!canUseEffect(cardId, 2)) return;
+    // [BUG FIX] markEffectUsed를 gameConfirm 전에 호출 — 다이얼로그 열린 사이 중복 발동 방지
+    markEffectUsed(cardId, 2);
 
     gameConfirm(`${cardId} ②\n확인=상대 몬스터에 ${counterType} 카운터\n취소=덱에서 엘리멘츠 카드 서치`, (yes) => {
-      markEffectUsed(cardId, 2);
       if (yes && G.opField.length > 0) {
         openCardPicker(G.opField, `${cardId} ②: 카운터를 놓을 상대 몬스터 선택`, 1, (sel) => {
           if (sel.length > 0) {
@@ -137,8 +169,9 @@
           sendGameState(); renderAll();
         });
       } else {
+        // yes=false 또는 상대 필드 없음 → 덱에서 엘리멘츠 서치
         const targets = findAllInDeck(dc => CARDS[dc.id]?.theme === '엘리멘츠');
-        if (targets.length === 0) return;
+        if (targets.length === 0) { sendGameState(); renderAll(); return; } // [BUG FIX] 서치 대상 없어도 상태 업데이트
         openCardPicker(targets, `${cardId} ②: 엘리멘츠 카드 서치`, 1, (sel) => {
           if (sel.length > 0) searchToHand(targets[sel[0]].id);
           sendGameState(); renderAll();

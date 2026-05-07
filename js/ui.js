@@ -914,15 +914,18 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
               // 지배자/지배룡 카드는 ①효과 자체가 이 카드를 버리는 코스트이므로
               // 별도 "패에서 버리기" 버튼은 필요하지 않음
             }
-          } else if (['크툴루', '올드 원', '올드원', '라이온', '타이거', '라이거', '마피아', '불가사의'].includes(card.theme)) {
+          } else if (['크툴루', '올드 원', '올드원', '라이온', '타이거', '라이거', '마피아', '불가사의', '엘리멘츠'].includes(card.theme)) {
+            // [BUG FIX] 엘리멘츠 테마 추가 — activateCard 경유 대신 직접 핸들러 호출
             const effectText = card.effects || '';
-            if (effectText.includes('①')) addBtn('① 효과 발동', 'btn-primary', () => activateThemeCardEffectFromHand(handIdx, 1));
-            if (effectText.includes('②')) addBtn('② 효과 발동', 'btn-secondary', () => activateThemeCardEffectFromHand(handIdx, 2));
-            if (effectText.includes('③')) addBtn('③ 효과 발동', 'btn-secondary', () => activateThemeCardEffectFromHand(handIdx, 3));
+            if (effectText.includes('①')) addBtn('① 효과 발동', 'btn-primary', () => activateCard(handIdx));
+            if (effectText.includes('②')) addBtn('② 효과 발동', 'btn-secondary', () => { const h = window.THEME_EFFECT_HANDLERS?.[card.theme]; h ? h.activateFromHand(handIdx, 2) : activateThemeCardEffectFromHand(handIdx, 2); });
+            if (effectText.includes('③')) addBtn('③ 효과 발동', 'btn-secondary', () => { const h = window.THEME_EFFECT_HANDLERS?.[card.theme]; h ? h.activateFromHand(handIdx, 3) : activateThemeCardEffectFromHand(handIdx, 3); });
             addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
           } else {
+            // [BUG FIX] 몬스터 카드도 activateCard로 — "통상 소환 없음" 메시지 제거
+            // 효과로 소환하는 경우(엘리멘츠 궁극신 등) 포함, 조건은 activateCard/핸들러 내부에서 체크
             if (card.cardType === 'monster' && isMyTurn && currentPhase === 'deploy')
-              addBtn('효과 소환 전용', 'btn-secondary', () => notify('통상 소환은 없습니다. 카드 효과로만 소환할 수 있습니다.'));
+              addBtn('① 효과 발동/소환', 'btn-primary', () => activateCard(handIdx));
             if (['normal','magic','field'].includes(card.cardType) && isMyTurn)
               addBtn('발동', 'btn-primary', () => activateCard(handIdx));
             if (card.cardType === 'magic' && canActAnytime)

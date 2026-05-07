@@ -260,14 +260,13 @@ function _classifyLog(msg, explicitType) {
 
 // 카드명을 <span class="log-card">으로 감싸기
 function _highlightCardNames(msg) {
-  // 따옴표 없는 카드명은 CARDS 키 기준으로 강조
+  // [BUG FIX] break 제거 — 로그에 여러 카드명이 있어도 전부 강조
   let result = msg;
-  // 특수문자 포함 카드명은 순서대로 처리 (긴 것 먼저)
   const cardNames = Object.keys(CARDS || {}).sort((a, b) => b.length - a.length);
   for (const name of cardNames) {
-    if (result.includes(name)) {
+    // 이미 span으로 감싼 카드명은 건너뜀 (중복 감싸기 방지)
+    if (result.includes(name) && !result.includes(`>${name}</span>`)) {
       result = result.replaceAll(name, `<span class="log-card">${name}</span>`);
-      break; // 첫 번째 매칭만 (성능)
     }
   }
   return result;
@@ -406,14 +405,8 @@ function onSummon(cardId, from) {
     case '펭귄의 전설': triggerPenguinLegend(from); break;
     case '펭귄 마법사': triggerPenguinWizard(from); break;
     case '전원소의 지배자': triggerJibaejaJeon2(); break;
-    case '엘리멘츠의 불꽃정령':
-    case '엘리멘츠의 물정령':
-    case '엘리멘츠의 전기정령':
-    case '엘리멘츠의 바람정령':
-      if (window.THEME_EFFECT_HANDLERS?.['엘리멘츠']?.onElementsSummoned) {
-        window.THEME_EFFECT_HANDLERS['엘리멘츠'].onElementsSummoned(cardId);
-      }
-      break;
+    // [BUG FIX] 엘리멘츠 정령 소환 트리거는 patch.js의 summon 훅이 처리
+    // 여기서 직접 호출하면 patch.js와 중복 → 제거
   }
   renderAll();
 }

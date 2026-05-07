@@ -407,20 +407,9 @@ function handleOpponentAction(action) {
       log('상대 드로우', 'opponent');
       break;
     case 'search':
-      // 상대가 서치 → 눈에는 눈 자동 체크
+      // 상대가 서치 → 눈에는 눈은 체인 시스템(effects-chain.js)이 자동 처리
+      // [BUG FIX] 여기서 직접 splice하던 중복 로직 제거 — 체인 응답 레지스트리에 위임
       log(`상대 서치: ${action.cardName || '(카드명 미공개)'}`, 'opponent');
-      { const eyeIdx = G.myHand.findIndex(c => c.id === '눈에는 눈');
-        if (eyeIdx >= 0 && canUseEffect('눈에는 눈', 1)) {
-          gameConfirm(`상대가 서치 → 눈에는 눈 발동? (버리고 드로우 2장)`, (yes) => {
-            if (!yes) return;
-            markEffectUsed('눈에는 눈', 1);
-            // 체인블록 형성 후 발동
-            G.myHand.splice(eyeIdx, 1);
-            G.myGrave.push({ id: '눈에는 눈', name: '눈에는 눈' });
-            beginChain({ type: 'eyeForEyePlayer', label: '눈에는 눈' });
-          });
-        }
-      }
       break;
     case 'summon': {
       const sc = CARDS[action.cardId] || {};
@@ -615,6 +604,9 @@ function handleOpponentAction(action) {
     case 'endTurn':
       isMyTurn = true;
       attackedMonstersThisTurn.clear();
+      // [BUG FIX] 상대 턴 종료 시 내 턴 시작 — 턴 종료 효과 리셋
+      G.exileBanActive  = false;
+      G.goldenAppleActive = false;
       advancePhase('draw');
       log(`상대 턴 종료 — 내 턴 (드로우 단계)`, 'system');
       notify('내 턴! 드로우 버튼을 눌러 드로우하세요.');

@@ -210,7 +210,13 @@ function forceDiscard(n) {
 
     const doDiscard = () => {
       indices.forEach(i => {
-        if (G.myHand[i]) G.myGrave.push(G.myHand.splice(i, 1)[0]);
+        if (G.myHand[i]) {
+          const c = G.myHand.splice(i, 1)[0];
+          G.myGrave.push(c);
+          // [BUG FIX] 전투 피해 강제 버리기도 지배의 사슬 ①, 지배룡 트리거에 포함
+          if (typeof onJibaeryongDiscarded === 'function') onJibaeryongDiscarded(c.id);
+          if (typeof onHandDiscarded_jibaeSasl === 'function') onHandDiscarded_jibaeSasl();
+        }
       });
       sendGameState(); renderAll(); checkWinCondition();
     };
@@ -225,7 +231,10 @@ function forceDiscard(n) {
                 const mon = fieldPenguins[sel[0]];
                 sendToGrave(mon.id, 'field');
                 log(`펭귄 마을 ②: ${mon.name} 대신 묘지`, 'mine');
-                if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
+                // [BUG FIX] 수문장 펭귄 ②: "자신 펭귄 몬스터가 펭귄 마을 효과로 묘지로 보내졌을 경우"
+                // 수문장 자신뿐 아니라, 수문장이 필드에 남아있을 때 다른 펭귄이 묘지로 가도 트리거
+                const summonerOnField = G.myField.some(m => m.id === '수문장 펭귄');
+                if (summonerOnField || mon.id === '수문장 펭귄') triggerSummonerPenguin2();
                 _tryRecoverPenguinStrikeFromGrave();
               }
               // 마을 제외 나머지만 버리기
@@ -243,6 +252,7 @@ function forceDiscard(n) {
     }
   }, true);
 }
+
 
 // ─────────────────────────────────────────────
 // WIN CONDITION

@@ -763,7 +763,7 @@ function resolvePenguinVillage1() {
   log('체인 처리: 펭귄 마을 ① 공개', 'mine');
 }
 
-function renderFieldZones() {}
+// renderFieldZones는 ui.js에서 정의됩니다.
 
 // ─────────────────────────────────────────────────────────────
 // 체인 응답 레지스트리 — 범용 카드 등록

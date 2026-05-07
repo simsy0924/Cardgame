@@ -116,12 +116,13 @@ function activatePenguinBubu1FromField(fieldIdx) {
 // 펭귄 부부 ②
 // ─────────────────────────────────────────────
 function activatePenguinBubu2(handIdx) {
+  // [BUG FIX] markEffectUsed를 발동 선언 시 처리 (체인 등록 전)
+  if (!canUseEffect('펭귄 부부', 2)) { notify('이미 사용했습니다.'); return; }
+  markEffectUsed('펭귄 부부', 2);
   activateIgnitionEffect({ type: 'ignitionPenguinBubu2', label: '펭귄 부부 ②' });
 }
 
 function resolvePenguinBubu2() {
-  if (!canUseEffect('펭귄 부부', 2)) { notify('이미 사용했습니다.'); return; }
-  markEffectUsed('펭귄 부부', 2);
   drawN(2);
   _forcedDiscardOne('펭귄 부부 ②: 패 1장 버리기 (코스트, 필수)', () => {
     const idx = G.myHand.findIndex(c => c.id === '펭귄 부부');
@@ -449,6 +450,9 @@ function autoTriggerHeroGrave() {
 }
 
 function resolvePenguinHero3() {
+  // [BUG FIX] markEffectUsed 추가 — 묘지 트리거 반복 발동 방지
+  if (!canUseEffect('펭귄 용사', 3)) return;
+  markEffectUsed('펭귄 용사', 3);
   notify('펭귄 용사 ③ 발동!');
   summonFromGrave('펭귄 용사');
   G.myField.forEach(c => { if (isPenguinMonster(c.id)) c.atk += 1; });
@@ -539,6 +543,8 @@ function activatePenguinForever2() {
 }
 
 function resolvePenguinForever2() {
+  // [BUG FIX] 상대 턴에만 발동 가능 — 해결 시점에도 재검증
+  if (isMyTurn) { notify('펭귄이여 영원하라 ②: 상대 턴에만 발동할 수 있습니다.'); return; }
   const gIdx = G.myGrave.findIndex(c => c.id === '펭귄이여 영원하라');
   if (gIdx < 0) { notify('묘지에 없습니다.'); return; }
   const hp = G.myHand.filter(c => isPenguinMonster(c.id));

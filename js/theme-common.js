@@ -223,13 +223,21 @@ function resolveThemeEffectGeneric(link) {
     return;
   }
   if (mainText.includes('상대') && mainText.includes('묘지')) {
-    if (G.opField.length === 0) return;
-    openCardPicker(G.opField, `${card.name}: 상대 몬스터 묘지로`, 1, (sel) => {
+    // [BUG FIX] 상대 필드 마법(opFieldCard)도 대상에 포함
+    const opTargets = [...G.opField, ...(G.opFieldCard ? [G.opFieldCard] : [])];
+    if (opTargets.length === 0) return;
+    openCardPicker(opTargets, `${card.name}: 상대 필드 카드 묘지로`, 1, (sel) => {
       if (sel.length > 0) {
-        const mon = G.opField.splice(sel[0], 1)[0];
-        if (!mon) return;
-        G.opGrave.push(mon);
-        sendAction({ type: 'opFieldRemove', cardId: mon.id, to: 'grave' });
+        const t = opTargets[sel[0]];
+        const oi = G.opField.findIndex(c => c.id === t.id);
+        if (oi >= 0) {
+          const mon = G.opField.splice(oi, 1)[0];
+          if (mon) { G.opGrave.push(mon); sendAction({ type: 'opFieldRemove', cardId: mon.id, to: 'grave' }); }
+        } else if (G.opFieldCard && G.opFieldCard.id === t.id) {
+          G.opGrave.push(G.opFieldCard);
+          sendAction({ type: 'opFieldCardRemove', cardId: t.id, to: 'grave' });
+          G.opFieldCard = null;
+        }
       }
       renderAll();
     });

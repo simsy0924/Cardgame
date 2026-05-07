@@ -483,10 +483,14 @@ function activateSaWonsoJibaeja2(fieldIdx) {
   if (!canUseEffect('사원소의 지배자', 2)) { notify('이미 사용했습니다.'); return; }
   jibaeMirakCostIfNeeded(() => {
     markEffectUsed('사원소의 지배자', 2);
-    // 이 카드를 엔드 단계까지 제외
+    // 이 카드를 엔드 단계까지 제외 — atk/atkBase 보존
     const fi = G.myField.findIndex(c => c.id === '사원소의 지배자');
     if (fi >= 0) {
-      G.myExile.push(G.myField.splice(fi, 1)[0]);
+      const exCard = G.myField.splice(fi, 1)[0];
+      // [BUG FIX] 복귀 시 atk 복원을 위해 현재 atk/atkBase 저장
+      G._jibaejaSavedAtk = exCard.atk;
+      G._jibaejaSavedAtkBase = exCard.atkBase;
+      G.myExile.push(exCard);
       G.saWonsoJibaejaReturning = true;
       log('사원소의 지배자 ②: 엔드 단계까지 제외', 'mine');
     }
@@ -799,19 +803,26 @@ function _removeFromFieldOrGraveOrExile(cardId) {
 }
 
 // 원하는만큼 버리기 (선택적 다중 버리기)
+let _optionalMultiDiscardInProgress = false;
 function _optionalMultiDiscard(title, callback) {
   if (G.myHand.length === 0) { callback(); return; }
   gameConfirm(`${title}\n패를 버리겠습니까? (취소하면 버리지 않음)`, (yes) => {
     if (!yes) { callback(); return; }
     openCardPicker([...G.myHand], title, G.myHand.length, (sel) => {
+      // [BUG FIX] 재귀 방지 플래그 — jibaeSasl 트리거가 중첩 gameConfirm 유발 방지
+      if (_optionalMultiDiscardInProgress) { callback(); return; }
+      _optionalMultiDiscardInProgress = true;
       sel.sort((a,b) => b-a).forEach(i => {
         if (G.myHand[i]) {
           const c = G.myHand.splice(i, 1)[0];
           G.myGrave.push(c);
           onJibaeryongDiscarded(c.id);
-          onHandDiscarded_jibaeSasl();
+          // jibaeSasl은 버리기 완료 후 일괄 처리 (한 번만 호출)
         }
       });
+      _optionalMultiDiscardInProgress = false;
+      // 버린 카드 수만큼 jibaeSasl 카운터 갱신 (한 번만)
+      if (sel.length > 0) onHandDiscarded_jibaeSasl();
       callback();
     });
   });
@@ -823,7 +834,12 @@ function resetJibaeEffects() {
     const ei = G.myExile.findIndex(c => c.id === '사원소의 지배자');
     if (ei >= 0) {
       const c = G.myExile.splice(ei, 1)[0];
-      G.myField.push({ id: c.id, name: c.name, atk: CARDS[c.id]?.atk||5, atkBase: CARDS[c.id]?.atk||5 });
+      // [BUG FIX] 제외 전 atk 복원 (버프가 있었다면 유지)
+      const savedAtk     = G._jibaejaSavedAtk     ?? CARDS[c.id]?.atk ?? 5;
+      const savedAtkBase = G._jibaejaSavedAtkBase  ?? CARDS[c.id]?.atk ?? 5;
+      G.myField.push({ id: c.id, name: c.name, atk: savedAtk, atkBase: savedAtkBase });
+      G._jibaejaSavedAtk = undefined;
+      G._jibaejaSavedAtkBase = undefined;
       log('사원소의 지배자 ②: 엔드 단계에 필드로 복귀', 'mine');
     }
     G.saWonsoJibaejaReturning = false;
