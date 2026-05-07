@@ -9,6 +9,69 @@ function getOpponentRole(role) {
   return role === 'host' ? 'guest' : 'host';
 }
 
+// ─────────────────────────────────────────────────────────────
+// 로컬(AI전/데모) 체인 상태 변경 핸들러
+// 대인전의 listenChainState Firebase 콜백과 완전히 동일한 로직
+// ─────────────────────────────────────────────────────────────
+function _onLocalChainStateChanged(data) {
+  const wasActive = !!(activeChainState && activeChainState.active);
+
+  if (!data || !data.active) {
+    if (activeChainState && activeChainState.active) {
+      activeChainState = null;
+    } else {
+      activeChainState = data;
+    }
+  } else {
+    activeChainState = data;
+  }
+
+  renderChainActions();
+
+  if (!data) return;
+
+  // 체인 해결 후 유발효과 처리 (대인전 listenChainState와 동일)
+  if (wasActive && !data.active && pendingTriggerEffects.length > 0) {
+    setTimeout(flushTriggeredEffects, 0);
+  }
+  if (!data.active && data.resolvedLinks && data.resolvedAt) {
+    activeChainState = null;
+    executeChainLocally([...data.resolvedLinks].reverse());
+    renderChainActions();
+    // 데모 모드면 즉시 종료
+    if (!window.AI || !window.AI.active) return;
+    return;
+  }
+
+  if (!data.active) return;
+
+  renderAll();
+
+  // 우선권 처리
+  if (data.priority === myRole) {
+    // 플레이어 차례: 응답 요청
+    if (data.links && data.links.length > 0) {
+      notify(`체인 우선권: ${data.links.length}체인. 응답 또는 패스를 선택하세요.`);
+    }
+  } else {
+    // 상대(AI) 차례
+    if (!window.AI || !window.AI.active) {
+      // 데모 모드: 즉시 패스 → resolve
+      resolveChain({ ...data, passCount: 2 });
+      return;
+    }
+    // AI 모드: AI에게 응답 요청
+    setTimeout(() => {
+      if (!activeChainState || !activeChainState.active) return;
+      if (activeChainState.priority === myRole) return; // 이미 플레이어 차례로 바뀜
+      if (typeof window._aiChainResponse === 'function') {
+        window._aiChainResponse(activeChainState);
+      }
+    }, 300);
+  }
+}
+
+
 function beginChain(effect) {
   // 이전 체인 잔여 타이머 clear
   if (typeof _clearAIChainTimer === 'function') _clearAIChainTimer();
@@ -17,7 +80,7 @@ function beginChain(effect) {
     window.AI.pendingChainTimers = [];
   }
   // myRole 로그 (notify 대신 log로 — 화면에 겹치지 않게)
-  alert('beginChain\nmyRole=' + myRole + '\npriority(설정될값)=' + getOpponentRole(myRole));
+
   const chainState = {
     chainId: nextChainId(),
     active: true,
@@ -32,40 +95,7 @@ function beginChain(effect) {
   log(`체인 1: ${effect.label} 발동`, 'mine');
 
   if (!roomRef) {
-    renderChainActions();
-    renderAll();
-    if (window.AI && window.AI.active) {
-      // priority 변경 감지 proxy 심기
-      var _dbgChainId = chainState.chainId;
-      var _dbgInterval = setInterval(function() {
-        if (!activeChainState || activeChainState.chainId !== _dbgChainId) {
-          notify('[AI디버그] chain gone/replaced at t=' + (Date.now() - _dbgT) + 'ms');
-          clearInterval(_dbgInterval);
-          return;
-        }
-        if (activeChainState.priority !== 'guest') {
-          notify('[AI디버그] priority 변경됨! ' + activeChainState.priority + ' at t=' + (Date.now() - _dbgT) + 'ms');
-          clearInterval(_dbgInterval);
-        }
-      }, 10);
-      var _dbgT = Date.now();
-      setTimeout(function() { clearInterval(_dbgInterval); }, 1000);
-
-      if (typeof window._markAIChainHandled === 'function') window._markAIChainHandled(chainState);
-      // 타이머 ID를 pendingChainTimers에 등록하여 다음 beginChain 시 clear 가능
-      if (!window.AI.pendingChainTimers) window.AI.pendingChainTimers = [];
-      var _t = setTimeout(() => {
-        if (!activeChainState || !activeChainState.active) return;
-        if (window.AI && window.AI.chainMemory) window.AI.chainMemory.respondedSig = null;
-        if (typeof window._aiChainResponse === 'function') {
-          window._aiChainResponse(activeChainState);
-        }
-      }, 300);
-      window.AI.pendingChainTimers.push(_t);
-    } else {
-      // 비AI 데모 모드: 즉시 resolve
-      resolveChain({ ...chainState, passCount: 2 });
-    }
+    _onLocalChainStateChanged(chainState);
     return;
   }
 
@@ -385,49 +415,11 @@ function passChainPriority() {
   }
 
   if (!roomRef) {
-    if (!window.AI || !window.AI.active) {
-      // 비AI 로컬 모드: 즉시 resolve
-      next.passCount = 2;
-      resolveChain(next);
-      return;
-    }
-
-    activeChainState = next;
-    renderChainActions();
-    renderAll();
-
-    if (next.passCount >= 2) {
-      resolveChain(next);
-      return;
-    }
-
-    // AI 모드: 다음 우선권 소유자가 누구인지 판단
-    // myRole은 호출 시점의 원래 역할 (교체됐을 수 있음)
-    // next.priority를 원래 playerRole/aiRole과 비교
-    // [BUG FIX] myRole이 임시 교체된 상태일 수 있으므로 AI 고유 식별자로 비교
-    // AI는 항상 'guest' (host=플레이어, guest=AI 고정)
-    var _realAIRole = window.AI && window.AI._aiRole ? window.AI._aiRole : 'guest';
-    var _realPlRole = _realAIRole === 'guest' ? 'host' : 'guest';
-
-    if (next.priority === _realPlRole) {
-      // 플레이어 차례 → 응답 요청 알림
-      notify('🤖 AI가 패스했습니다. 응답하거나 패스해주세요.');
-    } else {
-      // AI 차례 → AI 응답 트리거
-      if (window.AI && !window.AI.pendingChainTimers) window.AI.pendingChainTimers = [];
-      var _t2 = setTimeout(() => {
-        if (!activeChainState || !activeChainState.active) return;
-        if (typeof window._aiChainResponse === 'function') {
-          window._aiChainResponse(activeChainState);
-        }
-      }, 300);
-      if (window.AI) window.AI.pendingChainTimers.push(_t2);
-    }
+    _onLocalChainStateChanged(next);
     return;
   }
 
-  activeChainState = next;
-  roomRef.child('chainState').set(next);
+    roomRef.child('chainState').set(next);
   syncClockRunState(next.priority);
 }
 
@@ -452,24 +444,7 @@ function addChainLink(effect, options = {}) {
   log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
 
   if (!roomRef) {
-    renderChainActions();
-    renderAll();
-    if (window.AI && window.AI.active) {
-      // 링크 추가 후 우선권이 상대(AI)에게 → AI 응답 트리거
-      // 우선권이 AI면 AI 응답, 플레이어면 대기
-      if (next.priority !== myRole) {
-        // AI 차례
-        setTimeout(() => {
-          if (!activeChainState || !activeChainState.active) return;
-          if (typeof window._aiChainResponse === 'function') {
-            window._aiChainResponse(activeChainState);
-          }
-        }, 300);
-      } else {
-        // 플레이어 차례 (AI가 addChainLink한 경우)
-        notify('체인 ' + next.links.length + ': ' + (effect.label || '') + '. 응답 또는 패스를 선택하세요.');
-      }
-    }
+    _onLocalChainStateChanged(next);
     return;
   }
   roomRef.child('chainState').set(next);
@@ -505,7 +480,6 @@ function normalizeTriggeredEffect(effect) {
 
 function flushTriggeredEffects() {
   if (pendingTriggerEffects.length === 0) return;
-  notify('[AI디버그] flush: activeChain=' + (activeChainState ? 'active='+activeChainState.active+' priority='+activeChainState.priority : 'null') + ' pending=' + pendingTriggerEffects.map(function(e){return e.label||e.type;}).join(','), 10000);
   if (activeChainState && activeChainState.active) return;
 
   const queued = [...pendingTriggerEffects];
@@ -570,9 +544,8 @@ function resolveChain(chainState) {
   if (roomRef) {
     roomRef.child('chainState').set({ active: false, links: [], priority: null, passCount: 0, resolvedLinks: links, resolvedAt });
   } else {
-    executeChainLocally(links.slice().reverse());
-    // 체인 해결 후 대기 중인 유발효과 처리
-    setTimeout(flushTriggeredEffects, 0);
+    // 대인전 listenChainState와 동일 처리
+    _onLocalChainStateChanged({ active: false, links: [], resolvedLinks: links, resolvedAt: Date.now() });
   }
 }
 

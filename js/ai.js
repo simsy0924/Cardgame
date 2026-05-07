@@ -1353,79 +1353,66 @@ async function _aiChainResponse(chainState) {
   _clearAIChainTimer();
   var snap = activeChainState;
   if (!snap || !snap.active) return;
-  if (snap.priority !== _aiRole()) {
-    notify('[AI\ub514\ubc84\uadf8] priority=' + snap.priority + ' aiRole=' + _aiRole(), 10000);
-    return;
-  }
+  if (snap.priority !== _aiRole()) return;
   if (_alreadyHandledChainState(snap)) return;
   _markAIChainHandled(snap);
 
   var aiR = _aiRole();
   var plR = _playerRole();
-
-  // Groq API
-  var decision = null;
   var options = [];
   try { options = _collectAIChainOptions(snap); } catch(e) { options = []; }
 
+  var decision = null;
   if (_WORKER_URL) {
     try {
-      var sysPrompt = '\ub2f9\uc2e0\uc740 \ud578\ub4dc \ubc30\ud2c0 TCG AI\uc785\ub2c8\ub2e4. \uccb4\uc778\uc5d0 \uc751\ub2f5\ud560\uc9c0 \ud328\uc2a4\ud560\uc9c0 \uacb0\uc815\ud558\uc138\uc694. \ubc18\ub4dc\uc2dc JSON\ub9cc \ubc18\ud658: {"action":"pass"} \ub610\ub294 {"action":"respond","cardId":"\uce74\ub4dc ID","reason":"\uc774\uc720"}';
-      var chainInfo = {
-        chainLinks: (snap.links||[]).map(function(l){return{by:l.by===plR?'\ud50c\ub808\uc774\uc5b4':'AI',label:l.label};}),
-        ai:{hand:G.opHand.map(function(c){var cd=CARDS[c.id]||{};return{id:c.id,name:c.name,effects:(cd.effects||'').slice(0,100)};})},
-        player:{handCount:G.myHand.length,field:G.myField.map(function(c){return{id:c.id,name:c.name,atk:c.atk};})},
-        availableResponses:options.map(function(o){return{label:o.label,cardId:o.id};}),
+      var sp = 'AI입니다. JSON만 반환: {"action":"pass"} 또는 {"action":"respond","cardId":"ID"}';
+      var ci = {
+        chainLinks: (snap.links||[]).map(function(l){ return {by: l.by===plR ? '플레이어' : 'AI', label: l.label}; }),
+        aiHand: G.opHand.map(function(c){ return {id: c.id, name: c.name}; }),
+        availableResponses: options.map(function(o){ return {label: o.label, cardId: o.id}; }),
       };
-      var resp = await fetch(_WORKER_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'llama-3.3-70b-versatile',temperature:0.2,max_tokens:80,response_format:{type:'json_object'},messages:[{role:'system',content:sysPrompt},{role:'user',content:JSON.stringify(chainInfo)}]})});
-      if (resp.ok) {
-        var d = await resp.json();
+      var r = await fetch(_WORKER_URL, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({model:'llama-3.3-70b-versatile', temperature:0.2, max_tokens:60, response_format:{type:'json_object'}, messages:[{role:'system',content:sp},{role:'user',content:JSON.stringify(ci)}]})});
+      if (r.ok) {
+        var d = await r.json();
         var t = (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content)||'{}';
         decision = JSON.parse(t.replace(/```json|```/g,'').trim());
       }
-    } catch(e) { console.warn('[AI Chain] Groq fail:', e.message); }
+    } catch(e) { console.warn('[AI] chain groq fail', e.message); }
   }
-
   if (!decision) {
-    options.sort(function(a,b){return(b.score||0)-(a.score||0);});
-    decision = options.length > 0 ? {action:'respond',cardId:options[0].id} : {action:'pass'};
+    options.sort(function(a,b){ return (b.score||0)-(a.score||0); });
+    decision = options.length > 0 ? {action:'respond', cardId:options[0].id} : {action:'pass'};
   }
 
-  // 체인 유효성 재확인
   if (!activeChainState||!activeChainState.active||activeChainState.priority!==aiR) return;
 
-  function aiPass() {
+  function doPass() {
     if (!activeChainState||!activeChainState.active||activeChainState.priority!==aiR) return;
-    log('\uD83E\uDD16 AI: \uccb4\uc778 \ud328\uc2a4','opponent');
+    log('🤖 AI: 체인 패스', 'opponent');
     var next = Object.assign({}, activeChainState);
     next.links = activeChainState.links.slice();
     next.passCount = (next.passCount||0) + 1;
     next.priority = plR;
-    activeChainState = next;
-    if (next.passCount >= 2) { resolveChain(next); return; }
-    renderChainActions();
-    notify('\uD83E\uDD16 AI\uac00 \ud328\uc2a4\ud588\uc2b5\ub2c8\ub2e4. \uc751\ub2f5\ud558\uac70\ub098 \ud328\uc2a4\ud574\uc8fc\uc138\uc694.');
+    if (next.passCount >= 2) { resolveChain(next); } else { _onLocalChainStateChanged(next); }
   }
 
-  if (!decision||decision.action!=='respond') {
-    setTimeout(aiPass, 500); return;
-  }
+  if (!decision || decision.action !== 'respond') { setTimeout(doPass, 500); return; }
 
-  var picked = options.find(function(o){return o.id===decision.cardId;})||options[0];
-  if (!picked) { setTimeout(aiPass, 500); return; }
+  var picked = options.find(function(o){ return o.id === decision.cardId; }) || options[0];
+  if (!picked) { setTimeout(doPass, 500); return; }
 
   setTimeout(function() {
     if (!activeChainState||!activeChainState.active||activeChainState.priority!==aiR) return;
-    log('\uD83E\uDD16 '+picked.label+' \uccb4\uc778 \ubc1c\ub3d9!','opponent');
-    var eff = {type:picked.id||'aiEffect',label:picked.label,cardId:picked.id,by:aiR};
-    var ns = Object.assign({},activeChainState);
-    ns.links = activeChainState.links.slice().concat([eff]);
-    ns.priority = plR; ns.passCount = 0;
-    activeChainState = ns;
-    renderChainActions();
-    notify('\uccb4\uc778 '+ns.links.length+': \uD83E\uDD16 '+picked.label+'. \uc751\ub2f5 \ub610\ub294 \ud328\uc2a4\ud558\uc138\uc694.');
+    log('🤖 ' + picked.label + ' 체인 발동!', 'opponent');
+    var eff = {type: picked.id||'aiEffect', label: picked.label, cardId: picked.id, by: aiR};
+    var next = Object.assign({}, activeChainState);
+    next.links = activeChainState.links.slice().concat([eff]);
+    next.priority = plR;
+    next.passCount = 0;
+    _onLocalChainStateChanged(next);
   }, 400);
 }
+
 // [BUG-10 FIX] collectChainOptions에 플레이어 컨텍스트를 명시적으로 전달
 function _playerCanRespondInChain(state) {
   if (!state || !state.active) return false;
