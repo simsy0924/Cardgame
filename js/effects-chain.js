@@ -17,7 +17,7 @@ function beginChain(effect) {
     window.AI.pendingChainTimers = [];
   }
   // myRole 로그 (notify 대신 log로 — 화면에 겹치지 않게)
-  log('[디버그] beginChain: myRole=' + myRole + ' priority=' + getOpponentRole(myRole), 'system');
+  alert('beginChain\nmyRole=' + myRole + '\npriority(설정될값)=' + getOpponentRole(myRole));
   const chainState = {
     chainId: nextChainId(),
     active: true,
