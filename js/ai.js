@@ -236,6 +236,7 @@ function _setupAI() {
 // ─────────────────────────────────────────────────────────────
 // AI 내부 조작 헬퍼
 // ─────────────────────────────────────────────────────────────
+
 function _aiDrawOne() {
   if (!window.AI.opDeck.length) {
     log('🤖 AI 덱 아웃!', 'system');
@@ -830,8 +831,44 @@ function _buildAICtx(AI) {
 }
 
 async function _trigger(cardId) {
-  var fn = window.AI_SUMMON_TRIGGERS[cardId];
-  if (fn) await fn(_buildAICtx(window.AI));
+  // AI는 판단만 하고, 실제 효과 처리는 기존 버튼 경로(등록된 activate 함수)만 호출한다.
+  var fired = false;
+  var prevRole = myRole;
+  var prevTurn = isMyTurn;
+
+  try {
+    myRole = _aiRole();
+    isMyTurn = false;
+
+    var handRegs = (window.CHAIN_HAND_RESPONSES && window.CHAIN_HAND_RESPONSES[cardId]) || [];
+    var handIdx = G.opHand.findIndex(function(c) { return c.id === cardId; });
+    for (var i = 0; i < handRegs.length && handIdx >= 0; i++) {
+      var h = handRegs[i];
+      if (typeof h.activate !== 'function') continue;
+      if (typeof h.condition === 'function' && !h.condition()) continue;
+      h.activate(handIdx);
+      fired = true;
+      break;
+    }
+
+    var fieldRegs = (window.CHAIN_FIELD_RESPONSES && window.CHAIN_FIELD_RESPONSES[cardId]) || [];
+    var fieldIdx = G.opField.findIndex(function(c) { return c.id === cardId; });
+    for (var j = 0; j < fieldRegs.length && fieldIdx >= 0; j++) {
+      var f = fieldRegs[j];
+      if (typeof f.activate !== 'function') continue;
+      if (typeof f.condition === 'function' && !f.condition(fieldIdx)) continue;
+      f.activate(fieldIdx);
+      fired = true;
+      break;
+    }
+  } catch (e) {
+    console.warn('[AI] trigger activate 실패:', e && e.message ? e.message : e);
+  } finally {
+    myRole = prevRole;
+    isMyTurn = prevTurn;
+  }
+
+  if (fired) await _s(200);
   renderAll();
 }
 
