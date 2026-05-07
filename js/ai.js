@@ -1344,7 +1344,7 @@ function _alreadyHandledChainState(state) {
 // ─────────────────────────────────────────────────────────────
 // AI 체인 응답 실행
 // ─────────────────────────────────────────────────────────────
-// AI 체인 응답 — Groq API 판단 + myRole 임시 교체로 대인전과 동일 경로
+// AI 체인 응답 — Groq API로 판단, myRole 임시 교체로 대인전과 동일 경로
 async function _aiChainResponse(chainState) {
   if (!window.AI || !window.AI.active) { notify('[AI디버그] AI not active'); return; }
   _clearAIChainTimer();
@@ -1356,7 +1356,6 @@ async function _aiChainResponse(chainState) {
   _markAIChainHandled(snap);
   notify('[AI디버그] _aiChainResponse 진입 성공');
 
-  // myRole 임시 교체 헬퍼 (대인전과 동일 경로로 체인 함수 호출)
   var aiR = _aiRole();
   var plR = _playerRole();
   var withAIRole = function(fn) {
@@ -1364,58 +1363,34 @@ async function _aiChainResponse(chainState) {
     try { fn(); } finally { myRole = orig; }
   };
 
-  // 응답 가능한 카드 목록 수집 (레지스트리 기반)
+  // 응답 가능 옵션 수집
   var options = [];
   try { options = _collectAIChainOptions(snap); } catch(e) { options = []; }
 
-  // ── Groq API로 판단 ──
+  // Groq API 판단
   var decision = null;
   if (_WORKER_URL) {
     try {
+      var sysPrompt = '당신은 핸드 배틀 TCG AI입니다. 체인에 응답할지 패스할지 결정하세요. 반드시 JSON만 반환: {"action":"pass"} 또는 {"action":"respond","cardId":"카드ID","reason":"이유"}';
       var chainInfo = {
-        chainLinks: (snap.links || []).map(function(l) {
-          return { by: l.by === plR ? '플레이어' : 'AI', label: l.label, type: l.type };
-        }),
-        passCount: snap.passCount || 0,
+        chainLinks: (snap.links || []).map(function(l) { return { by: l.by === plR ? '플레이어' : 'AI', label: l.label }; }),
         ai: {
-          hand: G.opHand.map(function(c) {
-            var cd = CARDS[c.id] || {};
-            return { id: c.id, name: c.name, cardType: cd.cardType, effects: cd.effects ? cd.effects.replace(/
-/g,' ') : '' };
-          }),
+          hand: G.opHand.map(function(c) { var cd = CARDS[c.id] || {}; return { id: c.id, name: c.name, effects: (cd.effects || '').slice(0, 100) }; }),
           field: G.opField.map(function(c) { return { id: c.id, name: c.name, atk: c.atk }; }),
-          grave: G.opGrave.map(function(c) { return { id: c.id, name: c.name }; }),
         },
         player: {
           handCount: G.myHand.length,
-          publicHand: G.myHand.filter(function(c){ return c.isPublic; }).map(function(c){ return { id:c.id, name:c.name }; }),
           field: G.myField.map(function(c) { return { id: c.id, name: c.name, atk: c.atk }; }),
         },
-        availableResponses: options.map(function(o){ return { label: o.label, cardId: o.id }; }),
+        availableResponses: options.map(function(o) { return { label: o.label, cardId: o.id }; }),
       };
-
-      var sysPrompt = '당신은 핸드 배틀 TCG의 AI입니다. 상대(플레이어)가 체인을 열었습니다.
-' +
-        '패에 있는 카드의 효과를 파악하고, 체인에 응답할지 패스할지 결정하세요.
-' +
-        '응답 가능한 카드가 없으면 반드시 패스해야 합니다.
-' +
-        '체인에 응답하면 상대 효과에 카운터할 수 있지만, 패를 소모합니다.
-
-' +
-        '반드시 JSON만 반환:
-' +
-        '{"action":"pass"} 또는
-' +
-        '{"action":"respond","cardId":"카드ID","reason":"이유(30자 이내)"}';
-
       var resp = await fetch(_WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'llama-3.3-70b-versatile',
           temperature: 0.2,
-          max_tokens: 100,
+          max_tokens: 80,
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: sysPrompt },
@@ -1426,67 +1401,52 @@ async function _aiChainResponse(chainState) {
       if (resp.ok) {
         var d = await resp.json();
         var t = (d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '{}';
-        decision = JSON.parse(t.replace(/```json|```/g,'').trim().match(/\{[\s\S]*\}/)?.[0] || '{}');
+        var m = t.replace(/```json|```/g, '').trim();
+        decision = JSON.parse(m);
       }
     } catch(e) {
-      console.warn('[AI Chain] Groq 판단 실패, 폴백:', e.message);
+      console.warn('[AI Chain] Groq 실패:', e.message);
     }
   }
 
-  // Groq 실패 시 폴백: 레지스트리 기반 점수 판단
+  // 폴백: 레지스트리 점수 기반
   if (!decision) {
-    options.sort(function(a,b){ return (b.score||0)-(a.score||0); });
+    options.sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
     decision = options.length > 0 ? { action: 'respond', cardId: options[0].id } : { action: 'pass' };
   }
 
-  // ── 패스 ──
+  notify('[AI디버그] 결정: ' + JSON.stringify(decision));
+
+  // 패스
   if (!decision || decision.action !== 'respond') {
-    await new Promise(function(r){ setTimeout(r, 500); });
+    await new Promise(function(r) { setTimeout(r, 500); });
     if (!activeChainState || !activeChainState.active) return;
     if (activeChainState.priority !== aiR) return;
-    log('🤖 AI: 체인 패스', 'opponent');
+    log('\uD83E\uDD16 AI: 체인 패스', 'opponent');
     withAIRole(function() { passChainPriority(); });
     return;
   }
 
-  // ── 카드 발동 ──
-  var picked = options.find(function(o){ return o.id === decision.cardId; }) || options[0];
+  // 카드 발동
+  var picked = options.find(function(o) { return o.id === decision.cardId; }) || options[0];
   if (!picked) {
-    await new Promise(function(r){ setTimeout(r, 500); });
+    await new Promise(function(r) { setTimeout(r, 500); });
     if (!activeChainState || !activeChainState.active) return;
     if (activeChainState.priority !== aiR) return;
-    log('🤖 AI: 체인 패스 (카드 없음)', 'opponent');
+    log('\uD83E\uDD16 AI: 패스 (카드 없음)', 'opponent');
     withAIRole(function() { passChainPriority(); });
     return;
   }
 
-  await new Promise(function(r){ setTimeout(r, 400); });
+  await new Promise(function(r) { setTimeout(r, 400); });
   if (!activeChainState || !activeChainState.active) return;
   if (activeChainState.priority !== aiR) return;
-
-  if (decision.reason) log('🤖 체인 응답: ' + decision.reason, 'opponent');
-  log('🤖 ' + picked.label + ' 체인 발동!', 'opponent');
-
-  // picked.rawActivate()는 내부적으로 addChainLink를 임시 교체해서 작동
-  // myRole 교체 후 직접 addChainLink 호출
-  if (typeof picked.rawActivate === 'function') {
-    // rawActivate가 직접 activeChainState를 수정하는 경우
-    withAIRole(function() { picked.rawActivate(); });
-    // rawActivate 후 priority가 바뀌지 않았으면 직접 교정
-    if (activeChainState && activeChainState.priority === aiR) {
-      withAIRole(function() {
-        var effect = { type: picked.id || 'aiEffect', label: picked.label, cardId: picked.id };
-        addChainLink(effect, { force: true });
-      });
-    }
-  } else {
-    withAIRole(function() {
-      var effect = { type: picked.id || 'aiEffect', label: picked.label, cardId: picked.id };
-      addChainLink(effect, { force: true });
-    });
-  }
+  log('\uD83E\uDD16 ' + picked.label + ' 체인 발동!', 'opponent');
+  withAIRole(function() {
+    var effect = { type: picked.id || 'aiEffect', label: picked.label, cardId: picked.id };
+    addChainLink(effect, { force: true });
+  });
 }
-
 // [BUG-10 FIX] collectChainOptions에 플레이어 컨텍스트를 명시적으로 전달
 function _playerCanRespondInChain(state) {
   if (!state || !state.active) return false;
