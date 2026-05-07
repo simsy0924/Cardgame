@@ -362,6 +362,11 @@ function openChainResponse() {
 }
 
 function passChainPriority() {
+  // [디버그] 호출 스택 추적
+  try { throw new Error('passChainPriority caller'); } catch(e) {
+    var stack = e.stack ? e.stack.split('\n').slice(1,4).join(' | ') : 'unknown';
+    notify('[AI디버그] passChainPriority 호출! priority=' + (activeChainState&&activeChainState.priority) + ' myRole=' + myRole + ' | ' + stack.slice(0,80));
+  }
   if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
 
   const next = { ...activeChainState };
@@ -471,12 +476,17 @@ function enqueueTriggeredEffect(effect) {
     gameConfirm(`${normalized.label}\n이 유발효과를 발동하시겠습니까?`, (yes) => {
       if (!yes) return;
       pendingTriggerEffects.push(normalized);
-      setTimeout(flushTriggeredEffects, 0);
+      // [BUG FIX] 체인 활성 중이면 대기 — 체인 해결 후 flushTriggeredEffects가 호출됨
+      if (!activeChainState || !activeChainState.active) {
+        setTimeout(flushTriggeredEffects, 0);
+      }
     });
     return;
   }
   pendingTriggerEffects.push(normalized);
-  setTimeout(flushTriggeredEffects, 0);
+  if (!activeChainState || !activeChainState.active) {
+    setTimeout(flushTriggeredEffects, 0);
+  }
 }
 
 function normalizeTriggeredEffect(effect) {
@@ -553,6 +563,8 @@ function resolveChain(chainState) {
     roomRef.child('chainState').set({ active: false, links: [], priority: null, passCount: 0, resolvedLinks: links, resolvedAt });
   } else {
     executeChainLocally(links.slice().reverse());
+    // 체인 해결 후 대기 중인 유발효과 처리
+    setTimeout(flushTriggeredEffects, 0);
   }
 }
 
