@@ -237,69 +237,6 @@ function _setupAI() {
 // AI 내부 조작 헬퍼
 // ─────────────────────────────────────────────────────────────
 
-function withAIRole(fn) {
-  var prevRole = myRole;
-  var prevTurn = isMyTurn;
-  try {
-    myRole = _aiRole();
-    isMyTurn = false;
-    return fn();
-  } finally {
-    myRole = prevRole;
-    isMyTurn = prevTurn;
-  }
-}
-
-window.AI_INPUT = {
-  press: function(signal) {
-    if (!signal || !signal.type) return false;
-    try {
-      if (signal.type === 'summonFromHand') {
-        return _aiSummon(signal.cardId);
-      }
-      if (signal.type === 'attack') {
-        return _aiAttack(signal.attackerId, signal.targetIdx);
-      }
-      if (signal.type === 'directAttack') {
-        return _aiDirect(signal.attackerId);
-      }
-      if (signal.type === 'activateHand') {
-        return withAIRole(function() {
-          var regs = (window.CHAIN_HAND_RESPONSES && window.CHAIN_HAND_RESPONSES[signal.cardId]) || [];
-          var idx = G.opHand.findIndex(function(c) { return c.id === signal.cardId; });
-          if (idx < 0) return false;
-          var picked = regs.find(function(r) {
-            if (typeof r.activate !== 'function') return false;
-            if (signal.effectNum != null && r.effectNum !== signal.effectNum) return false;
-            return typeof r.condition !== 'function' ? true : !!r.condition();
-          });
-          if (!picked) return false;
-          picked.activate(idx);
-          return true;
-        });
-      }
-      if (signal.type === 'activateField') {
-        return withAIRole(function() {
-          var regs = (window.CHAIN_FIELD_RESPONSES && window.CHAIN_FIELD_RESPONSES[signal.cardId]) || [];
-          var idx = G.opField.findIndex(function(c) { return c.id === signal.cardId; });
-          if (idx < 0) return false;
-          var picked = regs.find(function(r) {
-            if (typeof r.activate !== 'function') return false;
-            if (signal.effectNum != null && r.effectNum !== signal.effectNum) return false;
-            return typeof r.condition !== 'function' ? true : !!r.condition(idx);
-          });
-          if (!picked) return false;
-          picked.activate(idx);
-          return true;
-        });
-      }
-    } catch (e) {
-      console.warn('[AI_INPUT] signal 실패:', signal.type, e && e.message ? e.message : e);
-    }
-    return false;
-  }
-};
-
 function _aiDrawOne() {
   if (!window.AI.opDeck.length) {
     log('🤖 AI 덱 아웃!', 'system');
@@ -731,7 +668,7 @@ async function _deploy(actions) {
     var cd = CARDS[act.cardId];
     if (!cd || cd.cardType !== 'monster') continue;
 
-    window.AI_INPUT.press({ type: 'summonFromHand', cardId: act.cardId });
+    _aiSummon(act.cardId);
     renderAll();
     await _s(400);
 
@@ -754,13 +691,13 @@ async function _attack(actions) {
     if (act.action === 'attack') {
       var di = typeof act.targetIdx === 'number' ? act.targetIdx : 0;
       if (di < G.myField.length && G.opField.find(function(c) { return c.id === act.attackerId; })) {
-        window.AI_INPUT.press({ type: 'attack', attackerId: act.attackerId, targetIdx: di });
+        _aiAttack(act.attackerId, di);
         await _s(800);
         renderAll();
       }
     } else if (act.action === 'directAttack') {
       if (G.myField.length === 0 && G.opField.find(function(c) { return c.id === act.attackerId; })) {
-        window.AI_INPUT.press({ type: 'directAttack', attackerId: act.attackerId });
+        _aiDirect(act.attackerId);
         await _s(800);
         renderAll();
       }
@@ -894,16 +831,41 @@ function _buildAICtx(AI) {
 }
 
 async function _trigger(cardId) {
-  // AI 효과 처리는 대인전과 동일하게 "등록된 효과 activate"만 호출한다.
-  // 즉, AI가 별도 로직으로 게임 상태를 직접 조작하지 않고
-  // 사람 플레이어가 버튼을 누르는 경로(activate 함수)만 사용한다.
+  // AI는 판단만 하고, 실제 효과 처리는 기존 버튼 경로(등록된 activate 함수)만 호출한다.
   var fired = false;
+  var prevRole = myRole;
+  var prevTurn = isMyTurn;
 
   try {
-    fired = window.AI_INPUT.press({ type: 'activateHand', cardId: cardId }) || fired;
-    fired = window.AI_INPUT.press({ type: 'activateField', cardId: cardId }) || fired;
+    myRole = _aiRole();
+    isMyTurn = false;
+
+    var handRegs = (window.CHAIN_HAND_RESPONSES && window.CHAIN_HAND_RESPONSES[cardId]) || [];
+    var handIdx = G.opHand.findIndex(function(c) { return c.id === cardId; });
+    for (var i = 0; i < handRegs.length && handIdx >= 0; i++) {
+      var h = handRegs[i];
+      if (typeof h.activate !== 'function') continue;
+      if (typeof h.condition === 'function' && !h.condition()) continue;
+      h.activate(handIdx);
+      fired = true;
+      break;
+    }
+
+    var fieldRegs = (window.CHAIN_FIELD_RESPONSES && window.CHAIN_FIELD_RESPONSES[cardId]) || [];
+    var fieldIdx = G.opField.findIndex(function(c) { return c.id === cardId; });
+    for (var j = 0; j < fieldRegs.length && fieldIdx >= 0; j++) {
+      var f = fieldRegs[j];
+      if (typeof f.activate !== 'function') continue;
+      if (typeof f.condition === 'function' && !f.condition(fieldIdx)) continue;
+      f.activate(fieldIdx);
+      fired = true;
+      break;
+    }
   } catch (e) {
     console.warn('[AI] trigger activate 실패:', e && e.message ? e.message : e);
+  } finally {
+    myRole = prevRole;
+    isMyTurn = prevTurn;
   }
 
   if (fired) await _s(200);
