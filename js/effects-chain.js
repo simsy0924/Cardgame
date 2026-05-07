@@ -27,10 +27,13 @@ function beginChain(effect) {
     renderChainActions();
     renderAll();
     if (window.AI && window.AI.active) {
-      // AI 모드: 직접 AI 응답 트리거 (훅 불필요)
+      // AI 모드: 직접 AI 응답 트리거 (300ms — 콜스택 완전 종료 후)
       setTimeout(() => {
-        if (typeof _notifyAIChainOpened === 'function') _notifyAIChainOpened();
-      }, 0);
+        if (!activeChainState || !activeChainState.active) return;
+        if (typeof window._aiChainResponse === 'function') {
+          window._aiChainResponse(activeChainState);
+        }
+      }, 300);
     } else {
       // 비AI 데모 모드: 즉시 resolve
       resolveChain({ ...chainState, passCount: 2 });
@@ -355,12 +358,22 @@ function passChainPriority() {
       resolveChain(next);
       return;
     }
-    // AI 모드: 상태 업데이트 후 AI 직접 트리거
+    // AI 모드: 상태 업데이트 후 우선권 소유자에게 응답 요청
     activeChainState = next;
     renderChainActions();
-    setTimeout(() => {
-      if (typeof _notifyAIChainOpened === 'function') _notifyAIChainOpened();
-    }, 0);
+    renderAll();
+    if (next.priority === myRole) {
+      // 플레이어 차례 (AI가 패스한 경우)
+      notify('🤖 AI가 패스했습니다. 응답하거나 패스해주세요.');
+    } else {
+      // AI 차례 (플레이어가 패스한 경우) → AI에게 응답 요청
+      setTimeout(() => {
+        if (!activeChainState || !activeChainState.active) return;
+        if (typeof window._aiChainResponse === 'function') {
+          window._aiChainResponse(activeChainState);
+        }
+      }, 300);
+    }
     return;
   }
 
@@ -393,9 +406,20 @@ function addChainLink(effect, options = {}) {
     renderChainActions();
     renderAll();
     if (window.AI && window.AI.active) {
-      setTimeout(() => {
-        if (typeof _notifyAIChainOpened === 'function') _notifyAIChainOpened();
-      }, 0);
+      // 링크 추가 후 우선권이 상대(AI)에게 → AI 응답 트리거
+      // 우선권이 AI면 AI 응답, 플레이어면 대기
+      if (next.priority !== myRole) {
+        // AI 차례
+        setTimeout(() => {
+          if (!activeChainState || !activeChainState.active) return;
+          if (typeof window._aiChainResponse === 'function') {
+            window._aiChainResponse(activeChainState);
+          }
+        }, 300);
+      } else {
+        // 플레이어 차례 (AI가 addChainLink한 경우)
+        notify('체인 ' + next.links.length + ': ' + (effect.label || '') + '. 응답 또는 패스를 선택하세요.');
+      }
     }
     return;
   }

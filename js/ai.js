@@ -1302,13 +1302,15 @@ function _startAIChainWatcher() {
   if (!window.AI || !window.AI.active) return;
   if (window.AI.chainWatcher) return;
   window.AI.chainWatcher = setInterval(function() {
-    if (!window.AI.active) return;
+    if (!window.AI || !window.AI.active) return;
     var live = activeChainState;
     if (!live || !live.active) return;
     if (live.priority !== _aiRole()) return;
-    if (_alreadyHandledChainState(live)) return; // 이미 처리한 체인은 스킵
-    _scheduleAIChainFallback();
-  }, 300);
+    if (_alreadyHandledChainState(live)) return;
+    // 폴링에서 직접 응답 (타이머 중복 방지)
+    _clearAIChainTimer();
+    _aiChainResponse(live);
+  }, 500);
 }
 
 function _scheduleAIChainFallback() {
@@ -1343,112 +1345,60 @@ function _alreadyHandledChainState(state) {
 // AI 체인 응답 실행
 // ─────────────────────────────────────────────────────────────
 function _aiChainResponse(chainState) {
-  if (!window.AI.active) { console.log('[AI Chain] response: AI not active'); return; }
+  if (!window.AI || !window.AI.active) return;
   _clearAIChainTimer();
-  if (!activeChainState || !activeChainState.active) { console.log('[AI Chain] response: no active chain'); return; }
-  if (!_canAIRespondNow(activeChainState)) { console.log('[AI Chain] response: _canAIRespondNow=false priority=' + activeChainState.priority + ' aiRole=' + _aiRole()); return; }
-  if (_alreadyHandledChainState(activeChainState)) { console.log('[AI Chain] response: already handled'); return; }
-  console.log('[AI Chain] response: proceeding, links=' + (activeChainState.links||[]).length);
 
-  var options = _collectAIChainOptions(activeChainState || chainState);
-  console.log('[AI Chain] options count:', options.length, options.map(function(o){return o.label;}));
-  if (!options.length) _debugAIChainOptionState(activeChainState || chainState);
+  var snap = activeChainState;
+  if (!snap || !snap.active) return;
+  if (snap.priority !== _aiRole()) return;
+  if (_alreadyHandledChainState(snap)) return;
+  _markAIChainHandled(snap);
+
+  // AI 응답 옵션 수집
+  var options = [];
+  try { options = _collectAIChainOptions(snap); } catch(e) { options = []; }
   options.sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
   var picked = options[0] || null;
 
+  // ── AI가 myRole을 임시 교체하여 대인전과 동일한 경로로 처리 ──
+  var _origMyRole = myRole;
+  var doWithAIRole = function(fn) {
+    myRole = _aiRole();
+    try { fn(); } finally { myRole = _origMyRole; }
+  };
+
+  // AI 패스 — passChainPriority() 직접 호출 (대인전과 동일)
   if (!picked) {
-    // AI 패스
-    _markAIChainHandled(activeChainState); // 중복 응답 방지를 위해 즉시 마킹
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) return;
-      var next       = Object.assign({}, activeChainState);
-      next.links     = (activeChainState.links || []).slice();
-      next.passCount = (next.passCount || 0) + 1;
-      next.priority  = _playerRole();
+      if (activeChainState.priority !== _aiRole()) return;
       log('🤖 AI: 패스', 'opponent');
-      activeChainState = next;
-
-      if (next.passCount >= 2) {
-        resolveChain(next);
-        return;
-      }
-
-      var playerCanAct = false;
-      try { playerCanAct = _playerCanRespondInChain(next); } catch(e) {}
-
-      if (!playerCanAct) {
-        // 플레이어도 응답 불가 → 즉시 resolve
-        next.passCount = 2;
-        activeChainState = next;
-        resolveChain(next);
-      } else {
-        renderChainActions();
-        renderAll();
-        notify('🤖 AI가 패스했습니다. 응답하거나 패스해주세요.');
-        // [안전망] 10초 후에도 플레이어가 응답 안 하면 강제 resolve
-        setTimeout(function() {
-          if (!activeChainState || !activeChainState.active) return;
-          if (activeChainState.priority === _playerRole()) {
-            log('체인 응답 시간 초과 — 자동 패스', 'system');
-            resolveChain(Object.assign({}, activeChainState, { passCount: 2 }));
-          }
-        }, 10000);
-      }
-    }, 600);
+      doWithAIRole(function() {
+        passChainPriority();
+      });
+    }, 500);
     return;
   }
 
-  // AI가 카드 발동
-  // rawActivate() 내부의 _buildChainActivate는 addChainLink를 임시 교체하여
-  // activeChainState에 AI 링크를 추가하고 끝냄 (렌더/notify 없음).
-  // 따라서 rawActivate 전후 링크 수를 비교해 명시적으로 체인 상태를 정리한다.
+  // AI가 카드 발동 — myRole 임시 교체로 addChainLink 직접 호출 (대인전과 동일 경로)
   setTimeout(function() {
     if (!activeChainState || !activeChainState.active) return;
-
-    var linksBefore = (activeChainState.links || []).length;
-
-    picked.rawActivate();
-
-    if (!activeChainState || !activeChainState.active) return;
-
-    var linksAfter = (activeChainState.links || []).length;
-
-    // rawActivate가 링크를 추가하지 않은 경우 → 직접 AI 링크 추가
-    if (linksAfter === linksBefore) {
-      var aiEffect = { type: picked.id, label: picked.label, by: _aiRole() };
-      var nextA    = Object.assign({}, activeChainState);
-      nextA.links  = (activeChainState.links || []).slice().concat([aiEffect]);
-      nextA.passCount = 0;
-      nextA.priority  = _playerRole();
-      activeChainState = nextA;
-    } else {
-      // 링크가 추가됐으면 priority만 플레이어로 교정
-      var nextB      = Object.assign({}, activeChainState);
-      nextB.links    = (activeChainState.links || []).slice();
-      nextB.passCount = 0;
-      nextB.priority  = _playerRole();
-      activeChainState = nextB;
-    }
-
-    var next = activeChainState;
-    if (!next || !next.active) return;
+    if (activeChainState.priority !== _aiRole()) return;
 
     log('🤖 ' + picked.label + ' 체인 발동!', 'opponent');
-    _markAIChainHandled(next);
-    renderChainActions();
-    renderAll();
 
-    if (_playerCanRespondInChain(next)) {
-      var lastLink = (next.links || [])[(next.links || []).length - 1] || {};
-      notify('체인 ' + next.links.length + ': ' + (lastLink.label || picked.label) + '. 응답 또는 패스를 선택하세요.');
-    } else {
-      // 플레이어도 응답 불가 → 즉시 resolve
-      setTimeout(function() {
-        if (!activeChainState || !activeChainState.active) return;
-        var final = Object.assign({}, activeChainState, { passCount: 2 });
-        resolveChain(final);
-      }, 300);
+    // myRole을 AI 역할로 교체하여 addChainLink 호출
+    var _origMyRole = myRole;
+    myRole = _aiRole();
+    try {
+      var effect = { type: picked.id || 'aiEffect', label: picked.label, cardId: picked.cardId };
+      addChainLink(effect, { force: true }); // force: priority 체크 우회
+    } finally {
+      myRole = _origMyRole;
     }
+
+    // addChainLink 내부에서 priority가 플레이어로 바뀌고 _aiChainResponse 트리거됨
+    // → 대인전과 완전히 동일한 흐름
   }, 400);
 }
 
