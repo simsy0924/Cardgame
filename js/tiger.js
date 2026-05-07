@@ -1,3 +1,4 @@
+
 // tiger.js — 타이거 테마 효과 엔진
 // 존 봉인(지속효과), 체인 시스템 완전 준수
 
@@ -106,7 +107,7 @@ function _tigerActivate(handIdx, effectNum) {
     if (hi >= 0) G.myGrave.push(G.myHand.splice(hi,1)[0]);
     const chainEffect = { type:'themeEffect', label:`${c.name} ①`, cardId:c.id, effectNum, theme:'타이거', mainText, extra:{ revealed: found.map(t=>t.id) } };
     if (activeChainState?.active) addChainLink(chainEffect);
-    else beginChain(chainEffect);
+    else window.beginChain(chainEffect);
     sendGameState(); renderAll();
     return;
   }
@@ -123,7 +124,7 @@ function _tigerActivate(handIdx, effectNum) {
       markEffectUsed(c.id, effectNum);
       const chainEffect = { type:'themeEffect', label:'타이거 킹 ①', cardId:c.id, effectNum, theme:'타이거', mainText, extra:{ handIdx } };
       if (activeChainState?.active) addChainLink(chainEffect);
-      else beginChain(chainEffect);
+      else window.beginChain(chainEffect);
       sendGameState(); renderAll();
     });
     return;
@@ -134,7 +135,7 @@ function _tigerActivate(handIdx, effectNum) {
     markEffectUsed(c.id, effectNum);
     const chainEffect = { type:'themeEffect', label:`${c.name} ${effectNum}`, cardId:c.id, effectNum, theme:'타이거', mainText, extra:{} };
     if (activeChainState?.active) addChainLink(chainEffect);
-    else beginChain(chainEffect);
+    else window.beginChain(chainEffect);
     sendGameState(); renderAll();
   });
 }

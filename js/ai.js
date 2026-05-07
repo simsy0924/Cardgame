@@ -1,3 +1,4 @@
+
 // ============================================================
 // ai.js — AI 대전 모듈 (v2)
 //
@@ -1182,12 +1183,17 @@ _safeHook('beginChain', function(_origBeginChain) {
     renderChainActions();
     renderAll();
 
-    // AI에게 응답 기회 부여
+    // AI에게 응답 기회 부여 (150ms 딜레이 — 상위 sendGameState/renderAll 완료 후 응답)
     console.log('[AI Chain] beginChain hook: chain set, priority=' + chainState.priority + ', calling _notifyAIChainOpened');
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) { console.log('[AI Chain] beginChain hook: chain gone before notify'); return; }
+      // priority가 바뀌지 않았는지 재확인
+      if (activeChainState.priority !== _aiRole()) {
+        console.log('[AI Chain] beginChain hook: priority shifted to', activeChainState.priority, '— skipping AI notify');
+        return;
+      }
       _notifyAIChainOpened();
-    }, 0);
+    }, 150);
   };
 });
 
@@ -1298,11 +1304,21 @@ function _debugAIChainOptionState(liveChain) {
 
 function _canAIRespondNow(state) {
   if (!state || !state.active) return false;
-  if (state.priority !== _aiRole()) return false;
+  if (state.priority !== _aiRole()) {
+    console.log('[AI _canAIRespondNow] priority mismatch:', state.priority, '!=', _aiRole());
+    return false;
+  }
   var links = state.links || [];
-  if (!links.length) return false;
+  if (!links.length) {
+    console.log('[AI _canAIRespondNow] no links');
+    return false;
+  }
   var last = links[links.length - 1] || {};
-  return last.by === _playerRole() || (state.passCount || 0) > 0;
+  // [BUG FIX] by 필드가 없는 링크(구버전 호환)는 플레이어 발동으로 간주
+  var lastBy = last.by || _playerRole();
+  var ok = lastBy === _playerRole() || (state.passCount || 0) > 0;
+  console.log('[AI _canAIRespondNow] lastBy=' + lastBy + ' playerRole=' + _playerRole() + ' passCount=' + (state.passCount||0) + ' result=' + ok);
+  return ok;
 }
 
 // [BUG-07 FIX] 시그니처에서 priority 제거 — 링크 내용만으로 구성
@@ -1334,8 +1350,9 @@ function _startAIChainWatcher() {
     var live = activeChainState;
     if (!live || !live.active) return;
     if (live.priority !== _aiRole()) return;
+    if (_alreadyHandledChainState(live)) return; // 이미 처리한 체인은 스킵
     _scheduleAIChainFallback();
-  }, 500);
+  }, 300);
 }
 
 function _scheduleAIChainFallback() {
@@ -1346,8 +1363,9 @@ function _scheduleAIChainFallback() {
     var live = activeChainState;
     if (!live || !live.active) return;
     if (live.priority !== _aiRole()) return;
+    if (_alreadyHandledChainState(live)) return;
     _aiChainResponse(live);
-  }, 1800);
+  }, 1200);
 }
 
 function _alreadyHandledChainState(state) {
@@ -1487,8 +1505,12 @@ function _notifyAIChainOpened() {
   console.log('[AI Chain] _notifyAIChainOpened: scheduling response, links=' + (live.links||[]).length);
   setTimeout(function() {
     if (!activeChainState || !activeChainState.active) { console.log('[AI Chain] chain gone before response'); return; }
+    if (activeChainState.priority !== _aiRole()) {
+      console.log('[AI Chain] _notifyAIChainOpened: priority shifted, skipping');
+      return;
+    }
     _aiChainResponse(activeChainState);
-  }, 350);
+  }, 200);
 }
 window._notifyAIChainOpened  = _notifyAIChainOpened;
 window._aiChainResponse      = _aiChainResponse;

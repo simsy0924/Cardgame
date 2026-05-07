@@ -83,7 +83,7 @@ function _cthulhuActivate(handIdx, effectNum) {
     markEffectUsed(c.id, effectNum);
     const chainEffect = { type:'themeEffect', label:`${c.name} ①`, cardId:c.id, effectNum, theme:'올드원', mainText, extra:{} };
     if (activeChainState?.active) addChainLink(chainEffect);
-    else beginChain(chainEffect);
+    else window.beginChain(chainEffect);
     sendGameState(); renderAll();
     return;
   }
@@ -94,7 +94,7 @@ function _cthulhuActivate(handIdx, effectNum) {
     markEffectUsed(c.id, effectNum);
     const chainEffect = { type:'themeEffect', label:'크타니트 ①', cardId:c.id, effectNum, theme:'올드원', mainText, extra:{} };
     if (activeChainState?.active) addChainLink(chainEffect);
-    else beginChain(chainEffect);
+    else window.beginChain(chainEffect);
     sendGameState(); renderAll();
     return;
   }
@@ -110,7 +110,7 @@ function _cthulhuActivate(handIdx, effectNum) {
       markEffectUsed(c.id, effectNum);
       const chainEffect = { type:'themeEffect', label:'과타노차 ①', cardId:c.id, effectNum, theme:'올드원', mainText, extra:{} };
       if (activeChainState?.active) addChainLink(chainEffect);
-      else beginChain(chainEffect);
+      else window.beginChain(chainEffect);
       sendGameState(); renderAll();
     });
     return;
@@ -132,7 +132,7 @@ function _cthulhuActivate(handIdx, effectNum) {
       markEffectUsed(c.id, effectNum);
       const chainEffect = { type:'themeEffect', label:`${c.name} ②`, cardId:c.id, effectNum, theme:'올드원', mainText, extra:{} };
       if (activeChainState?.active) addChainLink(chainEffect);
-      else beginChain(chainEffect);
+      else window.beginChain(chainEffect);
       sendGameState(); renderAll();
     });
     return;
@@ -150,7 +150,7 @@ function _cthulhuActivate(handIdx, effectNum) {
       markEffectUsed(c.id, effectNum);
       const chainEffect = { type:'themeEffect', label:`${c.name} ②`, cardId:c.id, effectNum, theme:'올드원', mainText, extra:{} };
       if (activeChainState?.active) addChainLink(chainEffect);
-      else beginChain(chainEffect);
+      else window.beginChain(chainEffect);
       sendGameState(); renderAll();
     });
     return;
@@ -162,7 +162,7 @@ function _cthulhuActivate(handIdx, effectNum) {
     markEffectUsed(c.id, effectNum);
     const chainEffect = { type:'themeEffect', label:`${c.name} ${effectNum}`, cardId:c.id, effectNum, theme:'올드원', mainText, extra:{} };
     if (activeChainState?.active) addChainLink(chainEffect);
-    else beginChain(chainEffect);
+    else window.beginChain(chainEffect);
     sendGameState(); renderAll();
   });
 }

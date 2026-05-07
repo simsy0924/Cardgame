@@ -1,3 +1,4 @@
+
 // liger.js — 라이거 테마 효과 엔진
 
 function _isLigerRelated(id) { return ['라이거','라이온','타이거'].includes(CARDS[id]?.theme); }
@@ -39,7 +40,7 @@ function _ligerActivate(handIdx, effectNum) {
     markEffectUsed(c.id, effectNum);
     const chainEffect = { type:'themeEffect', label:'라이거 킹 ①', cardId:c.id, effectNum, theme:'라이거', mainText, extra:{ handIdx } };
     if (activeChainState?.active) addChainLink(chainEffect);
-    else beginChain(chainEffect);
+    else window.beginChain(chainEffect);
     sendGameState(); renderAll();
     return;
   }
@@ -49,7 +50,7 @@ function _ligerActivate(handIdx, effectNum) {
     markEffectUsed(c.id, effectNum);
     const chainEffect = { type:'themeEffect', label:`${c.name} ${effectNum}`, cardId:c.id, effectNum, theme:'라이거', mainText, extra:{} };
     if (activeChainState?.active) addChainLink(chainEffect);
-    else beginChain(chainEffect);
+    else window.beginChain(chainEffect);
     sendGameState(); renderAll();
   });
 }

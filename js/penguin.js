@@ -18,7 +18,7 @@ function queuePenguinTrigger(effect, opts = {}) {
 // ─────────────────────────────────────────────
 function activatePenguinVillage1(handIdx) {
   if (!canUseEffect('펭귄 마을', 1)) { notify('이미 사용했습니다.'); return; }
-  beginChain({ type: 'penguinVillage1', label: '펭귄 마을 ①' });
+  window.beginChain({ type: 'penguinVillage1', label: '펭귄 마을 ①' });
   notify('체인 1: 펭귄 마을 ① 발동. 상대 응답을 기다립니다.');
 }
 
@@ -109,7 +109,7 @@ function activatePenguinBubu1FromField(fieldIdx) {
   mon.bubuTriggerReady = false;
   const effect = { type: 'triggerPenguinBubu1', label: '펭귄 부부 ①' };
   if (activeChainState && activeChainState.active) addChainLink(effect);
-  else beginChain(effect);
+  else window.beginChain(effect);
 }
 
 // ─────────────────────────────────────────────

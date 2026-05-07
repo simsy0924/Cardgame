@@ -177,7 +177,7 @@ function activateThemeCardEffectFromHand(handIdx, effectNum = 1) {
     }
     markEffectUsed(c.id, effectNum);
     if (activeChainState && activeChainState.active) addChainLink(chainEffect);
-    else beginChain(chainEffect);
+    else window.beginChain(chainEffect);
     sendGameState();
     renderAll();
   });

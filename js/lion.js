@@ -1,3 +1,4 @@
+
 // lion.js — 라이온 테마 효과 엔진
 // ─────────────────────────────────────────────
 // 모든 효과는 기존 체인 시스템을 완전히 따름:
@@ -70,7 +71,7 @@ function _lionActivate(handIdx, effectNum) {
       extra: { revealed: found.map(t => t.id) },
     };
     if (activeChainState?.active) addChainLink(chainEffect);
-    else beginChain(chainEffect);
+    else window.beginChain(chainEffect);
     sendGameState(); renderAll();
     return;
   }
@@ -89,7 +90,7 @@ function _lionActivate(handIdx, effectNum) {
         extra: { handIdx },
       };
       if (activeChainState?.active) addChainLink(chainEffect);
-      else beginChain(chainEffect);
+      else window.beginChain(chainEffect);
       sendGameState(); renderAll();
     });
     return;
@@ -104,7 +105,7 @@ function _lionActivate(handIdx, effectNum) {
       extra: {},
     };
     if (activeChainState?.active) addChainLink(chainEffect);
-    else beginChain(chainEffect);
+    else window.beginChain(chainEffect);
     sendGameState(); renderAll();
   });
 }

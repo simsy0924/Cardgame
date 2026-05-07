@@ -184,6 +184,7 @@
     resolveThemeEffectGeneric(link);
   }
 
-  registerThemeEffectHandler('엘리멘츠', { activateFromHand, resolveLink, onElementsSummoned });
+  // [BUG FIX] onSummoned 키로 등록 — patch.js의 _fire가 handler.onSummoned를 호출하므로
+  registerThemeEffectHandler('엘리멘츠', { activateFromHand, resolveLink, onSummoned: onElementsSummoned });
   window._elements = { addCounterToOpponent, removeCountersFromOpponent, onElementsSummoned };
 })();

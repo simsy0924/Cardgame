@@ -432,7 +432,7 @@ function flushTriggeredEffects() {
   const queued = [...pendingTriggerEffects];
   pendingTriggerEffects = [];
 
-  beginChain(queued[0]);
+  window.beginChain(queued[0]); // [BUG FIX] window 경유로 ai.js 훅 적용
   queued.slice(1).forEach(e => addChainLink(e, { force: true }));
 }
 
@@ -450,7 +450,8 @@ function activateQuickEffect(effect) {
     addChainLink(effect);
     return;
   }
-  beginChain(effect);
+  // [BUG FIX] window.beginChain으로 호출 — ai.js의 _safeHook 패치가 적용되도록
+  window.beginChain(effect);
 }
 
 function activateIgnitionEffect(effect) {
@@ -463,7 +464,8 @@ function activateIgnitionEffect(effect) {
     notify('기동효과는 체인 1로만 발동할 수 있습니다.');
     return;
   }
-  beginChain(effect);
+  // [BUG FIX] window.beginChain으로 호출 — ai.js의 _safeHook 패치가 적용되도록
+  window.beginChain(effect);
 }
 
 function ensureCardInstanceId(card) {
