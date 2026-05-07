@@ -28,10 +28,14 @@ function beginChain(effect) {
     renderAll();
     if (window.AI && window.AI.active) {
       // AI 모드: 직접 AI 응답 트리거 (300ms — 콜스택 완전 종료 후)
+      notify('[AI디버그] beginChain: AI모드 setTimeout 등록');
       setTimeout(() => {
-        if (!activeChainState || !activeChainState.active) return;
+        if (!activeChainState || !activeChainState.active) { notify('[AI디버그] beginChain setTimeout: chain gone'); return; }
+        notify('[AI디버그] beginChain: _aiChainResponse 호출, priority=' + activeChainState.priority);
         if (typeof window._aiChainResponse === 'function') {
           window._aiChainResponse(activeChainState);
+        } else {
+          notify('[AI디버그] _aiChainResponse 없음!');
         }
       }, 300);
     } else {

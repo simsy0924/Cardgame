@@ -1346,14 +1346,15 @@ function _alreadyHandledChainState(state) {
 // ─────────────────────────────────────────────────────────────
 // AI 체인 응답 — Groq API 판단 + myRole 임시 교체로 대인전과 동일 경로
 async function _aiChainResponse(chainState) {
-  if (!window.AI || !window.AI.active) return;
+  if (!window.AI || !window.AI.active) { notify('[AI디버그] AI not active'); return; }
   _clearAIChainTimer();
 
   var snap = activeChainState;
-  if (!snap || !snap.active) return;
-  if (snap.priority !== _aiRole()) return;
-  if (_alreadyHandledChainState(snap)) return;
+  if (!snap || !snap.active) { notify('[AI디버그] no active chain'); return; }
+  if (snap.priority !== _aiRole()) { notify('[AI디버그] priority=' + snap.priority + ' aiRole=' + _aiRole()); return; }
+  if (_alreadyHandledChainState(snap)) { notify('[AI디버그] already handled'); return; }
   _markAIChainHandled(snap);
+  notify('[AI디버그] _aiChainResponse 진입 성공');
 
   // myRole 임시 교체 헬퍼 (대인전과 동일 경로로 체인 함수 호출)
   var aiR = _aiRole();
