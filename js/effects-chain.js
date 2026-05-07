@@ -27,11 +27,28 @@ function beginChain(effect) {
     renderChainActions();
     renderAll();
     if (window.AI && window.AI.active) {
-      // AI 모드: 직접 AI 응답 트리거 (300ms — 콜스택 완전 종료 후)
-      notify('[AI디버그] beginChain: AI모드 setTimeout 등록');
+      // priority 변경 감지 proxy 심기
+      var _dbgChainId = chainState.chainId;
+      var _dbgInterval = setInterval(function() {
+        if (!activeChainState || activeChainState.chainId !== _dbgChainId) {
+          notify('[AI디버그] chain gone/replaced at t=' + (Date.now() - _dbgT) + 'ms');
+          clearInterval(_dbgInterval);
+          return;
+        }
+        if (activeChainState.priority !== 'guest') {
+          notify('[AI디버그] priority 변경됨! ' + activeChainState.priority + ' at t=' + (Date.now() - _dbgT) + 'ms');
+          clearInterval(_dbgInterval);
+        }
+      }, 10);
+      var _dbgT = Date.now();
+      setTimeout(function() { clearInterval(_dbgInterval); }, 1000);
+
+      if (typeof window._markAIChainHandled === 'function') window._markAIChainHandled(chainState);
+      notify('[AI디버그] beginChain: AI모드 setTimeout 등록 t=0');
       setTimeout(() => {
         if (!activeChainState || !activeChainState.active) { notify('[AI디버그] beginChain setTimeout: chain gone'); return; }
-        notify('[AI디버그] beginChain: _aiChainResponse 호출, priority=' + activeChainState.priority);
+        notify('[AI디버그] beginChain: priority=' + activeChainState.priority + ' t=300ms');
+        if (window.AI && window.AI.chainMemory) window.AI.chainMemory.respondedSig = null;
         if (typeof window._aiChainResponse === 'function') {
           window._aiChainResponse(activeChainState);
         } else {
@@ -375,10 +392,12 @@ function passChainPriority() {
     // AI 모드: 다음 우선권 소유자가 누구인지 판단
     // myRole은 호출 시점의 원래 역할 (교체됐을 수 있음)
     // next.priority를 원래 playerRole/aiRole과 비교
-    var _plR = typeof _playerRole === 'function' ? _playerRole() : myRole;
-    var _aiR = typeof _aiRole    === 'function' ? _aiRole()    : (myRole === 'host' ? 'guest' : 'host');
+    // [BUG FIX] myRole이 임시 교체된 상태일 수 있으므로 AI 고유 식별자로 비교
+    // AI는 항상 'guest' (host=플레이어, guest=AI 고정)
+    var _realAIRole = window.AI && window.AI._aiRole ? window.AI._aiRole : 'guest';
+    var _realPlRole = _realAIRole === 'guest' ? 'host' : 'guest';
 
-    if (next.priority === _plR) {
+    if (next.priority === _realPlRole) {
       // 플레이어 차례 → 응답 요청 알림
       notify('🤖 AI가 패스했습니다. 응답하거나 패스해주세요.');
     } else {
