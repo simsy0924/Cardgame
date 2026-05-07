@@ -1388,11 +1388,16 @@ async function _aiChainResponse(chainState) {
 
   function doPass() {
     if (!activeChainState||!activeChainState.active||activeChainState.priority!==aiR) return;
+    _aiPassChainPriority(aiR, plR);
+  }
+
+  function _aiPassChainPriority(aiRole, playerRole) {
+    if (!activeChainState || !activeChainState.active || activeChainState.priority !== aiRole) return;
     log('🤖 AI: 체인 패스', 'opponent');
     var next = Object.assign({}, activeChainState);
     next.links = activeChainState.links.slice();
     next.passCount = (next.passCount||0) + 1;
-    next.priority = plR;
+    next.priority = playerRole;
     if (next.passCount >= 2) { resolveChain(next); } else { _onLocalChainStateChanged(next); }
   }
 
@@ -1403,13 +1408,24 @@ async function _aiChainResponse(chainState) {
 
   setTimeout(function() {
     if (!activeChainState||!activeChainState.active||activeChainState.priority!==aiR) return;
-    log('🤖 ' + picked.label + ' 체인 발동!', 'opponent');
-    var eff = {type: picked.id||'aiEffect', label: picked.label, cardId: picked.id, by: aiR};
-    var next = Object.assign({}, activeChainState);
-    next.links = activeChainState.links.slice().concat([eff]);
-    next.priority = plR;
-    next.passCount = 0;
-    _onLocalChainStateChanged(next);
+    var beforeLen = (activeChainState.links || []).length;
+    try {
+      // 대인전/플레이어 체인과 동일하게 등록된 activate 경로를 그대로 사용
+      // (코스트 지불, usedFx 체크, 실제 effect.type 반영)
+      picked.rawActivate();
+    } catch (e) {
+      console.error('[AI Chain] activate 실패:', e && e.message ? e.message : e);
+      doPass();
+      return;
+    }
+    // activate가 링크를 추가하지 못한 경우 안전하게 패스
+    var afterLen = (activeChainState && activeChainState.links ? activeChainState.links.length : 0);
+    if (afterLen <= beforeLen) {
+      console.warn('[AI Chain] 링크 추가 실패, 패스로 전환');
+      doPass();
+      return;
+    }
+    _onLocalChainStateChanged(activeChainState);
   }, 400);
 }
 
