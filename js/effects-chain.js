@@ -10,25 +10,14 @@ function getOpponentRole(role) {
 }
 
 function beginChain(effect) {
-  notify('[AI디버그] beginChain 진입: myRole=' + myRole + ' getOpponent=' + getOpponentRole(myRole), 10000);
-  // activeChainState 변경 감지 — Object.defineProperty로 setter 추가
-  (function() {
-    var _orig = activeChainState;
-    try {
-      Object.defineProperty(window, 'activeChainState', {
-        configurable: true,
-        get: function() { return _orig; },
-        set: function(v) {
-          if (_orig && _orig.active && v && v.active && v.priority !== _orig.priority) {
-            var stack = '';
-            try { throw new Error('t'); } catch(e) { stack = (e.stack||'').split('\n').slice(1,5).join(' | '); }
-            notify('[AI디버그] activeChainState.priority 변경: ' + _orig.priority + '->' + v.priority + ' | ' + stack.slice(0, 200), 10000);
-          }
-          _orig = v;
-        }
-      });
-    } catch(e) {}
-  })();
+  // 이전 체인 잔여 타이머 clear
+  if (typeof _clearAIChainTimer === 'function') _clearAIChainTimer();
+  if (window.AI && window.AI.pendingChainTimers) {
+    window.AI.pendingChainTimers.forEach(function(id) { clearTimeout(id); });
+    window.AI.pendingChainTimers = [];
+  }
+  // myRole 로그 (notify 대신 log로 — 화면에 겹치지 않게)
+  log('[디버그] beginChain: myRole=' + myRole + ' priority=' + getOpponentRole(myRole), 'system');
   const chainState = {
     chainId: nextChainId(),
     active: true,
@@ -63,17 +52,16 @@ function beginChain(effect) {
       setTimeout(function() { clearInterval(_dbgInterval); }, 1000);
 
       if (typeof window._markAIChainHandled === 'function') window._markAIChainHandled(chainState);
-      notify('[AI디버그] beginChain: AI모드 setTimeout 등록 t=0');
-      setTimeout(() => {
-        if (!activeChainState || !activeChainState.active) { notify('[AI디버그] beginChain setTimeout: chain gone'); return; }
-        notify('[AI디버그] beginChain: priority=' + activeChainState.priority + ' t=300ms');
+      // 타이머 ID를 pendingChainTimers에 등록하여 다음 beginChain 시 clear 가능
+      if (!window.AI.pendingChainTimers) window.AI.pendingChainTimers = [];
+      var _t = setTimeout(() => {
+        if (!activeChainState || !activeChainState.active) return;
         if (window.AI && window.AI.chainMemory) window.AI.chainMemory.respondedSig = null;
         if (typeof window._aiChainResponse === 'function') {
           window._aiChainResponse(activeChainState);
-        } else {
-          notify('[AI디버그] _aiChainResponse 없음!');
         }
       }, 300);
+      window.AI.pendingChainTimers.push(_t);
     } else {
       // 비AI 데모 모드: 즉시 resolve
       resolveChain({ ...chainState, passCount: 2 });
@@ -426,12 +414,14 @@ function passChainPriority() {
       notify('🤖 AI가 패스했습니다. 응답하거나 패스해주세요.');
     } else {
       // AI 차례 → AI 응답 트리거
-      setTimeout(() => {
+      if (window.AI && !window.AI.pendingChainTimers) window.AI.pendingChainTimers = [];
+      var _t2 = setTimeout(() => {
         if (!activeChainState || !activeChainState.active) return;
         if (typeof window._aiChainResponse === 'function') {
           window._aiChainResponse(activeChainState);
         }
       }, 300);
+      if (window.AI) window.AI.pendingChainTimers.push(_t2);
     }
     return;
   }
