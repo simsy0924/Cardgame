@@ -1153,53 +1153,9 @@ setTimeout(_lobby, 800); // SPA 동적 렌더링 대비 1회만
 // 따라서 beginChain만 앞에서 가로채면 됩니다.
 // ─────────────────────────────────────────────────────────────
 
-// ★ 핵심 수정: beginChain을 AI 모드에서 가로채기
-// effects-chain.js의 beginChain은 roomRef=null이면 즉시 resolveChain()을 호출해버려서
-// 플레이어가 체인 1을 열면 AI가 응답할 기회 자체가 없었음.
-// → 원본 호출 전에 AI 모드인지 확인하고, AI 모드면 직접 체인 상태를 구성한 뒤
-//   원본을 우회하고 _notifyAIChainOpened로 AI를 깨움.
-_safeHook('beginChain', function(_origBeginChain) {
-  return function(effect) {
-    // AI 모드 + 로컬(roomRef 없음) 에서만 개입
-    if (!window.AI.active || roomRef) {
-      _origBeginChain.apply(this, arguments);
-      return;
-    }
-
-    // 원본이 즉시 resolve하기 전에 체인 상태를 직접 설정
-    var chainState = {
-      chainId:   (typeof nextChainId === 'function' ? nextChainId() : ('ai_chain_' + Date.now())),
-      active:    true,
-      startedBy: myRole,
-      priority:  typeof getOpponentRole === 'function' ? getOpponentRole(myRole) : _aiRole(),
-      passCount: 0,
-      links:     [Object.assign({}, effect, { by: myRole })],
-    };
-    activeChainState = chainState;
-    if (effect.type === 'keyFetch' && typeof usedKeyFetchInChain !== 'undefined') {
-      usedKeyFetchInChain[myRole] = true;
-    }
-    log('체인 1: ' + (effect.label || effect.type) + ' 발동', 'mine');
-    renderChainActions();
-    renderAll();
-
-    // AI에게 응답 기회 부여 (150ms 딜레이 — 상위 sendGameState/renderAll 완료 후 응답)
-    console.log('[AI Chain] beginChain hook: chain set, priority=' + chainState.priority + ', calling _notifyAIChainOpened');
-    setTimeout(function() {
-      if (!activeChainState || !activeChainState.active) { console.log('[AI Chain] beginChain hook: chain gone before notify'); return; }
-      // priority가 바뀌지 않았는지 재확인
-      if (activeChainState.priority !== _aiRole()) {
-        console.log('[AI Chain] beginChain hook: priority shifted to', activeChainState.priority, '— skipping AI notify');
-        return;
-      }
-      _notifyAIChainOpened();
-    }, 150);
-  };
-});
-
-// addChainLink / passChainPriority는 effects-chain.js 새 버전이
-// 이미 AI 모드 분기에서 _notifyAIChainOpened()를 호출하므로 훅 불필요.
-// (중복 호출하면 오히려 _alreadyHandledChainState 충돌 위험)
+// beginChain 훅: effects-chain.js의 beginChain에 이미 AI 모드 분기(setTimeout 200ms)가
+// 있으므로 별도 훅 불필요. 훅이 있으면 activeChainState가 두 번 설정되어 오히려 충돌.
+// [BUG FIX] 훅 제거 — 원본 beginChain이 직접 _notifyAIChainOpened를 호출함.
 
 _safeHook('resolveChain', function(_origResolveChain) {
   return function(chainState) {
@@ -1358,14 +1314,23 @@ function _startAIChainWatcher() {
 function _scheduleAIChainFallback() {
   if (!window.AI || !window.AI.active) return;
   _clearAIChainTimer();
+  // [BUG FIX] 800ms — notify/setTimeout 250ms + 여유시간. 너무 길면 체감 딜레이가 큼
   window.AI.chainTimer = setTimeout(function() {
     if (!window.AI.active) return;
     var live = activeChainState;
     if (!live || !live.active) return;
     if (live.priority !== _aiRole()) return;
     if (_alreadyHandledChainState(live)) return;
-    _aiChainResponse(live);
-  }, 1200);
+    console.log('[AI Chain] fallback watcher firing');
+    try {
+      _aiChainResponse(live);
+    } catch(e) {
+      console.error('[AI Chain] fallback 오류:', e && e.message ? e.message : e);
+      if (activeChainState && activeChainState.active) {
+        resolveChain(Object.assign({}, activeChainState, { passCount: 2 }));
+      }
+    }
+  }, 800);
 }
 
 function _alreadyHandledChainState(state) {
@@ -1393,28 +1358,41 @@ function _aiChainResponse(chainState) {
 
   if (!picked) {
     // AI 패스
+    _markAIChainHandled(activeChainState); // 중복 응답 방지를 위해 즉시 마킹
     setTimeout(function() {
       if (!activeChainState || !activeChainState.active) return;
-      // [BUG-08 FIX] links 딥카피
       var next       = Object.assign({}, activeChainState);
       next.links     = (activeChainState.links || []).slice();
       next.passCount = (next.passCount || 0) + 1;
       next.priority  = _playerRole();
       log('🤖 AI: 패스', 'opponent');
       activeChainState = next;
-      _markAIChainHandled(next);
 
       if (next.passCount >= 2) {
         resolveChain(next);
+        return;
+      }
+
+      var playerCanAct = false;
+      try { playerCanAct = _playerCanRespondInChain(next); } catch(e) {}
+
+      if (!playerCanAct) {
+        // 플레이어도 응답 불가 → 즉시 resolve
+        next.passCount = 2;
+        activeChainState = next;
+        resolveChain(next);
       } else {
         renderChainActions();
-        if (!_playerCanRespondInChain(next)) {
-          next.passCount = 2;
-          activeChainState = next;
-          resolveChain(next);
-        } else {
-          notify('🤖 AI가 패스했습니다. 응답하거나 패스해주세요.');
-        }
+        renderAll();
+        notify('🤖 AI가 패스했습니다. 응답하거나 패스해주세요.');
+        // [안전망] 10초 후에도 플레이어가 응답 안 하면 강제 resolve
+        setTimeout(function() {
+          if (!activeChainState || !activeChainState.active) return;
+          if (activeChainState.priority === _playerRole()) {
+            log('체인 응답 시간 초과 — 자동 패스', 'system');
+            resolveChain(Object.assign({}, activeChainState, { passCount: 2 }));
+          }
+        }, 10000);
       }
     }, 600);
     return;
@@ -1478,17 +1456,21 @@ function _aiChainResponse(chainState) {
 function _playerCanRespondInChain(state) {
   if (!state || !state.active) return false;
   if (state.priority !== _playerRole()) return false;
-  if (typeof collectChainOptions === 'function') {
-    var opts = collectChainOptions({
-      hand:    G.myHand,
-      field:   G.myField,
-      grave:   G.myGrave,
-      exile:   G.myExile,
-      keyDeck: G.myKeyDeck,
-      role:    myRole,
-      isMyTurn: isMyTurn,
-    });
-    return opts.length > 0;
+  try {
+    if (typeof collectChainOptions === 'function') {
+      var opts = collectChainOptions({
+        hand:    G.myHand,
+        field:   G.myField,
+        grave:   G.myGrave,
+        exile:   G.myExile,
+        keyDeck: G.myKeyDeck,
+        role:    myRole,
+        isMyTurn: isMyTurn,
+      });
+      return (opts || []).length > 0;
+    }
+  } catch(e) {
+    console.warn('[AI] _playerCanRespondInChain 오류:', e && e.message ? e.message : e);
   }
   return Array.isArray(G.myKeyDeck) && G.myKeyDeck.length > 0;
 }
@@ -1498,19 +1480,34 @@ function _playerCanRespondInChain(state) {
 // _notifyAIChainOpened — effects-chain.js에서 호출
 // ─────────────────────────────────────────────────────────────
 function _notifyAIChainOpened() {
-  if (!window.AI || !window.AI.active) { console.log('[AI Chain] _notifyAIChainOpened: AI not active'); return; }
+  if (!window.AI || !window.AI.active) return;
   var live = activeChainState;
-  if (!live || !live.active) { console.log('[AI Chain] _notifyAIChainOpened: no active chain'); return; }
-  if (live.priority !== _aiRole()) { console.log('[AI Chain] _notifyAIChainOpened: priority=' + live.priority + ' aiRole=' + _aiRole() + ' mismatch'); return; }
-  console.log('[AI Chain] _notifyAIChainOpened: scheduling response, links=' + (live.links||[]).length);
+  if (!live || !live.active) return;
+  if (live.priority !== _aiRole()) {
+    // priority 불일치 — 폴백: chainWatcher가 처리
+    console.log('[AI Chain] _notifyAIChainOpened: priority mismatch', live.priority, '!=', _aiRole(), '— chainWatcher will handle');
+    return;
+  }
+  if (_alreadyHandledChainState(live)) {
+    console.log('[AI Chain] _notifyAIChainOpened: already handled');
+    return;
+  }
+  // [BUG FIX] 딜레이를 250ms로 — 상위 콜스택 완전 종료 보장
   setTimeout(function() {
-    if (!activeChainState || !activeChainState.active) { console.log('[AI Chain] chain gone before response'); return; }
-    if (activeChainState.priority !== _aiRole()) {
-      console.log('[AI Chain] _notifyAIChainOpened: priority shifted, skipping');
-      return;
+    if (!activeChainState || !activeChainState.active) return;
+    if (activeChainState.priority !== _aiRole()) return;
+    if (_alreadyHandledChainState(activeChainState)) return;
+    try {
+      _aiChainResponse(activeChainState);
+    } catch(e) {
+      console.error('[AI Chain] _aiChainResponse 오류:', e && e.message ? e.message : e);
+      // 오류 발생 시 안전하게 AI 패스 처리
+      if (activeChainState && activeChainState.active) {
+        var next = Object.assign({}, activeChainState, { passCount: 2 });
+        resolveChain(next);
+      }
     }
-    _aiChainResponse(activeChainState);
-  }, 200);
+  }, 250);
 }
 window._notifyAIChainOpened  = _notifyAIChainOpened;
 window._aiChainResponse      = _aiChainResponse;
