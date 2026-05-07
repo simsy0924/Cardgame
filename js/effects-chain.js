@@ -10,6 +10,8 @@ function getOpponentRole(role) {
 }
 
 function beginChain(effect) {
+  // [디버그] beginChain 진입 시 myRole 확인
+  notify('[AI디버그] beginChain 진입: myRole=' + myRole + ' getOpponent=' + getOpponentRole(myRole));
   const chainState = {
     chainId: nextChainId(),
     active: true,
