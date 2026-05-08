@@ -65,6 +65,36 @@ function _summonFromOppHand(cardId) {
   return true;
 }
 
+
+
+function _buildAIChainCtx() {
+  return { role: window.AI.role, hand: G.opHand, field: G.opField, usedFx: {} };
+}
+
+async function _runAIChainWindow() {
+  if (!window.AI.active || !activeChainState || !activeChainState.active) return;
+  if (activeChainState.priority !== window.AI.role) return;
+  window.AI.chain = window.AI.chain || {};
+  if (window.AI.chain.handling) return;
+  window.AI.chain.handling = true;
+  try {
+    await _sleep(180);
+    if (!activeChainState || !activeChainState.active || activeChainState.priority !== window.AI.role) return;
+    var ctx = _buildAIChainCtx();
+    var options = (typeof collectChainOptions === 'function') ? collectChainOptions(ctx) : [];
+    if (!options || !options.length) {
+      var prev = myRole;
+      myRole = window.AI.role;
+      try { passChainPriority(); } finally { myRole = prev; }
+      return;
+    }
+    var pick = options[0];
+    if (pick && typeof pick.activate === 'function') pick.activate();
+  } finally {
+    window.AI.chain.handling = false;
+  }
+}
+
 function _bestAttackPlan() {
   var plan = [];
   var remaining = G.myField.map(function(c, i) { return { i: i, atk: c.atk || 0 }; });
@@ -175,6 +205,19 @@ window.startAIMode = function() {
       origEnter.apply(this, arguments);
       if (!window.AI.active) return;
       _setupAIState();
+    };
+  }
+
+
+
+  var origOnLocalChainStateChanged = window._onLocalChainStateChanged;
+  if (typeof origOnLocalChainStateChanged === 'function') {
+    window._onLocalChainStateChanged = function(next) {
+      origOnLocalChainStateChanged.apply(this, arguments);
+      if (!window.AI.active) return;
+      if (next && next.active && next.priority === window.AI.role) {
+        setTimeout(_runAIChainWindow, 120);
+      }
     };
   }
 
