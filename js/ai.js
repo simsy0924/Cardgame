@@ -22,6 +22,8 @@ window.AI = {
   chain:     { handling: false },
   pendingChainTimers: [],
   usedFx:    {},
+  // 게임 기록: 상대 패턴 파악에 활용
+  gameLog:   [], // [{ turn, actor, action, detail }]
 };
 
 // ─── 유틸 ───────────────────────────────────────────────────
@@ -40,8 +42,16 @@ function _resetAI() {
   window.AI.turnToken = 0;
   window.AI.chain     = { handling: false };
   window.AI.usedFx    = {};
+  window.AI.gameLog   = [];
   (window.AI.pendingChainTimers || []).forEach(clearTimeout);
   window.AI.pendingChainTimers = [];
+}
+
+/** 게임 로그에 행동 기록 */
+function _logAction(actor, action, detail) {
+  window.AI.gameLog.push({ turn: G.turn, actor: actor, action: action, detail: detail });
+  // 최근 20개만 유지 (토큰 절약)
+  if (window.AI.gameLog.length > 20) window.AI.gameLog.shift();
 }
 
 // ─── AI 덱 ──────────────────────────────────────────────────
@@ -121,54 +131,243 @@ function _discardOppHand(n, reason) {
 
 // ─── 게임 상태 요약 ─────────────────────────────────────────
 
-function _buildGameContext() {
+/** 효과 텍스트에서 ①②③ 번호별 한 줄 요약 추출 */
+function _parseEffectNums(effectsText) {
+  if (!effectsText) return [];
+  var bullets = ['①','②','③','④','⑤'];
+  var result = [];
+  bullets.forEach(function(b, i) {
+    var idx = effectsText.indexOf(b);
+    if (idx < 0) return;
+    // 다음 bullet 또는 끝까지
+    var nextIdx = effectsText.length;
+    bullets.slice(i+1).forEach(function(nb) {
+      var ni = effectsText.indexOf(nb);
+      if (ni > idx && ni < nextIdx) nextIdx = ni;
+    });
+    var text = effectsText.slice(idx + 1, nextIdx).trim();
+    // 첫 문장만 (마침표/개행 기준)
+    var firstSentence = text.split('
+')[0].trim();
+    result.push({ num: i+1, summary: firstSentence.slice(0, 60) });
+  });
+  return result;
+}
+
+function _cardInfo(c) {
+  var cd = CARDS[c.id] || {};
   return {
-    turn:  G.turn,
-    phase: currentPhase,
+    id:       c.id,
+    name:     c.name,
+    cardType: cd.cardType || 'unknown',
+    atk:      cd.atk,
+    theme:    cd.theme,
+    // 효과 텍스트 대신 번호별 요약 — 잘린 텍스트보다 구조화된 정보가 유리
+    effectNums: _parseEffectNums(cd.effects),
+  };
+}
+
+function _buildGameContext() {
+  // 플레이어 공개 손패 (isPublic=true인 카드만 — 상대가 볼 수 있는 정보)
+  var playerPublicHand = G.myHand
+    .filter(function(c) { return c.isPublic; })
+    .map(_cardInfo);
+
+  return {
+    turn:       G.turn,
+    phase:      currentPhase,
+    aiGoesFirst: (window.AI.role === 'host'), // AI가 선공인지
+
+    // ── AI (자신) ──────────────────────────────────────────
     ai: {
-      hand:      G.opHand.map(function(c) { return { id: c.id, name: c.name }; }),
-      field:     G.opField.map(function(c) { return { id: c.id, name: c.name, atk: c.atk }; }),
-      grave:     G.opGrave.map(function(c) { return { id: c.id, name: c.name }; }),
-      deckCount: window.AI.opDeck.length,
+      role:       window.AI.role,
+      hand:       G.opHand.map(_cardInfo),         // 손패 전체 (자신의 정보이므로 전부 공개)
+      field:      G.opField.map(function(c) {
+        var cd = CARDS[c.id] || {};
+        return { id: c.id, name: c.name, atk: c.atk, effectNums: _parseEffectNums(cd.effects) };
+      }),
+      grave:      G.opGrave.map(function(c) { return { id: c.id, name: c.name }; }),
+      exile:      G.opExile.map(function(c) { return { id: c.id, name: c.name }; }),
+      fieldCard:  G.opFieldCard ? { id: G.opFieldCard.id, name: G.opFieldCard.name } : null,
+      deckCount:  window.AI.opDeck.length,
+      fieldSlots: 5 + (G.opExtraSlots || 0),
     },
+
+    // ── 게임 상황 요약 (Groq가 빠르게 파악하도록) ──────────
+    summary: {
+      aiHandCount:     G.opHand.length,
+      aiFieldCount:    G.opField.length,
+      aiTotalAtk:      G.opField.reduce(function(s,c){ return s + (c.atk||0); }, 0),
+      playerHandCount: G.myHand.length,
+      playerFieldCount:G.myField.length,
+      playerTotalAtk:  G.myField.reduce(function(s,c){ return s + (c.atk||0); }, 0),
+      handDiff:        G.opHand.length - G.myHand.length, // 양수면 AI가 패 많음
+      deckLeft:        window.AI.opDeck.length,
+    },
+
+    // ── 최근 게임 기록 (상대 패턴 파악용) ─────────────────
+    recentLog: window.AI.gameLog.slice(-10), // 최근 10개 행동
+
+    // ── 플레이어 (상대) — 공개 정보만 ──────────────────────
     player: {
-      field:     G.myField.map(function(c) { return { id: c.id, name: c.name, atk: c.atk }; }),
-      handCount: G.myHand.length,
-      deckCount: G.myDeck ? G.myDeck.length : 0,
+      role:            myRole,
+      handCount:       G.myHand.length,           // 패 수는 항상 공개
+      publicHand:      playerPublicHand,           // 공개된 패 (효과로 공개된 카드 등)
+      field:           G.myField.map(function(c) {
+        var cd = CARDS[c.id] || {};
+        return { id: c.id, name: c.name, atk: c.atk, effectNums: _parseEffectNums(cd.effects) };
+      }),
+      grave:           G.myGrave.map(function(c) { return { id: c.id, name: c.name }; }),
+      exile:           G.myExile.map(function(c) { return { id: c.id, name: c.name }; }),
+      fieldCard:       G.myFieldCard ? { id: G.myFieldCard.id, name: G.myFieldCard.name } : null,
+      deckCount:       G.myDeck ? G.myDeck.length : 0,
     },
   };
 }
 
 // ─── Groq Worker ────────────────────────────────────────────
 
-async function _groqTurnPlan() {
-  if (!_WORKER_URL) return null;
-  var systemPrompt = [
-    '너는 카드게임 AI다. 반드시 JSON만 응답해라.',
-    '규칙: deploy페이즈에 패에서 몬스터 소환 가능(필드 최대5칸). attack페이즈에 내 몬스터로 공격.',
-    '선공 1턴(turn===1)은 attack 없음.',
-    '형식: {"deploy":[{"action":"summonFromHand","cardId":"ID"}],"attack":[{"action":"attack","attackerId":"ID","targetIdx":숫자}|{"action":"directAttack","attackerId":"ID"}]}',
-    '공격 안 하면 attack:[]'
-  ].join(' ');
+// ─── 로컬 유효 행동 계산 ──────────────────────────────────────
+// Groq에게 규칙 판단을 맡기지 않는다.
+// 로컬에서 유효한 행동 목록을 먼저 계산 → Groq는 그 중에서만 고른다.
+
+/** 소환 가능한 몬스터 목록 (슬롯·cardType 조건 로컬 검증) */
+function _validSummons() {
+  var slotsLeft = (5 + (G.opExtraSlots || 0)) - G.opField.length;
+  if (slotsLeft <= 0) return [];
+  return G.opHand
+    .map(function(c, i) { return { idx: i, id: c.id, cd: CARDS[c.id] || {} }; })
+    .filter(function(x) { return x.cd.cardType === 'monster'; })
+    .slice(0, slotsLeft) // 슬롯 초과 소환 방지
+    .map(function(x) { return { action: 'summonFromHand', cardId: x.id, atk: x.cd.atk || 0 }; });
+}
+
+/** 가능한 공격 목록 (필드에 있는 카드만, 존재 확인) */
+function _validAttacks() {
+  var attacks = [];
+  var isFirstTurn = (G.turn === 1 && window.AI.role === 'host');
+  if (isFirstTurn) return [];
+
+  G.opField.forEach(function(mon) {
+    if (G.myField.length === 0) {
+      attacks.push({ action: 'directAttack', attackerId: mon.id, atkVal: mon.atk || 0 });
+    } else {
+      G.myField.forEach(function(def, di) {
+        attacks.push({ action: 'attack', attackerId: mon.id, targetIdx: di,
+          atkVal: mon.atk || 0, defVal: def.atk || 0, net: (mon.atk||0) - (def.atk||0) });
+      });
+    }
+  });
+  return attacks;
+}
+
+/** Groq 없이 로컬 로직만으로 소환 계획 (ATK 높은 순) */
+function _bestDeployPlan() {
+  return _validSummons().sort(function(a,b){ return b.atk - a.atk; });
+}
+
+// 공통 시스템 프롬프트
+var _SYSTEM_PROMPT = [
+  '너는 카드게임 AI다. JSON만 응답해라.',
+  '목표: 상대 손패(playerHandCount)를 0으로 만들면 승리.',
+  '전투: net>0 → 유리(상대 카드 묘지+패 손실). net<0 → 불리(내 카드 묘지+패 손실) → 절대 하지 마라.',
+  'net==0이고 atk>0 → 양쪽 묘지(내 필드 줄어듦, 신중히).',
+  '카드 effectNums를 읽고 소환/묘지/회수 효과를 전략에 반영해라.',
+  'player.field의 effectNums를 읽고 위협 카드를 우선 제거해라.',
+  'recentLog로 상대 패턴을 파악해라.',
+  'handDiff>0이면 공격적으로, <0이면 수비 우선.',
+].join(' ');
+
+/**
+ * [Deploy] 다음 소환 1장을 결정한다.
+ * 행동마다 현재 상황을 반영해 재질문.
+ * 반환: { action: "summon", index: number } | { action: "stop" }
+ */
+async function _groqNextSummon(options) {
+  if (!_WORKER_URL || !options.length) return { action: 'stop' };
   try {
     var resp = await fetch(_WORKER_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
+        max_tokens: 80,
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user',   content: JSON.stringify(_buildGameContext()) },
+          { role: 'system', content: _SYSTEM_PROMPT
+            + ' 지금 소환 페이즈. 다음 행동을 하나만 결정해라.'
+            + ' {"action":"summon","index":숫자} 또는 {"action":"stop"}(이번 턴 소환 그만).' },
+          { role: 'user', content: JSON.stringify({
+            game:    _buildGameContext(),
+            options: options.map(function(o, i) {
+              var cd = CARDS[o.cardId] || {};
+              return { index: i, cardId: o.cardId, name: cd.name, atk: o.atk,
+                effectNums: _parseEffectNums(cd.effects) };
+            }),
+          })},
         ],
-        temperature: 0.2,
+        temperature: 0.1,
       }),
     });
-    if (!resp.ok) return null;
+    if (!resp.ok) return { action: 'stop' };
     var data = await resp.json();
-    var txt = data.content || data.response || (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '{}';
+    var txt = data.content || data.response
+      || (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '{}';
     var m = String(txt).match(/\{[\s\S]*\}/);
-    return JSON.parse(m ? m[0] : '{}');
-  } catch(_) { return null; }
+    var p = JSON.parse(m ? m[0] : '{}');
+    if (p.action === 'summon' && Number.isInteger(p.index) && options[p.index]) return p;
+    return { action: 'stop' };
+  } catch(_) { return { action: 'stop' }; }
+}
+
+/**
+ * [Attack] 다음 공격 1번을 결정한다.
+ * 행동마다 현재 상황을 반영해 재질문.
+ * 반환: { action: "attack"|"directAttack"|"stop", index: number }
+ */
+async function _groqNextAttack(options) {
+  if (!_WORKER_URL || !options.length) return { action: 'stop' };
+  try {
+    var resp = await fetch(_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        max_tokens: 80,
+        messages: [
+          { role: 'system', content: _SYSTEM_PROMPT
+            + ' 지금 공격 페이즈. 다음 공격을 하나만 결정해라.'
+            + ' {"action":"attack","index":숫자} 또는 {"action":"stop"}(공격 그만).'
+            + ' net<0인 공격은 절대 고르지 마라.' },
+          { role: 'user', content: JSON.stringify({
+            game:    _buildGameContext(),
+            options: options.map(function(o, i) {
+              var atkCd = CARDS[o.attackerId] || {};
+              var defCd = o.targetIdx !== undefined
+                ? (CARDS[(G.myField[o.targetIdx] || {}).id] || {}) : {};
+              return {
+                index: i,
+                action: o.action,
+                attackerName: atkCd.name || o.attackerId,
+                attackerAtk:  o.atkVal,
+                targetName:   defCd.name,
+                targetAtk:    o.defVal,
+                net:          o.net,
+              };
+            }),
+          })},
+        ],
+        temperature: 0.1,
+      }),
+    });
+    if (!resp.ok) return { action: 'stop' };
+    var data = await resp.json();
+    var txt = data.content || data.response
+      || (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '{}';
+    var m = String(txt).match(/\{[\s\S]*\}/);
+    var p = JSON.parse(m ? m[0] : '{}');
+    if (p.action === 'attack' && Number.isInteger(p.index) && options[p.index]) return p;
+    return { action: 'stop' };
+  } catch(_) { return { action: 'stop' }; }
 }
 
 async function _groqChainDecision(chainState, options) {
@@ -180,7 +379,11 @@ async function _groqChainDecision(chainState, options) {
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
         messages: [
-          { role: 'system', content: 'JSON만 응답: {"action":"pass"} 또는 {"action":"activate","index":숫자}' },
+          { role: 'system', content: '너는 카드게임 AI다. 체인 응답 판단. JSON만 응답. '
+            + '체인 links에서 상대(by!=ai.role)가 유리한 효과를 발동했고 options에 대응 카드 있으면 activate. '
+            + '내가 손해 볼 상황이 아니면 pass (패 아끼기). '
+            + '상대 publicHand·grave·field를 고려해 판단해라. '
+            + '{"action":"pass"} 또는 {"action":"activate","index":숫자}' },
           { role: 'user',   content: JSON.stringify({
             chain: { links: (chainState.links||[]).map(function(l){return{by:l.by,type:l.type,label:l.label};}) },
             game:  _buildGameContext(),
@@ -282,19 +485,37 @@ async function _runAITurn() {
     await _sleep(200);
     if (token !== window.AI.turnToken) return;
 
-    // ── Deploy 페이즈 진입: phaseChange 신호 emit ──
+    // ── Deploy 페이즈 진입 ──
     _emit({ type: 'phaseChange', phase: 'deploy' });
     await _sleep(300);
 
-    // Groq에 소환 계획 요청
-    var plan = null;
-    try { plan = await _groqTurnPlan(); } catch(_) {}
-
-    var deploy = (plan && Array.isArray(plan.deploy)) ? plan.deploy : [];
-    for (var d = 0; d < deploy.length; d++) {
+    // ── Deploy: 소환 1장마다 Groq에 재질문 ──
+    var deployedCount = 0;
+    var MAX_SUMMONS = 5; // 무한루프 방지
+    while (deployedCount < MAX_SUMMONS) {
       if (token !== window.AI.turnToken) return;
-      if (deploy[d].action === 'summonFromHand' && deploy[d].cardId) {
-        _summonFromOppHand(deploy[d].cardId);
+      var summonOptions = _validSummons();
+      if (!summonOptions.length) break; // 소환 가능한 카드 없음
+
+      // Groq에 다음 소환 1장 결정 요청
+      var summonDecision = await _groqNextSummon(summonOptions);
+      if (summonDecision.action === 'stop') break; // Groq가 그만하라고 판단
+
+      var chosen = summonOptions[summonDecision.index];
+      if (!chosen) break;
+
+      _summonFromOppHand(chosen.cardId);
+      _logAction('ai', 'summon', chosen.cardId);
+      deployedCount++;
+      await _sleep(300);
+    }
+    // 폴백: Groq가 아무것도 안 소환했고 소환 가능한 카드가 있으면 ATK 높은 것 소환
+    if (deployedCount === 0) {
+      var fallbackDeploy = _bestDeployPlan();
+      for (var fd = 0; fd < fallbackDeploy.length; fd++) {
+        if (token !== window.AI.turnToken) return;
+        _summonFromOppHand(fallbackDeploy[fd].cardId);
+        _logAction('ai', 'summon', fallbackDeploy[fd].cardId);
         await _sleep(300);
       }
     }
@@ -304,25 +525,77 @@ async function _runAITurn() {
       _emit({ type: 'phaseChange', phase: 'attack' });
       await _sleep(300);
 
-      var attacks = (plan && Array.isArray(plan.attack) && plan.attack.length)
-        ? plan.attack : _bestAttackPlan();
-
-      for (var a = 0; a < attacks.length; a++) {
+      // 공격 1번마다 Groq에 재질문 (전투 결과로 필드가 바뀌므로)
+      var attackedIds = new Set(); // 이미 공격한 몬스터 추적
+      var MAX_ATTACKS = 10;
+      var attackCount = 0;
+      while (attackCount < MAX_ATTACKS) {
         if (token !== window.AI.turnToken) return;
-        var atk = attacks[a];
-        if (atk.action === 'attack' && typeof atk.targetIdx === 'number') {
-          var att = G.opField.find(function(c) { return c.id === atk.attackerId; });
-          var def = G.myField[atk.targetIdx];
-          if (att && def) _emit({ type: 'combat',
-            atkCard: { id: att.id, name: att.name, atk: att.atk },
-            defCard: { id: def.id, name: def.name, atk: def.atk },
-          });
-        } else if (atk.action === 'directAttack') {
-          var dm = G.opField.find(function(c) { return c.id === atk.attackerId; });
-          if (dm && G.myField.length === 0)
+
+        // 현재 필드 기준으로 공격 옵션 재계산 (전투로 카드가 묘지 갔을 수 있음)
+        var attackOptions = _validAttacks().filter(function(a) {
+          return !attackedIds.has(a.attackerId); // 이미 공격한 몬스터 제외
+        });
+        if (!attackOptions.length) break;
+
+        // Groq에 다음 공격 1번 결정 요청
+        var attackDecision = await _groqNextAttack(attackOptions);
+        if (attackDecision.action === 'stop') break;
+
+        var chosenAtk = attackOptions[attackDecision.index];
+        if (!chosenAtk) break;
+
+        if (chosenAtk.action === 'attack') {
+          var att = G.opField.find(function(c) { return c.id === chosenAtk.attackerId; });
+          var def = G.myField[chosenAtk.targetIdx];
+          if (att && def) {
+            _emit({ type: 'combat',
+              atkCard: { id: att.id, name: att.name, atk: att.atk },
+              defCard: { id: def.id, name: def.name, atk: def.atk },
+            });
+            _logAction('ai', 'attack', att.id + ' vs ' + def.id + '(net:' + (att.atk - def.atk) + ')');
+            attackedIds.add(chosenAtk.attackerId);
+          }
+        } else if (chosenAtk.action === 'directAttack') {
+          var dm = G.opField.find(function(c) { return c.id === chosenAtk.attackerId; });
+          if (dm && G.myField.length === 0) {
             _emit({ type: 'directAttack', card: { id: dm.id, name: dm.name, atk: dm.atk } });
+            _logAction('ai', 'directAttack', dm.id + '(atk:' + dm.atk + ')');
+            attackedIds.add(chosenAtk.attackerId);
+          }
         }
+        attackCount++;
         await _sleep(300);
+      }
+      // 폴백: Groq가 아무 공격도 안 했으면 로컬 최선 공격
+      if (attackCount === 0) {
+        var fallbackAttacks = _bestAttackPlan().sort(function(a, b) {
+          if (a.action === 'directAttack') return -1;
+          if (b.action === 'directAttack') return 1;
+          return (b.net || 0) - (a.net || 0);
+        });
+        for (var fa = 0; fa < fallbackAttacks.length; fa++) {
+          if (token !== window.AI.turnToken) return;
+          var fatk = fallbackAttacks[fa];
+          if (fatk.action === 'attack') {
+            var fatt = G.opField.find(function(c) { return c.id === fatk.attackerId; });
+            var fdef = G.myField[fatk.targetIdx];
+            if (fatt && fdef && !attackedIds.has(fatk.attackerId)) {
+              _emit({ type: 'combat',
+                atkCard: { id: fatt.id, name: fatt.name, atk: fatt.atk },
+                defCard: { id: fdef.id, name: fdef.name, atk: fdef.atk },
+              });
+              attackedIds.add(fatk.attackerId);
+            }
+          } else if (fatk.action === 'directAttack') {
+            var fdm = G.opField.find(function(c) { return c.id === fatk.attackerId; });
+            if (fdm && G.myField.length === 0 && !attackedIds.has(fatk.attackerId)) {
+              _emit({ type: 'directAttack', card: { id: fdm.id, name: fdm.name, atk: fdm.atk } });
+              attackedIds.add(fatk.attackerId);
+            }
+          }
+          await _sleep(300);
+        }
       }
     }
 
@@ -350,6 +623,16 @@ async function _runAITurn() {
       renderAll();
       return;
     }
+
+    // 플레이어 행동을 게임 로그에 기록 (AI가 상대 패턴 파악용)
+    if (window.AI && window.AI.active && action.by && action.by !== window.AI.role) {
+      if (action.type === 'summon') _logAction('player', 'summon', action.cardId);
+      else if (action.type === 'draw') _logAction('player', 'draw', '');
+      else if (action.type === 'combat') _logAction('player', 'attack', (action.atkCard && action.atkCard.id) + ' vs ' + (action.defCard && action.defCard.id));
+      else if (action.type === 'directAttack') _logAction('player', 'directAttack', action.card && action.card.id);
+      else if (action.type === 'activate' || action.type === 'discard') _logAction('player', action.type, action.cardId);
+    }
+
     _orig.apply(this, arguments);
   };
 })();
