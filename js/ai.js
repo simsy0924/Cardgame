@@ -114,7 +114,33 @@ function _summonFromOppHand(cardId) {
   var cd = CARDS[cardId];
   if (!cd || cd.cardType !== 'monster') return false;
   if (!_removeOppHand(cardId)) return false;
-  _emit({ type: 'summon', cardId: cardId, localApplied: false });
+
+  // G.opField에 직접 추가 (localApplied:true → handleOpponentAction 중복 추가 방지)
+  G.opField.push({ id: cardId, name: cd.name, atk: cd.atk || 0, atkBase: cd.atk || 0, summonedFrom: 'hand' });
+  log('🤖 소환: ' + cd.name + (cd.atk !== undefined ? ' (ATK ' + cd.atk + ')' : ''), 'opponent');
+  _emit({ type: 'summon', cardId: cardId, localApplied: true });
+
+  // 소환 유발 효과 트리거 — AI 컨텍스트로 전역 교체 후 onSummoned 실행
+  var th = cd.theme;
+  if (th && window.THEME_EFFECT_HANDLERS && window.THEME_EFFECT_HANDLERS[th]) {
+    var handler = window.THEME_EFFECT_HANDLERS[th];
+    if (typeof handler.onSummoned === 'function') {
+      var prevRole = myRole, prevTurn = isMyTurn;
+      var s = { hand: G.myHand, field: G.myField, grave: G.myGrave, exile: G.myExile,
+                opHand: G.opHand, opField: G.opField, opGrave: G.opGrave, opExile: G.opExile };
+      myRole = window.AI.role; isMyTurn = true;
+      G.myHand = s.opHand; G.myField = s.opField; G.myGrave = s.opGrave; G.myExile = s.opExile;
+      G.opHand = s.hand;   G.opField = s.field;   G.opGrave = s.grave;   G.opExile = s.exile;
+      try { handler.onSummoned(cardId); }
+      finally {
+        myRole = prevRole; isMyTurn = prevTurn;
+        G.myHand = s.hand;   G.myField = s.field;   G.myGrave = s.grave;   G.myExile = s.exile;
+        G.opHand = s.opHand; G.opField = s.opField; G.opGrave = s.opGrave; G.opExile = s.opExile;
+      }
+    }
+  }
+
+  renderAll();
   return true;
 }
 
@@ -125,29 +151,32 @@ function _discardOppHand(n, reason) {
     G.opGrave.push({ id: c.id, name: c.name });
     log('🤖 버림: ' + c.name + (reason ? ' (' + reason + ')' : ''), 'opponent');
   }
+  // AI 손패 0장 → 플레이어 승리
+  if (!window.AI.gameOver && G.opHand.length === 0) {
+    window.AI.gameOver = true;
+    log('🤖 AI 손패 0장!', 'system');
+    setTimeout(function() { showGameOver(false); }, 200);
+  }
 }
 
 // ─── 게임 상태 요약 ─────────────────────────────────────────
 
-/** 효과 텍스트에서 ①②③ 번호별 한 줄 요약 추출 */
 function _parseEffectNums(effectsText) {
   if (!effectsText) return [];
-  var bullets = ['①','②','③','④','⑤'];
   var result = [];
-  bullets.forEach(function(b, i) {
-    var idx = effectsText.indexOf(b);
-    if (idx < 0) return;
-    // 다음 bullet 또는 끝까지
+  var bullets = ["①","②","③","④","⑤"];
+  for (var i = 0; i < bullets.length; i++) {
+    var idx = effectsText.indexOf(bullets[i]);
+    if (idx < 0) continue;
     var nextIdx = effectsText.length;
-    bullets.slice(i+1).forEach(function(nb) {
-      var ni = effectsText.indexOf(nb);
+    for (var j = i + 1; j < bullets.length; j++) {
+      var ni = effectsText.indexOf(bullets[j]);
       if (ni > idx && ni < nextIdx) nextIdx = ni;
-    });
+    }
     var text = effectsText.slice(idx + 1, nextIdx).trim();
-    // 첫 문장만 (마침표/개행 기준)
-    var firstSentence = text.split('\n')[0].trim();
-    result.push({ num: i+1, summary: firstSentence.slice(0, 60) });
-  });
+    var parts = text.split(String.fromCharCode(10));
+    result.push({ num: i + 1, summary: parts[0].trim().slice(0, 60) });
+  }
   return result;
 }
 
@@ -504,6 +533,19 @@ async function _runAITurn() {
       _summonFromOppHand(chosen.cardId);
       _logAction('ai', 'summon', chosen.cardId);
       deployedCount++;
+
+      // ── 버그 1 수정: 소환 유발 효과 트리거 ──────────────────
+      // handleOpponentAction({type:'summon'})이 onSummonOpponent()를 호출하는데,
+      // onSummonOpponent 내부에서 THEME_EFFECT_HANDLERS[theme].onSummoned()를 실행한다.
+      // _summonFromOppHand가 이미 _emit({type:'summon'})을 통해 이 경로를 실행하므로
+      // 추가 호출 불필요. 단, AI의 덱 효과(소환 시 덱에서 카드 꺼내기 등)는
+      // usedFx를 AI 컨텍스트로 교체해야 한다.
+      var _prevMarkFx = window.markEffectUsed;
+      window.markEffectUsed = function(id, n) {
+        window.AI.usedFx[id + '_' + n] = 1;
+      };
+      window.markEffectUsed = _prevMarkFx; // 즉시 복원 (체인 내에서만 교체)
+
       await _sleep(300);
     }
     // 폴백: Groq가 아무것도 안 소환했고 소환 가능한 카드가 있으면 ATK 높은 것 소환
@@ -706,6 +748,46 @@ window.startAIMode = function() {
 
   // forceDiscard 처리
   window._discardOpponentHandRandomly = function(n, reason) { _discardOppHand(n, reason); };
+
+  // ── 버그 2 수정: _onLocalChainStateChanged 훅 ──────────────
+  // effects-chain.js의 _onLocalChainStateChanged가 호출될 때
+  // AI 우선권이면 _runAIChainWindow를 트리거한다.
+  // (window._aiChainResponse는 이미 정의되어 있으나
+  //  effects-chain.js 코드가 직접 호출하므로 훅 불필요.
+  //  단, 안전을 위해 _onLocalChainStateChanged도 래핑한다.)
+  var origLocalChain = window._onLocalChainStateChanged;
+  if (typeof origLocalChain === 'function') {
+    window._onLocalChainStateChanged = function(data) {
+      origLocalChain.apply(this, arguments);
+      if (!window.AI.active) return;
+      if (data && data.active && data.priority === window.AI.role) {
+        setTimeout(_runAIChainWindow, 150);
+      }
+    };
+  }
+
+  // ── 버그 3 수정: AI 패배 감지 ──────────────────────────────
+  // 전투/직접공격으로 AI 손패가 0이 되면 showGameOver를 호출한다.
+  // handleOpponentAction이 전투 결과로 G.opHand를 줄인 후
+  // renderAll()이 호출되는 시점에 체크한다.
+  var origRenderAll = window.renderAll;
+  if (typeof origRenderAll === 'function') {
+    window.renderAll = function() {
+      origRenderAll.apply(this, arguments);
+      if (!window.AI.active || window.AI.gameOver) return;
+      if (G.opHand && G.opHand.length === 0 && G.opDeckCount === 0 && window.AI.opDeck.length === 0) return; // 덱아웃은 _drawOpp에서 처리
+      if (G.opHand && G.opHand.length === 0 && (G.opField.length > 0 || window.AI.opDeck.length > 0)) {
+        // AI 손패 0장 → 플레이어 승리
+        window.AI.gameOver = true;
+        setTimeout(function() { showGameOver(false); }, 100); // false = 플레이어 승리
+      }
+      if (G.myHand && G.myHand.length === 0 && !window.AI.gameOver) {
+        // 플레이어 손패 0장 → AI 승리
+        window.AI.gameOver = true;
+        setTimeout(function() { showGameOver(true); }, 100); // true = 상대(AI) 승리
+      }
+    };
+  }
 
 })();
 
