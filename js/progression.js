@@ -142,7 +142,6 @@ window.startTutorial = function() {
 
 window.chooseStarterThemeWithCurrency = async function() {
   if (!window.currentUser || !window.fsdb) { notify('로그인 후 선택할 수 있습니다.'); return; }
-  if (window.userProfile?.selectedStarterTheme) { notify('이미 스타터 테마를 선택했습니다.'); return; }
 
   const price = Number(window.STARTER_THEME_PRICE || 350);
   const themes = (window.STARTER_THEME_PRESETS || []).join(', ');
@@ -183,6 +182,8 @@ window.chooseStarterThemeWithCurrency = async function() {
     }
     return;
   }
+
+  if (window.userProfile?.selectedStarterTheme) { notify('이미 스타터 테마를 선택했습니다.'); return; }
 
   if (!(window.STARTER_THEME_PRESETS || []).includes(theme)) {
     notify('선택할 수 없는 테마입니다.');
