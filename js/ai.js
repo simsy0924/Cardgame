@@ -250,7 +250,8 @@ async function _runAITurn() {
     }
 
     advancePhase('end');
-    endTurn();
+    // AI는 원격 상대처럼 endTurn 액션을 emit해서 우선권/턴 전환을 동일 파이프라인으로 처리
+    _emit({ type: 'endTurn' });
   } finally {
     window.AI.thinking = false;
   }
