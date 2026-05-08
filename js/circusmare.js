@@ -872,26 +872,13 @@ registerThemeEffectHandler('서커스메어', {
     };
   }
 
-  // 덱빌더 UI에 버튼 삽입
-  function injectButton() {
-    const deckActions = document.querySelector('.deck-actions');
-    if (!deckActions) { setTimeout(injectButton, 200); return; }
-    if (deckActions.querySelector('[data-preset="서커스메어"]')) return;
     const btn = document.createElement('button');
-    btn.className = 'btn btn-secondary';
-    btn.textContent = '서커스메어';
-    btn.setAttribute('data-preset', '서커스메어');
-    btn.onclick = () => loadPreset('서커스메어');
-    const clearBtn = Array.from(deckActions.querySelectorAll('button'))
       .find(b => b.textContent.trim() === '초기화');
-    if (clearBtn) deckActions.insertBefore(btn, clearBtn);
-    else deckActions.appendChild(btn);
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { patchPreset(); injectButton(); });
+    document.addEventListener('DOMContentLoaded', patchPreset);
   } else {
     patchPreset();
-    injectButton();
   }
 })();
