@@ -362,8 +362,9 @@ function maxFieldSlots() { return 5; }
 
 function summonFromDeck(cardId) {
   if (G.myField.length >= maxFieldSlots()) { notify('몬스터 존이 가득 찼습니다.'); return false; }
-  if (!removeFromDeck(cardId)) return false;
   const card = CARDS[cardId];
+  if (!card || card.cardType !== 'monster') { notify('몬스터만 소환할 수 있습니다.'); return false; }
+  if (!removeFromDeck(cardId)) return false;
   G.myField.push({ id: cardId, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'deck' });
   log(`덱에서 소환: ${card.name}`, 'mine');
   sendGameState(); onSummon(cardId, 'deck'); return true;
@@ -379,9 +380,11 @@ function summonFromHand(handIdx) {
 }
 function summonFromGrave(cardId) {
   if (G.myField.length >= maxFieldSlots()) { notify('몬스터 존이 가득 찼습니다.'); return false; }
+  const card = CARDS[cardId];
+  if (!card || card.cardType !== 'monster') { notify('몬스터만 소환할 수 있습니다.'); return false; }
   const idx = G.myGrave.findIndex(c => c.id === cardId);
   if (idx < 0) return false;
-  const c = G.myGrave.splice(idx, 1)[0]; const card = CARDS[cardId];
+  const c = G.myGrave.splice(idx, 1)[0];
   G.myField.push({ id: cardId, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'grave' });
   log(`묘지에서 소환: ${card.name}`, 'mine'); sendGameState(); onSummon(cardId, 'grave'); return true;
 }
