@@ -147,8 +147,7 @@ function _parseEffectNums(effectsText) {
     });
     var text = effectsText.slice(idx + 1, nextIdx).trim();
     // 첫 문장만 (마침표/개행 기준)
-    var firstSentence = text.split('
-')[0].trim();
+    var firstSentence = text.split('\n')[0].trim();
     result.push({ num: i+1, summary: firstSentence.slice(0, 60) });
   });
   return result;
