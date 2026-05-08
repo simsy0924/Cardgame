@@ -409,8 +409,8 @@ async function _runAITurn() {
 
 window.startAIMode = function () {
   window.AI.active = true;
-  window.roomRef   = null;
-  window.myRole    = 'host'; // 플레이어=host(선공), AI=guest(후공)
+  roomRef = null;   // roomRef는 engine.js의 let 변수
+  myRole  = 'host'; // myRole도 engine.js의 let 변수 — window.myRole은 별개
 
   var btn = document.getElementById('dbConfirmBtn');
   if (btn) btn.textContent = 'AI 대전 시작 →';
