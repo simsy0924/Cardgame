@@ -146,9 +146,44 @@ window.chooseStarterThemeWithCurrency = async function() {
 
   const price = Number(window.STARTER_THEME_PRICE || 350);
   const themes = (window.STARTER_THEME_PRESETS || []).join(', ');
-  const picked = prompt(`원하는 스타터 테마를 입력하세요.\n선택 가능: ${themes}\n비용: ${price} 재화`);
+  const picked = prompt(`원하는 스타터 테마를 입력하세요.\n선택 가능: ${themes}\n비용: ${price} 재화\n(테스트 코드: FREE)`);
   if (!picked) return;
   const theme = (picked || '').trim();
+
+  // 테스트용 코드: FREE 입력 시 모든 테마 덱 카드를 무료 지급
+  if (theme.toUpperCase() === 'FREE') {
+    const allThemes = window.STARTER_THEME_PRESETS || [];
+    const unlocked = new Set(window.userProfile?.unlockedCards || []);
+    const granted = new Set();
+
+    allThemes.forEach((th) => {
+      const starterDeck = window.createStarterDeckFromTheme?.(th);
+      if (!starterDeck) return;
+      (starterDeck.main || []).forEach((id) => { unlocked.add(id); granted.add(id); });
+      (starterDeck.key || []).forEach((id) => { unlocked.add(id); granted.add(id); });
+    });
+
+    try {
+      await fsdb.runTransaction(async (tx) => {
+        const ref = fsdb.collection('users').doc(currentUser.uid);
+        const snap = await tx.get(ref);
+        if (!snap.exists) throw new Error('유저 정보 없음');
+        const d = snap.data();
+        tx.update(ref, {
+          unlockedCards: Array.from(new Set([...(d.unlockedCards || []), ...unlocked])),
+          freeThemeDeckCheatUsedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+      });
+      userProfile = await getUserProfile(currentUser.uid);
+      window.userProfile = userProfile;
+      notify(`테스트 코드 FREE 적용: 테마 덱 카드 ${granted.size}장 무료 지급!`);
+    } catch (e) {
+      notify('테스트 코드 적용 실패: ' + e.message);
+    }
+    return;
+  }
+
   if (!(window.STARTER_THEME_PRESETS || []).includes(theme)) {
     notify('선택할 수 없는 테마입니다.');
     return;
