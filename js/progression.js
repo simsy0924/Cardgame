@@ -149,17 +149,15 @@ window.chooseStarterThemeWithCurrency = async function() {
   if (!picked) return;
   const theme = (picked || '').trim();
 
-  // 테스트용 코드: FREE 입력 시 모든 테마 덱 카드를 무료 지급
+  // 테스트용 코드: FREE 입력 시 모든 카드를 무료 지급
   if (theme.toUpperCase() === 'FREE') {
-    const allThemes = window.STARTER_THEME_PRESETS || [];
     const unlocked = new Set(window.userProfile?.unlockedCards || []);
     const granted = new Set();
+    const allCardIds = Object.keys(window.CARDS || CARDS || {});
 
-    allThemes.forEach((th) => {
-      const starterDeck = window.createStarterDeckFromTheme?.(th);
-      if (!starterDeck) return;
-      (starterDeck.main || []).forEach((id) => { unlocked.add(id); granted.add(id); });
-      (starterDeck.key || []).forEach((id) => { unlocked.add(id); granted.add(id); });
+    allCardIds.forEach((id) => {
+      if (!unlocked.has(id)) granted.add(id);
+      unlocked.add(id);
     });
 
     try {
@@ -176,7 +174,7 @@ window.chooseStarterThemeWithCurrency = async function() {
       });
       userProfile = await getUserProfile(currentUser.uid);
       window.userProfile = userProfile;
-      notify(`테스트 코드 FREE 적용: 테마 덱 카드 ${granted.size}장 무료 지급!`);
+      notify(`테스트 코드 FREE 적용: 전체 카드 ${granted.size}장 무료 지급!`);
     } catch (e) {
       notify('테스트 코드 적용 실패: ' + e.message);
     }
