@@ -177,8 +177,8 @@ function resolveCmMedSeal2() {
   const targets = G.myHand.filter(h => h.id !== '서커스메어 메드 씰' && isCircusmareMonster(h.id));
   if (!targets.length) { notify('패에 소환할 서커스메어 몬스터 없음'); return; }
   openCardPicker(targets, '메드 씰 ②: 패에서 소환 (최대 3장)', Math.min(3, targets.length), (sel) => {
-    sel.map(i => targets[i]?.id).filter(Boolean).forEach(id => {
-      const hi = G.myHand.findIndex(h => h.id === id);
+    sel.map(i => targets[i]).filter(Boolean).forEach(target => {
+      const hi = G.myHand.indexOf(target);
       if (hi >= 0) summonFromHand(hi);
     });
     sendGameState(); renderAll();
@@ -381,8 +381,8 @@ function activateCmCoinJester() {
   if (!canUseEffect('서커스메어 코인 제스터', 1)) { notify('이미 사용했습니다.'); return; }
   if (!activeChainState?.active) { notify('상대 효과 발동 시에만 사용 가능합니다.'); return; }
   if (!(activeChainState.links || []).some(l => l.by !== myRole)) { notify('상대 효과 발동 시에만 사용 가능합니다.'); return; }
-  markEffectUsed('서커스메어 코인 제스터', 1);
   if (!_cmSummonKeyCard('서커스메어 코인 제스터')) return;
+  markEffectUsed('서커스메어 코인 제스터', 1);
   addChainLink({ type: 'triggerCmCoinJester1', label: '코인 제스터 ①' });
   sendGameState(); renderAll();
 }
@@ -394,9 +394,18 @@ function resolveCmCoinJester1() {
     if (pickable > 0) {
       openCardPicker(opTargets, `코인 제스터 ①: 묘지로 보낼 상대 카드 (최대 ${heads}장)`, pickable, (sel) => {
         sel.map(i => opTargets[i]).filter(Boolean).forEach(t => {
-          const oi = G.opField.findIndex(f => f.id === t.id);
-          if (oi >= 0) { G.opGrave.push(G.opField.splice(oi, 1)[0]); sendAction({ type: 'opFieldRemove', cardId: t.id, to: 'grave' }); return; }
-          if (G.opFieldCard?.id === t.id) { G.opGrave.push(G.opFieldCard); sendAction({ type: 'opFieldCardRemove', cardId: t.id, to: 'grave' }); G.opFieldCard = null; }
+          const oi = G.opField.indexOf(t);
+          if (oi >= 0) {
+            const removed = G.opField.splice(oi, 1)[0];
+            G.opGrave.push(removed);
+            sendAction({ type: 'opFieldRemove', cardId: removed.id, to: 'grave' });
+            return;
+          }
+          if (G.opFieldCard === t) {
+            G.opGrave.push(G.opFieldCard);
+            sendAction({ type: 'opFieldCardRemove', cardId: t.id, to: 'grave' });
+            G.opFieldCard = null;
+          }
         });
         const remain = heads - sel.length;
         if (remain > 0) { sendAction({ type: 'opDiscardRandom', count: remain, reason: '코인 제스터 ①' }); if (window._discardOpponentHandRandomly) _discardOpponentHandRandomly(remain, '코인 제스터 ①'); }
@@ -436,8 +445,8 @@ function activateCmMaskJester() {
   if (!canUseEffect('서커스메어 마스크 제스터', 1)) { notify('이미 사용했습니다.'); return; }
   if (!activeChainState?.active) { notify('상대 효과 발동 시에만 사용 가능합니다.'); return; }
   if (!(activeChainState.links || []).some(l => l.by !== myRole)) { notify('상대 효과 발동 시에만 사용 가능합니다.'); return; }
-  markEffectUsed('서커스메어 마스크 제스터', 1);
   if (!_cmSummonKeyCard('서커스메어 마스크 제스터')) return;
+  markEffectUsed('서커스메어 마스크 제스터', 1);
   addChainLink({ type: 'triggerCmMaskJester1', label: '마스크 제스터 ①' });
   sendGameState(); renderAll();
 }
@@ -446,14 +455,14 @@ function resolveCmMaskJester1() {
   const tails = 3 - heads;
   if (heads > 0) {
     const dc = G.myDeck.filter(d => isCircusmareCard(d.id));
-    dc.slice(0, heads).forEach(t => { const di = G.myDeck.findIndex(d => d.id === t.id); if (di >= 0) G.myGrave.push(G.myDeck.splice(di, 1)[0]); });
+    dc.slice(0, heads).forEach(t => { const di = G.myDeck.indexOf(t); if (di >= 0) G.myGrave.push(G.myDeck.splice(di, 1)[0]); });
     log(`마스크 제스터 ①: 앞면 ${heads}회 → 덱 서커스메어 묘지`, 'mine');
   }
   if (tails > 0) {
     const gc = G.myGrave.filter(g => isCircusmareCard(g.id));
     if (gc.length > 0) {
       openCardPicker(gc, `마스크 제스터 ①: 묘지에서 서커스메어 패로 (최대 ${tails}장)`, Math.min(tails, gc.length), (sel) => {
-        sel.map(i => gc[i]).filter(Boolean).forEach(t => { const gi = G.myGrave.findIndex(g => g.id === t.id); if (gi >= 0) G.myHand.push(G.myGrave.splice(gi, 1)[0]); });
+        sel.map(i => gc[i]).filter(Boolean).forEach(t => { const gi = G.myGrave.indexOf(t); if (gi >= 0) G.myHand.push(G.myGrave.splice(gi, 1)[0]); });
         sendGameState(); renderAll();
       });
       return;
