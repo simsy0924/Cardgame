@@ -1,1220 +1,241 @@
-
-// ============================================================
-// ai.js — AI 대전 모듈 (v2)
-//
-// 설계 원칙:
-//   - AI는 "보이지 않는 원격 상대"로 동작
-//   - handleOpponentAction / forceDiscard 등 대인전 엔진을 그대로 재사용
-//   - roomRef = null 이므로 로컬 체인 해결(executeChainLocally) 경로 활용
-//   - AI 전용 상태(opDeck, attacked, usedFx)만 window.AI에서 관리
-//
-// 수정된 버그 목록:
-//   BUG-01: _setupAI() 이중 호출 → enterGameWithDeck 훅에서 _pendingSetup 취소
-//   BUG-02: _aiAttack() 동점 판정 오류 → 동점 시 양쪽 묘지 처리 추가
-//   BUG-03: checkWinCondition 훅 원본 미호출 → 모든 경로에서 원본 호출
-//   BUG-04: _fallback() 미소환 카드로 공격 플랜 → 실제 필드 기준으로만
-//   BUG-05: advancePhase('deploy') 이중 호출 → setTimeout 블록 제거
-//   BUG-06: _aiTurn() 드로우 페이즈 강제 진입
-//   BUG-07: _chainSignature()에 priority 포함 → 링크 내용만으로 시그니처 구성
-//   BUG-08: 체인 상태 얕은 복사 → links 배열 딥카피
-//   BUG-09: _buildAIDeck() 패딩 카드 유효성 검사 추가
-//   BUG-10: _playerCanRespondInChain() collectChainOptions 인자 누락 수정
-//   BUG-11: 수문장 펭귄 reduce() 빈 배열 크래시 → 가드 추가
-//   BUG-12: _lobby() 중복 삽입 → 불필요한 setTimeout 중복 제거
-// ============================================================
 'use strict';
 
-// ★ Cloudflare Worker URL
+// ai.js — AI 모드: 대인전 액션 파이프라인 재사용
+// 원칙:
+// 1) AI는 roomRef 없는 "원격 상대"처럼 동작
+// 2) 상대 행동 반영은 모두 handleOpponentAction 으로 통일
+// 3) UI 진입/Worker(Groq) 연동은 유지
+
 var _WORKER_URL = 'https://workers-ai.simsy0924.workers.dev';
 
-// ─────────────────────────────────────────────────────────────
-// AI 전역 상태
-// ─────────────────────────────────────────────────────────────
 window.AI = {
-  active:      false,
-  thinking:    false,
-  opDeck:      [],
-  deckPreset:  null,
-  usedFx:      {},
-  attacked:    new Set(),
-  chainMemory: { respondedSig: null },
-  chainTimer:  null,
-  chainWatcher: null,
+  active: false,
+  thinking: false,
+  opDeck: [],
+  role: 'guest',
+  turnToken: 0,
 };
 
-function _resetAIRuntime() {
-  if (window.AI.chainTimer)   clearTimeout(window.AI.chainTimer);
-  if (window.AI.chainWatcher) clearInterval(window.AI.chainWatcher);
-  window.AI.thinking    = false;
-  window.AI.usedFx      = {};
-  window.AI.attacked    = new Set();
-  window.AI.chainMemory = { respondedSig: null };
-  window.AI.chainTimer  = null;
-  window.AI.chainWatcher = null;
+function _sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
+function _aiRole() { return (myRole === 'host') ? 'guest' : 'host'; }
+
+function _emit(action) {
+  handleOpponentAction(Object.assign({ by: window.AI.role, ts: Date.now() }, action));
 }
 
-var _s = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
-
-function _safeHook(name, wrapper) {
-  var orig = window[name];
-  if (typeof orig !== 'function') return false;
-  window[name] = wrapper(orig);
-  return true;
+function _resetAI() {
+  window.AI.thinking = false;
+  window.AI.turnToken = 0;
 }
 
-function _playerRole() { return myRole || 'host'; }
-function _aiRole()     { return _playerRole() === 'host' ? 'guest' : 'host'; }
 
+function _ensureAILobbyEntry() {
+  var lobby = document.getElementById('lobby');
+  if (!lobby || document.getElementById('aiMatchBtn')) return;
 
-// ─────────────────────────────────────────────────────────────
-// 훅 등록
-// ─────────────────────────────────────────────────────────────
+  var card = document.createElement('div');
+  card.className = 'lobby-card';
+  card.id = 'aiLobbyCard';
+  card.innerHTML = [
+    '<h2><span class="icon">🤖</span>AI 대전</h2>',
+    '<p style="font-size:.8rem;color:var(--text-dim)">오프라인으로 즉시 시작합니다.</p>',
+    '<button id="aiMatchBtn" class="btn btn-primary">AI 대전 시작</button>'
+  ].join('');
 
-// [BUG-01 FIX] _setupAI 이중 호출 방지:
-// enterGameWithDeck 훅에서 _pendingSetup 플래그를 즉시 해제해
-// setInterval 쪽이 중복으로 _setupAI()를 호출하지 못하도록 막음
-_safeHook('enterGameWithDeck', function(_origEGWD) {
-  return function() {
-    _origEGWD.apply(this, arguments);
-    if (!window.AI.active) return;
-    window.AI._pendingSetup = false; // setInterval 중복 방지
-    _setupAI();
-  };
-});
+  var shopCard = Array.from(lobby.querySelectorAll('.lobby-card')).pop();
+  if (shopCard && shopCard.parentNode === lobby) lobby.insertBefore(card, shopCard);
+  else lobby.appendChild(card);
 
-_safeHook('endTurn', function(_origET) {
-  return function() {
-    _origET.apply(this, arguments);
-    if (!window.AI.active) return;
-    if (isMyTurn) return;
-    setTimeout(function() {
-      if (!window.AI.active || isMyTurn) return;
-      _aiTurn();
-    }, 500);
-  };
-});
+  var btn = document.getElementById('aiMatchBtn');
+  if (btn) btn.onclick = function() { window.startAIMode(); };
+}
 
-// [BUG-03 FIX] checkWinCondition: 모든 분기에서 원본 호출
-_safeHook('checkWinCondition', function(_origCWC) {
-  return function() {
-    if (!window.AI.active) {
-      _origCWC.apply(this, arguments);
-      return;
-    }
-    // 플레이어 패 0 → 패배
-    if (G.myHand.length === 0) {
-      _origCWC.apply(this, arguments);
-      return;
-    }
-    // AI 패 0 → 승리
-    if (G.opHand.length === 0) {
-      _origCWC.apply(this, arguments); // 원본 정리 로직 실행
-      showGameOver(true);
-      return;
-    }
-    // 그 외 (덱아웃 등 다른 승리 조건도 원본에서 체크)
-    _origCWC.apply(this, arguments);
-  };
-});
-
-
-// ─────────────────────────────────────────────────────────────
-// AI 모드 진입
-// ─────────────────────────────────────────────────────────────
-window.startAIMode = function() {
-  _resetAIRuntime();
-  window.AI.active = true;
-  window.roomRef   = null;   // roomRef=null → 로컬 체인 경로 사용
-  window.myRole    = 'host'; // 플레이어=선공(host), AI=후공(guest)
-
-  var btn = document.getElementById('dbConfirmBtn');
-  if (btn) btn.textContent = 'AI 대전 시작 →';
-
-  document.getElementById('lobby').style.display      = 'none';
-  document.getElementById('deckBuilder').style.display = 'flex';
-  if (typeof filterDeckPool    === 'function') filterDeckPool('전체');
-  if (typeof renderBuilderDeck === 'function') renderBuilderDeck();
-};
-
-
-// ─────────────────────────────────────────────────────────────
-// AI 덱 빌드
-// ─────────────────────────────────────────────────────────────
 function _buildAIDeck() {
-  // 플레이어 덱의 주요 테마 분석해서 카운터 덱 선택
-  var pd = window._confirmedDeck || [];
-  var tc = {};
-  pd.forEach(function(id) {
-    var t = CARDS[id] && CARDS[id].theme;
-    if (t) tc[t] = (tc[t] || 0) + 1;
-  });
-  var top = '펭귄', topN = 0;
-  Object.keys(tc).forEach(function(t) {
-    if (tc[t] > topN) { topN = tc[t]; top = t; }
-  });
-  var cm = {
-    '펭귄':     '크툴루',
-    '올드원':   '펭귄',
-    '라이온':   '타이거',
-    '타이거':   '라이온',
-    '라이거':   '펭귄',
-    '지배자':   '크툴루',
-    '마피아':   '펭귄',
-    '불가사의': '펭귄',
-  };
-  window.AI.deckPreset = cm[top] || '크툴루';
-
-  // [BUG-09 FIX] 패딩 카드 유효성 검사: CARDS에 존재하는 카드만 사용
-  var PADDING_CARDS = ['구사일생', '눈에는 눈', '출입통제'];
-  var validPadding  = PADDING_CARDS.filter(function(id) { return !!CARDS[id]; });
-
-  var list = _aiDeckList(window.AI.deckPreset).filter(function(id) { return !!CARDS[id]; });
-  var pi = 0;
-  while (list.length < 40 && validPadding.length > 0) {
-    list.push(validPadding[pi % validPadding.length]);
-    pi++;
+  var base = _aiDeckList('크툴루').filter(function(id) { return !!CARDS[id]; });
+  var pads = ['구사일생', '눈에는 눈', '출입통제'].filter(function(id) { return !!CARDS[id]; });
+  var i = 0;
+  while (base.length < 40 && pads.length) {
+    base.push(pads[i % pads.length]);
+    i++;
   }
-
-  window.AI.opDeck = shuffle(list.map(function(id) {
-    return { id: id, name: CARDS[id].name };
-  }));
-  window.AI.usedFx      = {};
-  window.AI.attacked    = new Set();
-  window.AI.chainMemory = { respondedSig: null };
+  return shuffle(base.map(function(id) { return { id: id, name: CARDS[id].name }; }));
 }
 
-
-// ─────────────────────────────────────────────────────────────
-// enterGameWithDeck 완료 직후 실행
-// ─────────────────────────────────────────────────────────────
-function _setupAI() {
-  if (!window.AI.active) return;
-  _resetAIRuntime();
-  _buildAIDeck();
-  // [BUG FIX] AI 역할을 고정값으로 저장 — withAIRole로 myRole이 교체됐을 때도 안전하게 참조
-  window.AI._aiRole  = _aiRole();
-  window.AI._plRole  = _playerRole();
-
-  // AI의 게임 존 초기화 (대인전에서 opHand/opField 등을 사용하는 구조와 동일)
-  G.opHand      = [];
-  G.opField     = [];
-  G.opGrave     = [];
-  G.opExile     = [];
-  G.opFieldCard = null;
-  G.opKeyDeck   = _aiKeyList(window.AI.deckPreset);
-  G.opDeckCount = window.AI.opDeck.length;
-
-  // AI 초기 드로우 7장 (후공 guest 기준)
-  for (var i = 0; i < 7; i++) _aiDrawOne();
-
-  document.getElementById('hdrOpName').textContent   = '🤖 AI (' + window.AI.deckPreset + ')';
-  document.getElementById('opNameLabel').textContent = '🤖 AI';
-
-  // roomRef 없이도 동작하는 로컬 클럭
-  gameClock = {
-    host:        500,
-    guest:       500,
-    runningFor:  'host',
-    lastUpdated: Date.now(),
-  };
-
-  _aiBanner();
-  log('🤖 AI (' + window.AI.deckPreset + ') 후공 참전! 패 ' + G.opHand.length + '장', 'system');
-
-  G.turn = 1;
-  G.activePlayer = 'host';
-  currentPhase   = 'deploy';
-  isMyTurn       = true;
-  // [BUG-05 FIX] advancePhase 단 1회만 호출 (이중 호출 제거)
-  advancePhase('deploy');
-  renderAll();
-
-  _startAIChainWatcher();
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// AI 내부 조작 헬퍼
-// ─────────────────────────────────────────────────────────────
-
-function _aiDrawOne() {
+function _drawOpp() {
   if (!window.AI.opDeck.length) {
     log('🤖 AI 덱 아웃!', 'system');
     showGameOver(true);
     return false;
   }
   var c = window.AI.opDeck.shift();
-  G.opHand.push({ id: c.id, name: c.name });
+  G.opHand.push({ id: c.id, name: c.name, isPublic: false });
   G.opDeckCount = window.AI.opDeck.length;
   return true;
 }
 
-function _aiDrawN(n) {
-  for (var i = 0; i < n; i++) if (!_aiDrawOne()) return false;
+function _removeOppHand(cardId) {
+  var idx = G.opHand.findIndex(function(c) { return c.id === cardId; });
+  if (idx >= 0) G.opHand.splice(idx, 1);
+  return idx >= 0;
+}
+
+function _summonFromOppHand(cardId) {
+  var cd = CARDS[cardId];
+  if (!cd || cd.cardType !== 'monster') return false;
+  if (!_removeOppHand(cardId)) return false;
+  _emit({ type: 'summon', cardId: cardId });
   return true;
 }
 
-function _aiRemHand(cardId) {
-  var i = G.opHand.findIndex(function(c) { return c.id === cardId; });
-  if (i >= 0) G.opHand.splice(i, 1);
-}
-
-function _aiSummon(cardId) {
-  var card = CARDS[cardId];
-  if (!card || card.cardType !== 'monster') return false;
-  if (G.opField.length >= maxFieldSlots()) {
-    log('🤖 몬스터 존 가득 — 소환 불가', 'opponent');
-    return false;
-  }
-  _aiRemHand(cardId);
-  G.opField.push({
-    id:      cardId,
-    name:    card.name,
-    atk:     card.atk != null ? card.atk : 0,
-    atkBase: card.atk != null ? card.atk : 0,
-  });
-  log('🤖 소환: ' + card.name + ' ATK' + (card.atk != null ? card.atk : 0), 'opponent');
-  handleOpponentAction({ type: 'summon', cardId: cardId, by: _aiRole(), ts: Date.now(), localApplied: true });
-  return true;
-}
-
-function _aiSummonDeck(cardId) {
-  var idx = window.AI.opDeck.findIndex(function(c) { return c.id === cardId; });
-  if (idx < 0) return false;
-  if (G.opField.length >= maxFieldSlots()) {
-    log('🤖 몬스터 존 가득 — 덱소환 불가', 'opponent');
-    return false;
-  }
-  window.AI.opDeck.splice(idx, 1);
-  G.opDeckCount = window.AI.opDeck.length;
-  var card = CARDS[cardId] || {};
-  G.opField.push({
-    id:      cardId,
-    name:    card.name || cardId,
-    atk:     card.atk != null ? card.atk : 0,
-    atkBase: card.atk != null ? card.atk : 0,
-  });
-  log('🤖 덱→소환: ' + (card.name || cardId), 'opponent');
-  handleOpponentAction({ type: 'summon', cardId: cardId, by: _aiRole(), ts: Date.now(), localApplied: true });
-  return true;
-}
-// alias (CHAIN_RESOLVERS에서 _aiSummonFromDeck으로 참조)
-var _aiSummonFromDeck = _aiSummonDeck;
-
-function _aiSendOwnFieldToGrave(cardId) {
-  var idx = G.opField.findIndex(function(c) { return c.id === cardId; });
-  if (idx < 0) return false;
-  var card = G.opField.splice(idx, 1)[0];
-  G.opGrave.push(card);
-  log('🤖 ' + (card.name || cardId) + ' 묘지로', 'opponent');
-  handleOpponentAction({ type: 'toGrave', cardId: cardId, from: 'field', by: _aiRole(), ts: Date.now(), localApplied: true });
-  return true;
-}
-
-function _aiDiscard(cardId) {
-  var before = G.opHand.length;
-  _aiRemHand(cardId);
-  if (G.opHand.length === before) return false;
-  G.opGrave.push({ id: cardId, name: CARDS[cardId] ? CARDS[cardId].name : cardId });
-  handleOpponentAction({ type: 'discard', cardId: cardId, by: _aiRole(), ts: Date.now() });
-  return true;
-}
-
-function _aiSearch(cardId) {
-  var idx = window.AI.opDeck.findIndex(function(c) { return c.id === cardId; });
-  if (idx < 0) return false;
-  window.AI.opDeck.splice(idx, 1);
-  G.opHand.push({ id: cardId, name: CARDS[cardId] ? CARDS[cardId].name : cardId });
-  G.opDeckCount = window.AI.opDeck.length;
-  log('🤖 서치: ' + (CARDS[cardId] ? CARDS[cardId].name : cardId), 'opponent');
-  handleOpponentAction({ type: 'search', cardName: CARDS[cardId] ? CARDS[cardId].name : cardId, by: _aiRole(), ts: Date.now() });
-  return true;
-}
-
-// [BUG-02 FIX] 전투 판정: 동점 시 양쪽 묘지, ATK=0 예외 제거
-function _aiAttack(atkId, defIdx) {
-  if (window.AI.attacked.has(atkId)) return false;
-  var fi = G.opField.findIndex(function(c) { return c.id === atkId; });
-  if (fi < 0 || !G.myField[defIdx]) return false;
-  window.AI.attacked.add(atkId);
-
-  var atk  = G.opField[fi];
-  var def  = G.myField[defIdx];
-  var diff = (atk.atk || 0) - (def.atk || 0);
-
-  log('🤖 공격: ' + atk.name + '(' + atk.atk + ') → ' + def.name + '(' + def.atk + ')', 'opponent');
-  handleOpponentAction({
-    type:    'combat',
-    atkCard: { id: atk.id, name: atk.name, atk: atk.atk },
-    defCard: { id: def.id, name: def.name, atk: def.atk },
-    by:      _aiRole(),
-    ts:      Date.now(),
-  });
-
-  if (diff < 0) {
-    // AI 몬스터만 묘지
-    var ri = G.opField.findIndex(function(c) { return c.id === atkId; });
-    if (ri >= 0) G.opGrave.push(G.opField.splice(ri, 1)[0]);
-  } else if (diff === 0 && (atk.atk || 0) !== 0) {
-    // 동점(양쪽 묘지) — ATK=0 무승부는 유지
-    var ri2 = G.opField.findIndex(function(c) { return c.id === atkId; });
-    if (ri2 >= 0) G.opGrave.push(G.opField.splice(ri2, 1)[0]);
-    // 플레이어 측은 handleOpponentAction의 combat 처리에 위임
-  }
-  return true;
-}
-
-function _aiDirect(atkId) {
-  if (G.myField.length > 0 || window.AI.attacked.has(atkId)) return false;
-  var fi = G.opField.findIndex(function(c) { return c.id === atkId; });
-  if (fi < 0) return false;
-  var atk = G.opField[fi];
-  window.AI.attacked.add(atkId);
-  log('🤖 직접공격: ' + atk.name + '(' + atk.atk + ')', 'opponent');
-  handleOpponentAction({
-    type: 'directAttack',
-    card: { id: atk.id, name: atk.name, atk: atk.atk },
-    by:   _aiRole(),
-    ts:   Date.now(),
-  });
-  return true;
-}
-
-// ─────────────────────────────────────────────────────────────
-// 플레이어 필드 조작 (AI 효과로 인한)
-// ─────────────────────────────────────────────────────────────
-function _aiGraveFromPlayerField(n) {
-  var count = Math.min(n, G.myField.length);
-  // ATK가 낮은 순으로 제거 (AI에게 유리)
-  var sorted = G.myField.slice().sort(function(a, b) { return (a.atk || 0) - (b.atk || 0); });
-  for (var i = 0; i < count; i++) {
-    var target = sorted[i];
-    var idx    = G.myField.findIndex(function(c) { return c === target; });
-    if (idx >= 0) {
-      var removed = G.myField.splice(idx, 1)[0];
-      G.myGrave.push(removed);
-      log('🤖 AI 효과: ' + removed.name + ' 묘지로', 'opponent');
+function _bestAttackPlan() {
+  var plan = [];
+  var remaining = G.myField.map(function(c, i) { return { i: i, atk: c.atk || 0 }; });
+  G.opField.forEach(function(mon) {
+    if (!remaining.length) {
+      plan.push({ action: 'directAttack', attackerId: mon.id });
+      return;
     }
-  }
+    remaining.sort(function(a, b) { return a.atk - b.atk; });
+    var target = remaining[0];
+    plan.push({ action: 'attack', attackerId: mon.id, targetIdx: target.i });
+    if ((mon.atk || 0) >= target.atk) remaining.shift();
+  });
+  return plan;
 }
 
-function _aiExileFromPlayerField(n) {
-  var count = Math.min(n, G.myField.length);
-  var sorted = G.myField.slice().sort(function(a, b) { return (b.atk || 0) - (a.atk || 0); });
-  for (var i = 0; i < count; i++) {
-    var target = sorted[i];
-    var idx    = G.myField.findIndex(function(c) { return c === target; });
-    if (idx >= 0) {
-      var removed = G.myField.splice(idx, 1)[0];
-      G.myExile.push(removed);
-      log('🤖 AI 효과: ' + removed.name + ' 제외', 'opponent');
-    }
-  }
-}
-
-function _aiReturnToPlayerHand(n) {
-  var count = Math.min(n, G.myField.length);
-  for (var i = 0; i < count; i++) {
-    if (!G.myField.length) break;
-    var removed = G.myField.pop();
-    G.myHand.push({ id: removed.id, name: removed.name });
-    log('🤖 AI 효과: ' + removed.name + ' 패로 되돌림', 'opponent');
-  }
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// AI 턴
-// ─────────────────────────────────────────────────────────────
-// [BUG-06 FIX] 드로우 단계 강제 진입 — currentPhase와 무관하게 드로우
-async function _aiTurn() {
+async function _runAITurn() {
   if (!window.AI.active || isMyTurn || window.AI.thinking) return;
   window.AI.thinking = true;
-  window.AI.usedFx   = {};
-  window.AI.attacked = new Set();
-  _setBanner('🤖 드로우 중...');
+  var token = ++window.AI.turnToken;
 
   try {
-    // 항상 드로우 (페이즈 무관 — AI 턴 시작이면 반드시 드로우)
-    if (!_aiDrawOne()) { window.AI.thinking = false; return; }
-    log('🤖 드로우 (패:' + G.opHand.length + ' 덱:' + window.AI.opDeck.length + ')', 'opponent');
-    gameClock.runningFor  = _aiRole();
-    gameClock.lastUpdated = Date.now();
+    await _sleep(250);
+    if (token !== window.AI.turnToken) return;
+    if (!_drawOpp()) return;
+    _emit({ type: 'draw', count: 1 });
     advancePhase('deploy');
-    await _s(400);
     renderAll();
 
-    // 전략 수립
-    _setBanner('🤖 전략 계산 중...');
-    await _s(200);
-    var plan;
-    try   { plan = await _groq(); }
-    catch (e) { console.warn('[AI]', e.message); plan = _fallback(); }
-    if (plan.thinking) { log('🤖 "' + plan.thinking + '"', 'opponent'); await _s(300); }
+    var plan = null;
+    try { plan = await _groq(); } catch (_) { plan = null; }
+    var deploy = (plan && Array.isArray(plan.deploy)) ? plan.deploy : [];
 
-    // 전개
-    _setBanner('🤖 전개 중...');
-    await _deploy(plan.deploy || []);
+    for (var d = 0; d < deploy.length; d++) {
+      if (token !== window.AI.turnToken) return;
+      var step = deploy[d];
+      if (step.action === 'summonFromHand') {
+        _summonFromOppHand(step.cardId);
+        await _sleep(200);
+      }
+    }
 
-    // 공격
     advancePhase('attack');
-    await _s(300);
     renderAll();
+    await _sleep(250);
 
-    // [BUG-04 FIX] 공격 플랜은 실제 G.opField 기준으로만 생성
-    var attackPlan = (plan.attack && plan.attack.length > 0) ? plan.attack : _buildAttackPlan();
-    _setBanner('🤖 공격 중...');
-    await _attack(attackPlan);
+    var attack = (plan && Array.isArray(plan.attack) && plan.attack.length) ? plan.attack : _bestAttackPlan();
+    for (var a = 0; a < attack.length; a++) {
+      if (token !== window.AI.turnToken) return;
+      var atk = attack[a];
+      if (atk.action === 'attack' && typeof atk.targetIdx === 'number') {
+        var me = G.opField.find(function(c) { return c.id === atk.attackerId; });
+        var you = G.myField[atk.targetIdx];
+        if (me && you) _emit({ type: 'combat', atkCard: { id: me.id, name: me.name, atk: me.atk }, defCard: { id: you.id, name: you.name, atk: you.atk } });
+      }
+      if (atk.action === 'directAttack') {
+        var dm = G.opField.find(function(c) { return c.id === atk.attackerId; });
+        if (dm && G.myField.length === 0) _emit({ type: 'directAttack', card: { id: dm.id, name: dm.name, atk: dm.atk } });
+      }
+      await _sleep(180);
+    }
+
     advancePhase('end');
-    await _s(200);
-    _aiEnd();
-
-  } catch (e) {
-    console.error('[AI]', e);
-    try { advancePhase('end'); } catch(_) {}
-    _aiEnd();
+    endTurn();
+  } finally {
+    window.AI.thinking = false;
   }
 }
 
+function _setupAIState() {
+  _resetAI();
+  window.AI.role = _aiRole();
+  window.AI.opDeck = _buildAIDeck();
 
-// ─────────────────────────────────────────────────────────────
-// Groq API (Cloudflare Worker 경유)
-// ─────────────────────────────────────────────────────────────
-async function _groq() {
-  if (!_WORKER_URL) throw new Error('Worker URL 없음');
+  G.opHand = [];
+  G.opField = [];
+  G.opGrave = [];
+  G.opExile = [];
+  G.opFieldCard = null;
+  G.opDeckCount = window.AI.opDeck.length;
 
-  function cardDetail(c) {
-    var cd = CARDS[c.id] || {};
-    return {
-      id:        c.id,
-      name:      c.name || cd.name,
-      cardType:  cd.cardType,
-      atk:       c.atk != null ? c.atk : cd.atk,
-      theme:     cd.theme,
-      isKeyCard: cd.isKeyCard || false,
-      effects:   cd.effects ? cd.effects.replace(/\n/g, ' ') : '',
+  for (var i = 0; i < 7; i++) _drawOpp();
+
+  document.getElementById('hdrOpName').textContent = '🤖 AI';
+  document.getElementById('opNameLabel').textContent = '🤖 AI';
+  renderAll();
+}
+
+window.startAIMode = function() {
+  _resetAI();
+  window.AI.active = true;
+  window.roomRef = null;
+  window.myRole = 'host';
+
+  var btn = document.getElementById('dbConfirmBtn');
+  if (btn) btn.textContent = 'AI 대전 시작 →';
+
+  document.getElementById('lobby').style.display = 'none';
+  document.getElementById('deckBuilder').style.display = 'flex';
+  if (typeof filterDeckPool === 'function') filterDeckPool('전체');
+  if (typeof renderBuilderDeck === 'function') renderBuilderDeck();
+};
+
+(function registerAIHooks() {
+  var origEnter = window.enterGameWithDeck;
+  if (typeof origEnter === 'function') {
+    window.enterGameWithDeck = function() {
+      origEnter.apply(this, arguments);
+      if (!window.AI.active) return;
+      _setupAIState();
     };
   }
 
+  var origEndTurn = window.endTurn;
+  if (typeof origEndTurn === 'function') {
+    window.endTurn = function() {
+      origEndTurn.apply(this, arguments);
+      if (!window.AI.active || isMyTurn) return;
+      setTimeout(_runAITurn, 300);
+    };
+  }
+})();
+
+async function _groq() {
+  if (!_WORKER_URL) throw new Error('Worker URL 없음');
   var state = {
-    turn:  G.turn,
+    turn: G.turn,
     phase: currentPhase,
-    ai: {
-      hand:      G.opHand.map(cardDetail),
-      field:     G.opField.map(cardDetail),
-      grave:     G.opGrave.map(function(c) { return { id: c.id, name: c.name }; }),
-      exile:     G.opExile.map(function(c) { return { id: c.id, name: c.name }; }),
-      keyDeck:   (G.opKeyDeck || []).map(function(c) { return { id: c.id, name: c.name }; }),
-      fieldCard: G.opFieldCard ? { id: G.opFieldCard.id, name: G.opFieldCard.name } : null,
-      deckCount: window.AI.opDeck.length,
-    },
-    player: {
-      handCount:    G.myHand.length,
-      publicHand:   G.myHand.filter(function(c) { return c.isPublic; }).map(cardDetail),
-      field:        G.myField.map(cardDetail),
-      grave:        G.myGrave.map(function(c) { return { id: c.id, name: c.name }; }),
-      exile:        G.myExile.map(function(c) { return { id: c.id, name: c.name }; }),
-      fieldCard:    G.myFieldCard ? { id: G.myFieldCard.id, name: G.myFieldCard.name } : null,
-      keyDeckCount: G.myKeyDeck ? G.myKeyDeck.length : 0,
-      deckCount:    G.myDeck ? G.myDeck.length : 0,
-    },
-    winCondition: '패 0장이 되면 패배. 전투: 공격ATK > 방어ATK → 패 차이만큼 손실. 직접공격 → ATK만큼 손실.',
+    ai: { hand: G.opHand, field: G.opField, deckCount: window.AI.opDeck.length },
+    player: { handCount: G.myHand.length, field: G.myField }
   };
 
-  var systemPrompt = `당신은 핸드 배틀 TCG의 전략적 AI 플레이어입니다.
-
-【게임 규칙】
-- 승리: 상대의 패를 0장으로 만들기
-- 패배: 자신의 패가 0장이 되면 즉시 패배
-- 전투: 내 몬스터ATK > 상대ATK → 상대 몬스터 묘지 + 패 차이만큼 손실
-- 직접공격: 상대 필드 비어있을 때 → 상대 패 ATK장 손실
-- ATK 동일(≠0) → 양쪽 묘지 (무승부, 패 손실 없음)
-- ATK 0 동점 → 양쪽 유지
-
-【전략 원칙】
-1. 상대 패가 적으면 공격적으로, 많으면 필드를 구축
-2. ATK가 낮은 내 몬스터는 상대 ATK와 비교 후 공격 결정
-3. 이길 수 없는 전투는 피하고 직접공격 기회를 노릴 것
-4. 소환 유발효과(②)가 있는 카드를 우선 소환 고려
-5. 묘지/제외 카드를 활용하는 효과도 고려
-6. 상대 공개 패를 파악해 위협적인 효과에 대비
-
-【응답 형식】JSON만 반환 (마크다운 금지):
-{
-  "thinking": "현재 상황 분석과 전략 (50자 이내)",
-  "deploy": [
-    {"action": "summonFromHand", "cardId": "카드ID", "reason": "이유"}
-  ],
-  "attack": [
-    {"action": "attack", "attackerId": "내몬스터ID", "targetIdx": 0, "reason": "이유"},
-    {"action": "directAttack", "attackerId": "내몬스터ID", "reason": "이유"}
-  ]
-}
-
-주의: summonFromHand는 monster 타입만 가능. 필드가 가득 차면(5장) 소환 불가. 이미 필드에 있는 몬스터는 다시 소환 불가.`;
-
   var resp = await fetch(_WORKER_URL, {
-    method:  'POST',
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({
-      model:           'llama-3.3-70b-versatile',
-      temperature:     0.3,
-      max_tokens:      600,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user',   content: JSON.stringify(state) },
-      ],
-    }),
+    body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: [
+      { role: 'system', content: 'JSON만 응답. deploy/attack 배열만 사용.' },
+      { role: 'user', content: JSON.stringify(state) }
+    ], temperature: 0.2 })
   });
-  if (!resp.ok) throw new Error('Worker ' + resp.status);
-  var d = await resp.json();
-  var t = (d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '{}';
-  var m = t.replace(/```json|```/g, '').trim().match(/\{[\s\S]*\}/);
+  if (!resp.ok) throw new Error('AI 요청 실패');
+  var data = await resp.json();
+  var txt = data.content || data.response || data.choices?.[0]?.message?.content || '{}';
+  var m = String(txt).match(/\{[\s\S]*\}/);
   return JSON.parse(m ? m[0] : '{}');
 }
 
-
-// ─────────────────────────────────────────────────────────────
-// 폴백 플랜 (API 실패 시)
-// ─────────────────────────────────────────────────────────────
-function _fallback() {
-  var plan = { deploy: [], attack: [] };
-  var mons = G.opHand
-    .filter(function(c) { return CARDS[c.id] && CARDS[c.id].cardType === 'monster'; })
-    .map(function(c) { return { id: c.id, atk: CARDS[c.id].atk || 0 }; })
-    .sort(function(a, b) { return b.atk - a.atk; })
-    .slice(0, 3);
-  mons.forEach(function(c) {
-    plan.deploy.push({ action: 'summonFromHand', cardId: c.id });
-  });
-
-  // [BUG-04 FIX] 공격 플랜은 현재 G.opField 기준으로만 (미소환 카드 제외)
-  if (G.myField.length === 0) {
-    G.opField.forEach(function(c) {
-      plan.attack.push({ action: 'directAttack', attackerId: c.id });
-    });
-  } else {
-    G.opField.forEach(function(att) {
-      var bI = -1, bG = 0;
-      G.myField.forEach(function(def, di) {
-        var g = (att.atk || 0) - (def.atk || 0);
-        if (g > bG) { bG = g; bI = di; }
-      });
-      if (bI >= 0) plan.attack.push({ action: 'attack', attackerId: att.id, targetIdx: bI });
-    });
-  }
-  return plan;
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// 공격 플랜 자동 생성
-// ─────────────────────────────────────────────────────────────
-function _buildAttackPlan() {
-  var plan     = [];
-  var attackers = G.opField.slice();
-  if (G.myField.length === 0) {
-    attackers.forEach(function(c) {
-      plan.push({ action: 'directAttack', attackerId: c.id });
-    });
-  } else {
-    attackers.forEach(function(att) {
-      var bI = -1, bG = 0;
-      G.myField.forEach(function(def, di) {
-        var g = (att.atk || 0) - (def.atk || 0);
-        if (g > bG) { bG = g; bI = di; }
-      });
-      if (bI >= 0) plan.push({ action: 'attack', attackerId: att.id, targetIdx: bI });
-    });
-  }
-  return plan;
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// 플레이어 체인 응답 대기 (타임아웃 포함)
-// ─────────────────────────────────────────────────────────────
-function _waitForPlayerChainResponse() {
-  return new Promise(function(resolve) {
-    if (activeChainState && activeChainState.active) {
-      var elapsed = 0;
-      var poll = setInterval(function() {
-        elapsed += 100;
-        if (!activeChainState || !activeChainState.active) {
-          clearInterval(poll);
-          setTimeout(resolve, 200);
-        } else if (elapsed >= 15000) {
-          clearInterval(poll);
-          console.warn('[AI] _waitForPlayerChainResponse: 타임아웃, 강제 resolve');
-          resolve();
-        }
-      }, 100);
-      return;
-    }
-    setTimeout(resolve, 300);
-  });
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// 전개 실행
-// ─────────────────────────────────────────────────────────────
-async function _deploy(actions) {
-  for (var i = 0; i < actions.length; i++) {
-    var act = actions[i];
-    if (!act || act.action !== 'summonFromHand' || !act.cardId) continue;
-    if (!G.opHand.find(function(c) { return c.id === act.cardId; })) continue;
-    var cd = CARDS[act.cardId];
-    if (!cd || cd.cardType !== 'monster') continue;
-
-    _aiSummon(act.cardId);
-    renderAll();
-    await _s(400);
-
-    await _trigger(act.cardId);
-    await _waitForPlayerChainResponse();
-    renderAll();
-
-    if (!isMyTurn && G.myHand.length === 0) break;
-  }
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// 공격 실행
-// ─────────────────────────────────────────────────────────────
-async function _attack(actions) {
-  for (var i = 0; i < actions.length; i++) {
-    var act = actions[i];
-    if (!act) continue;
-    if (act.action === 'attack') {
-      var di = typeof act.targetIdx === 'number' ? act.targetIdx : 0;
-      if (di < G.myField.length && G.opField.find(function(c) { return c.id === act.attackerId; })) {
-        _aiAttack(act.attackerId, di);
-        await _s(800);
-        renderAll();
-      }
-    } else if (act.action === 'directAttack') {
-      if (G.myField.length === 0 && G.opField.find(function(c) { return c.id === act.attackerId; })) {
-        _aiDirect(act.attackerId);
-        await _s(800);
-        renderAll();
-      }
-    }
-    if (G.myHand.length === 0) break;
-  }
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// AI 트리거 처리
-// - 카드별 AI 전용 로직을 두지 않고,
-//   대인전에서 카드가 등록한 activate/condition을 그대로 호출한다.
-// ─────────────────────────────────────────────────────────────
-
-async function _trigger(cardId) {
-  // 카드별 하드코딩 없이, 대인전이 등록한 activate/condition 경로를 그대로 사용한다.
-  var fired = false;
-  var prevRole = myRole;
-  var prevTurn = isMyTurn;
-
-  try {
-    myRole = _aiRole();
-    isMyTurn = false;
-
-    var handRegs = (window.CHAIN_HAND_RESPONSES && window.CHAIN_HAND_RESPONSES[cardId]) || [];
-    var handIdx = G.opHand.findIndex(function(c) { return c.id === cardId; });
-    for (var i = 0; i < handRegs.length && handIdx >= 0; i++) {
-      var h = handRegs[i];
-      if (typeof h.activate !== 'function') continue;
-      if (typeof h.condition === 'function' && !h.condition()) continue;
-      h.activate(handIdx);
-      fired = true;
-      break;
-    }
-
-    var fieldRegs = (window.CHAIN_FIELD_RESPONSES && window.CHAIN_FIELD_RESPONSES[cardId]) || [];
-    var fieldIdx = G.opField.findIndex(function(c) { return c.id === cardId; });
-    for (var j = 0; j < fieldRegs.length && fieldIdx >= 0; j++) {
-      var f = fieldRegs[j];
-      if (typeof f.activate !== 'function') continue;
-      if (typeof f.condition === 'function' && !f.condition(fieldIdx)) continue;
-      f.activate(fieldIdx);
-      fired = true;
-      break;
-    }
-  } catch (e) {
-    console.warn('[AI] trigger activate 실패:', e && e.message ? e.message : e);
-  } finally {
-    myRole = prevRole;
-    isMyTurn = prevTurn;
-  }
-
-  if (fired) await _s(200);
-  renderAll();
-}
-
-// ─────────────────────────────────────────────────────────────
-// AI 턴 종료
-// ─────────────────────────────────────────────────────────────
-function _aiEnd() {
-  if (isMyTurn) { window.AI.thinking = false; return; }
-  if (typeof resetTurnEffects === 'function') resetTurnEffects();
-  window.AI.usedFx   = {};
-  window.AI.attacked = new Set();
-  G.turn++;
-  G.activePlayer = 'host';
-  isMyTurn       = true;
-  try { attackedMonstersThisTurn.clear(); } catch(e) {}
-  gameClock.runningFor  = 'host';
-  gameClock.lastUpdated = Date.now();
-  advancePhase('draw');
-  _setBanner('');
-  window.AI.thinking = false;
-  renderAll();
-  notify('🎮 내 턴! 드로우 버튼을 눌러주세요.');
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// 덱 프리셋
-// ─────────────────────────────────────────────────────────────
-function _aiDeckList(theme) {
-  var r = function(id, n) { var a = []; for (var i = 0; i < n; i++) a.push(id); return a; };
-  var p = {
-    '펭귄':     r('펭귄 마을', 4).concat(r('꼬마 펭귄', 4), r('펭귄 부부', 4), r('현자 펭귄', 4), r('수문장 펭귄', 4), r('펭귄!돌격!', 4), r('펭귄의 영광', 4), r('펭귄이여 영원하라', 4), r('펭귄 마법사', 4), ['구사일생', '구사일생', '눈에는 눈', '눈에는 눈']),
-    '크툴루':   r('그레이트 올드 원-크툴루', 4).concat(r('그레이트 올드 원-크투가', 4), r('그레이트 올드 원-크아이가', 4), r('그레이트 올드 원-과타노차', 4), r('엘더 갓-노덴스', 4), r('엘더 갓-크타니트', 4), r('엘더 갓-히프노스', 4), r('올드_원의 멸망', 4), ['구사일생', '구사일생', '눈에는 눈', '눈에는 눈']),
-    '라이온':   r('베이비 라이온', 4).concat(r('젊은 라이온', 4), r('에이스 라이온', 4), r('사자의 포효', 4), r('사자의 사냥', 4), r('사자의 발톱', 4), r('사자의 일격', 4), r('진정한 사자', 4), ['구사일생', '구사일생', '눈에는 눈', '눈에는 눈', '출입통제', '출입통제']),
-    '타이거':   r('베이비 타이거', 4).concat(r('젊은 타이거', 4), r('에이스 타이거', 4), r('호랑이의 포효', 4), r('호랑이의 사냥', 4), r('호랑이의 발톱', 4), r('진정한 호랑이', 4), r('호랑이의 일격', 4), ['구사일생', '구사일생', '눈에는 눈', '눈에는 눈', '출입통제', '출입통제']),
-    '지배자':   r('수원소의 지배자', 4).concat(r('화원소의 지배자', 4), r('전원소의 지배자', 4), r('풍원소의 지배자', 4), r('수원소의 지배룡', 4), r('화원소의 지배룡', 4), r('전원소의 지배룡', 4), r('풍원소의 지배룡', 4), ['지배의 사슬', '지배의 사슬', '지배룡과 지배자', '지배룡과 지배자', '눈에는 눈', '눈에는 눈', '출입통제', '출입통제']),
-    '불가사의': r('불가사의한 귀신 헬리콥터', 4).concat(r('불가사의한 망태 할아버지', 4), r('불가사의한 빨간 마스크', 4), r('불가사의한 장산범', 4), r('불가사의한 밤의 대도시', 4), r('불가사의한 화폐 속 암호', 4), r('불가사의한 분신사바', 4), r('불가사의한 숨바꼭질 인형', 4), r('불가사의한 일루미나티', 4), ['구사일생', '구사일생', '눈에는 눈', '눈에는 눈', '출입통제', '출입통제']),
-  };
-  return (p[theme] || p['크툴루']).slice();
-}
-
-function _aiKeyList(theme) {
-  var k = {
-    '펭귄':     ['펭귄 용사', '펭귄의 일격', '펭귄의 전설', '일격필살', '단 한번의 기회'],
-    '크툴루':   ['아우터 갓 니알라토텝', '아우터 갓-아자토스', '아우터 갓 슈브 니구라스', '일격필살', '단 한번의 기회'],
-    '라이온':   ['라이온 킹', '고고한 사자', '일격필살', '단 한번의 기회'],
-    '타이거':   ['타이거 킹', '고고한 호랑이', '일격필살', '단 한번의 기회'],
-    '지배자':   ['사원소의 지배룡', '사원소의 지배자', '일격필살', '단 한번의 기회'],
-    '불가사의': ['불가사의한 13일의 금요일', '불가사의한 적월', '불가사의한 지배', '불가사의한 원흉', '일격필살'],
-  };
-  return (k[theme] || k['크툴루'])
-    .filter(function(id) { return !!CARDS[id]; })
-    .map(function(id) { return { id: id, name: CARDS[id].name }; });
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// 배너 UI
-// ─────────────────────────────────────────────────────────────
-function _aiBanner() {
-  if (document.getElementById('_aiBanner')) return;
-  var el = document.createElement('div');
-  el.id = '_aiBanner';
-  el.style.cssText = 'position:fixed;top:0;left:50%;transform:translateX(-50%);background:linear-gradient(90deg,#1a0a00,#7c3400,#1a0a00);color:#fb923c;padding:.35rem 1.6rem;border:1px solid #ea580c;border-top:none;border-radius:0 0 10px 10px;font-family:Black Han Sans,sans-serif;font-size:.8rem;letter-spacing:.1em;z-index:3000;box-shadow:0 4px 20px #ea580c44;pointer-events:none;transition:opacity .25s;opacity:0;';
-  document.body.appendChild(el);
-}
-
-function _setBanner(msg) {
-  var el = document.getElementById('_aiBanner');
-  if (!el) return;
-  el.textContent  = msg;
-  el.style.opacity = msg ? '1' : '0';
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// _pendingSetup 폴백 (patch.js 연동, 이중 호출 안전)
-// ─────────────────────────────────────────────────────────────
-setInterval(function() {
-  if (!window.AI || !window.AI.active) return;
-  if (!window.AI._pendingSetup) return;
-  if (!window.G || !Array.isArray(G.myHand) || typeof advancePhase !== 'function') return;
-  window.AI._pendingSetup = false;
-  _setupAI();
-}, 200);
-
-
-// ─────────────────────────────────────────────────────────────
-// 로비 카드 삽입
-// [BUG-12 FIX] 불필요한 중복 setTimeout 제거, 한 번만 등록
-// ─────────────────────────────────────────────────────────────
-function _lobby() {
-  var lobby = document.getElementById('lobby');
-  if (!lobby || document.getElementById('_aiCard')) return;
-  var card = document.createElement('div');
-  card.id        = '_aiCard';
-  card.className = 'lobby-card';
-  card.style.cssText = 'border-color:#ea580c;background:linear-gradient(160deg,#1a0a00,#2d1500);';
-  card.innerHTML =
-    '<h2 style="color:#fb923c;display:flex;align-items:center;gap:.5rem">🤖 AI 대전 <span style="font-size:.65rem;color:#ea580c;border:1px solid #ea580c;padding:.1rem .4rem;border-radius:3px">Groq AI</span></h2>' +
-    '<p style="font-size:.82rem;color:#9090b0;line-height:1.65;margin:.25rem 0 .8rem">Groq AI가 전황을 분석해 전략적으로 플레이합니다.<br>내가 선공, AI가 후공으로 시작합니다.</p>' +
-    '<button style="width:100%;padding:.8rem;background:linear-gradient(135deg,#431407,#9a3412);color:#fed7aa;border:1px solid #ea580c;border-radius:6px;font-family:Black Han Sans,sans-serif;font-size:1rem;letter-spacing:.12em;cursor:pointer;" ' +
-    'onmouseover="this.style.background=\'linear-gradient(135deg,#7c2d12,#c2410c)\'" ' +
-    'onmouseout="this.style.background=\'linear-gradient(135deg,#431407,#9a3412)\'" ' +
-    'onclick="startAIMode()">⚔️ AI와 대전하기 (내가 선공)</button>';
-  var all  = lobby.querySelectorAll('.lobby-card');
-  var last = all[all.length - 1];
-  if (last) last.after(card);
-  else lobby.appendChild(card);
-}
-
-// [BUG-12 FIX] 최대 2번만 시도 (즉시 + DOMContentLoaded 대비)
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', _lobby);
+  document.addEventListener('DOMContentLoaded', _ensureAILobbyEntry);
 } else {
-  _lobby();
+  _ensureAILobbyEntry();
 }
-setTimeout(_lobby, 800); // SPA 동적 렌더링 대비 1회만
-
-
-// ─────────────────────────────────────────────────────────────
-// 체인 훅
-//
-// 핵심 구조 (effects-chain.js 새 버전 기준):
-//   beginChain  : roomRef 없고 AI 아닌 경우 → 즉시 resolveChain (데모모드)
-//                 ★ AI 모드 분기가 없음 → 여기서 가로채야 함
-//   addChainLink: roomRef 없으면 _notifyAIChainOpened 호출 → OK
-//   passChainPriority: roomRef 없고 AI 모드 → _notifyAIChainOpened 호출 → OK
-//   resolveChain: chainMemory 초기화 필요 → 훅 유지
-//
-// 따라서 beginChain만 앞에서 가로채면 됩니다.
-// ─────────────────────────────────────────────────────────────
-
-// beginChain 훅: effects-chain.js의 beginChain에 이미 AI 모드 분기(setTimeout 200ms)가
-// 있으므로 별도 훅 불필요. 훅이 있으면 activeChainState가 두 번 설정되어 오히려 충돌.
-// [BUG FIX] 훅 제거 — 원본 beginChain이 직접 _notifyAIChainOpened를 호출함.
-
-_safeHook('resolveChain', function(_origResolveChain) {
-  return function(chainState) {
-    _clearAIChainTimer();
-    if (window.AI && window.AI.chainMemory) window.AI.chainMemory.respondedSig = null;
-    return _origResolveChain.apply(this, arguments);
-  };
-});
-
-
-// ─────────────────────────────────────────────────────────────
-// AI 체인 응답 판단
-// ─────────────────────────────────────────────────────────────
-function _collectAIChainOptions(chainState) {
-  var liveChain = chainState || activeChainState;
-  if (!liveChain || !liveChain.active) return [];
-  if (typeof collectChainOptions !== 'function') return [];
-
-  var aiRole = _aiRole();
-  var options = [];
-
-  // AI도 플레이어와 동일하게 체인 중 키카드 가져오기 선택지를 가진다.
-  // (collectChainOptions의 기본 구현은 aiCtx가 있을 때 키카드 옵션을 생략하므로 여기서 보강)
-  if (!usedKeyFetchInChain[aiRole]) {
-    (G.opKeyDeck || []).forEach(function(c) {
-      if (!c || !c.id) return;
-      options.push({
-        cardId: c.id,
-        label: '[키카드] ' + (c.name || c.id) + ' 가져오기',
-        activate: function() {
-          if (!activeChainState || !activeChainState.active) return;
-          var next = Object.assign({}, activeChainState);
-          var effect = { type: 'keyFetch', label: '키 카드 가져오기 (' + (c.name || c.id) + ')', cardId: c.id, by: aiRole };
-          next.links = (activeChainState.links || []).slice().concat([effect]);
-          next.passCount = 0;
-          next.priority = _playerRole();
-          activeChainState = next;
-          usedKeyFetchInChain[aiRole] = true;
-        },
-      });
-    });
-  }
-
-  var commonOptions = collectChainOptions({
-    hand:    G.opHand,
-    field:   G.opField,
-    grave:   G.opGrave,
-    exile:   G.opExile,
-    keyDeck: G.opKeyDeck,
-    role:    aiRole,
-    usedFx:  window.AI.usedFx,
-    isMyTurn: false,
-  }) || [];
-
-  options = options.concat(commonOptions);
-
-  return options.map(function(opt) {
-    var score = 50;
-    var label = String((opt && opt.label) || '');
-    var links = (liveChain && liveChain.links) || [];
-    var last  = links.length ? links[links.length - 1] : null;
-    var lastType = String((last && last.type) || '');
-    if (label.indexOf('무효') >= 0 || label.indexOf('출입통제') >= 0) score += 20;
-    if (label.indexOf('눈에는 눈') >= 0 && (lastType.indexOf('search') >= 0 || lastType === 'keyFetch' || lastType === 'aiSearch')) score += 15;
-    if (label.indexOf('묘지') >= 0 || label.indexOf('제외') >= 0) score += 10;
-    if (G.opHand.length <= 2) score -= 8;
-
-    return {
-      id:          opt.cardId || opt.label || 'unknown',
-      label:       opt.label || opt.cardId || '체인 응답',
-      score:       score,
-      rawActivate: function() { opt.activate(); },
-    };
-  });
-}
-
-
-function _debugAIChainOptionState(liveChain) {
-  try {
-    var hand = G.opHand || [];
-    var field = G.opField || [];
-    var handRegistered = hand.filter(function(c){ return !!(window.CHAIN_HAND_RESPONSES && window.CHAIN_HAND_RESPONSES[c.id]); });
-    var fieldRegistered = field.filter(function(c){ return !!(window.CHAIN_FIELD_RESPONSES && window.CHAIN_FIELD_RESPONSES[c.id]); });
-    var links = (liveChain && liveChain.links) || [];
-    var last = links.length ? links[links.length - 1] : null;
-    console.log('[AI Chain] option-debug', {
-      priority: liveChain && liveChain.priority,
-      aiRole: _aiRole(),
-      passCount: liveChain && liveChain.passCount,
-      links: links.map(function(l){ return { by: l.by, type: l.type, label: l.label }; }),
-      lastLink: last ? { by: last.by, type: last.type, label: last.label } : null,
-      handCount: hand.length,
-      fieldCount: field.length,
-      handRegistered: handRegistered.map(function(c){ return c.id; }),
-      fieldRegistered: fieldRegistered.map(function(c){ return c.id; }),
-      usedFxKeys: Object.keys((window.AI && window.AI.usedFx) || {}),
-    });
-  } catch (e) {
-    console.warn('[AI Chain] option-debug failed:', e && e.message ? e.message : e);
-  }
-}
-
-function _canAIRespondNow(state) {
-  if (!state || !state.active) return false;
-  if (state.priority !== _aiRole()) {
-    console.log('[AI _canAIRespondNow] priority mismatch:', state.priority, '!=', _aiRole());
-    return false;
-  }
-  var links = state.links || [];
-  if (!links.length) {
-    console.log('[AI _canAIRespondNow] no links');
-    return false;
-  }
-  var last = links[links.length - 1] || {};
-  // [BUG FIX] by 필드가 없는 링크(구버전 호환)는 플레이어 발동으로 간주
-  var lastBy = last.by || _playerRole();
-  var ok = lastBy === _playerRole() || (state.passCount || 0) > 0;
-  console.log('[AI _canAIRespondNow] lastBy=' + lastBy + ' playerRole=' + _playerRole() + ' passCount=' + (state.passCount||0) + ' result=' + ok);
-  return ok;
-}
-
-// [BUG-07 FIX] 시그니처에서 priority 제거 — 링크 내용만으로 구성
-function _chainSignature(state) {
-  if (!state || !state.active) return '';
-  var chainId = String(state.chainId || '');
-  var links   = (state.links || []).map(function(l) {
-    return String((l && l.by) || '') + ':' + String((l && l.type) || '');
-  }).join('|');
-  return chainId + '|' + links;
-}
-
-function _markAIChainHandled(state) {
-  if (!window.AI || !window.AI.chainMemory) return;
-  window.AI.chainMemory.respondedSig = _chainSignature(state);
-}
-
-function _clearAIChainTimer() {
-  if (!window.AI || !window.AI.chainTimer) return;
-  clearTimeout(window.AI.chainTimer);
-  window.AI.chainTimer = null;
-}
-
-function _startAIChainWatcher() {
-  if (!window.AI || !window.AI.active) return;
-  if (window.AI.chainWatcher) return;
-  window.AI.chainWatcher = setInterval(function() {
-    if (!window.AI || !window.AI.active) return;
-    var live = activeChainState;
-    if (!live || !live.active) return;
-    if (live.priority !== _aiRole()) return;
-    if (_alreadyHandledChainState(live)) return;
-    // 폴링에서 직접 응답 (타이머 중복 방지)
-    _clearAIChainTimer();
-    _aiChainResponse(live);
-  }, 500);
-}
-
-function _scheduleAIChainFallback() {
-  if (!window.AI || !window.AI.active) return;
-  _clearAIChainTimer();
-  // [BUG FIX] 800ms — notify/setTimeout 250ms + 여유시간. 너무 길면 체감 딜레이가 큼
-  window.AI.chainTimer = setTimeout(function() {
-    if (!window.AI.active) return;
-    var live = activeChainState;
-    if (!live || !live.active) return;
-    if (live.priority !== _aiRole()) return;
-    if (_alreadyHandledChainState(live)) return;
-    console.log('[AI Chain] fallback watcher firing');
-    try {
-      _aiChainResponse(live);
-    } catch(e) {
-      console.error('[AI Chain] fallback 오류:', e && e.message ? e.message : e);
-      if (activeChainState && activeChainState.active) {
-        resolveChain(Object.assign({}, activeChainState, { passCount: 2 }));
-      }
-    }
-  }, 800);
-}
-
-function _alreadyHandledChainState(state) {
-  if (!window.AI || !window.AI.chainMemory) return false;
-  return window.AI.chainMemory.respondedSig === _chainSignature(state);
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// AI 체인 응답 실행
-// ─────────────────────────────────────────────────────────────
-// AI 체인 응답 — Groq API로 판단, myRole 임시 교체로 대인전과 동일 경로
-async function _aiChainResponse(chainState) {
-  if (!window.AI || !window.AI.active) return;
-  _clearAIChainTimer();
-  var snap = activeChainState;
-  if (!snap || !snap.active) return;
-  if (snap.priority !== _aiRole()) return;
-  if (_alreadyHandledChainState(snap)) return;
-  _markAIChainHandled(snap);
-
-  var aiR = _aiRole();
-  var plR = _playerRole();
-  var options = [];
-  try { options = _collectAIChainOptions(snap); } catch(e) { options = []; }
-
-  var decision = null;
-  if (_WORKER_URL) {
-    try {
-      var sp = 'AI입니다. JSON만 반환: {"action":"pass"} 또는 {"action":"respond","cardId":"ID"}';
-      var ci = {
-        chainLinks: (snap.links||[]).map(function(l){ return {by: l.by===plR ? '플레이어' : 'AI', label: l.label}; }),
-        aiHand: G.opHand.map(function(c){ return {id: c.id, name: c.name}; }),
-        availableResponses: options.map(function(o){ return {label: o.label, cardId: o.id}; }),
-      };
-      var r = await fetch(_WORKER_URL, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({model:'llama-3.3-70b-versatile', temperature:0.2, max_tokens:60, response_format:{type:'json_object'}, messages:[{role:'system',content:sp},{role:'user',content:JSON.stringify(ci)}]})});
-      if (r.ok) {
-        var d = await r.json();
-        var t = (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content)||'{}';
-        decision = JSON.parse(t.replace(/```json|```/g,'').trim());
-      }
-    } catch(e) { console.warn('[AI] chain groq fail', e.message); }
-  }
-  if (!decision) {
-    options.sort(function(a,b){ return (b.score||0)-(a.score||0); });
-    decision = options.length > 0 ? {action:'respond', cardId:options[0].id} : {action:'pass'};
-  }
-
-  if (!activeChainState||!activeChainState.active||activeChainState.priority!==aiR) return;
-
-  function doPass() {
-    if (!activeChainState||!activeChainState.active||activeChainState.priority!==aiR) return;
-    _aiPassChainPriority(aiR, plR);
-  }
-
-  function _aiPassChainPriority(aiRole, playerRole) {
-    if (!activeChainState || !activeChainState.active || activeChainState.priority !== aiRole) return;
-    log('🤖 AI: 체인 패스', 'opponent');
-    var next = Object.assign({}, activeChainState);
-    next.links = activeChainState.links.slice();
-    next.passCount = (next.passCount||0) + 1;
-    next.priority = playerRole;
-    if (next.passCount >= 2) { resolveChain(next); } else { _onLocalChainStateChanged(next); }
-  }
-
-  if (!decision || decision.action !== 'respond') { setTimeout(doPass, 500); return; }
-
-  var picked = options.find(function(o){ return o.id === decision.cardId; }) || options[0];
-  if (!picked) { setTimeout(doPass, 500); return; }
-
-  setTimeout(function() {
-    if (!activeChainState||!activeChainState.active||activeChainState.priority!==aiR) return;
-    var beforeLen = (activeChainState.links || []).length;
-    try {
-      // 대인전/플레이어 체인과 동일하게 등록된 activate 경로를 그대로 사용
-      // (코스트 지불, usedFx 체크, 실제 effect.type 반영)
-      picked.rawActivate();
-    } catch (e) {
-      console.error('[AI Chain] activate 실패:', e && e.message ? e.message : e);
-      doPass();
-      return;
-    }
-    // activate가 링크를 추가하지 못한 경우 안전하게 패스
-    var afterLen = (activeChainState && activeChainState.links ? activeChainState.links.length : 0);
-    if (afterLen <= beforeLen) {
-      console.warn('[AI Chain] 링크 추가 실패, 패스로 전환');
-      doPass();
-      return;
-    }
-    _onLocalChainStateChanged(activeChainState);
-  }, 400);
-}
-
-// [BUG-10 FIX] collectChainOptions에 플레이어 컨텍스트를 명시적으로 전달
-function _playerCanRespondInChain(state) {
-  if (!state || !state.active) return false;
-  if (state.priority !== _playerRole()) return false;
-  try {
-    if (typeof collectChainOptions === 'function') {
-      var opts = collectChainOptions({
-        hand:    G.myHand,
-        field:   G.myField,
-        grave:   G.myGrave,
-        exile:   G.myExile,
-        keyDeck: G.myKeyDeck,
-        role:    myRole,
-        isMyTurn: isMyTurn,
-      });
-      return (opts || []).length > 0;
-    }
-  } catch(e) {
-    console.warn('[AI] _playerCanRespondInChain 오류:', e && e.message ? e.message : e);
-  }
-  return Array.isArray(G.myKeyDeck) && G.myKeyDeck.length > 0;
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// _notifyAIChainOpened — effects-chain.js에서 호출
-// ─────────────────────────────────────────────────────────────
-function _notifyAIChainOpened() {
-  if (!window.AI || !window.AI.active) return;
-  var live = activeChainState;
-  if (!live || !live.active) return;
-  if (live.priority !== _aiRole()) {
-    // priority 불일치 — 폴백: chainWatcher가 처리
-    console.log('[AI Chain] _notifyAIChainOpened: priority mismatch', live.priority, '!=', _aiRole(), '— chainWatcher will handle');
-    return;
-  }
-  if (_alreadyHandledChainState(live)) {
-    console.log('[AI Chain] _notifyAIChainOpened: already handled');
-    return;
-  }
-  // [BUG FIX] 딜레이를 250ms로 — 상위 콜스택 완전 종료 보장
-  setTimeout(function() {
-    if (!activeChainState || !activeChainState.active) return;
-    if (activeChainState.priority !== _aiRole()) return;
-    if (_alreadyHandledChainState(activeChainState)) return;
-    try {
-      _aiChainResponse(activeChainState);
-    } catch(e) {
-      console.error('[AI Chain] _aiChainResponse 오류:', e && e.message ? e.message : e);
-      // 오류 발생 시 안전하게 AI 패스 처리
-      if (activeChainState && activeChainState.active) {
-        var next = Object.assign({}, activeChainState, { passCount: 2 });
-        resolveChain(next);
-      }
-    }
-  }, 250);
-}
-window._notifyAIChainOpened  = _notifyAIChainOpened;
-window._aiChainResponse      = _aiChainResponse;
-window._aiRespondToChain     = function() { _aiChainResponse(activeChainState); };
