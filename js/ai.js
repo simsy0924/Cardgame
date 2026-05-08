@@ -107,6 +107,44 @@ function _buildAIChainCtx() {
   return { role: window.AI.role, hand: G.opHand, field: G.opField, usedFx: {} };
 }
 
+async function _groqChainDecision(chainState, options) {
+  if (!_WORKER_URL || !chainState || !Array.isArray(options)) return { action: 'pass' };
+  var choiceView = options.map(function(opt, i) {
+    return {
+      index: i,
+      label: opt.label || '',
+      cardId: opt.cardId || '',
+      from: (opt.handIdx === -3 ? 'field' : 'hand')
+    };
+  });
+  var state = {
+    turn: G.turn,
+    phase: currentPhase,
+    priority: chainState.priority,
+    chainLinks: (chainState.links || []).map(function(l) {
+      return { by: l.by, type: l.type, label: l.label };
+    }),
+    ai: { handCount: G.opHand.length, field: G.opField, graveCount: G.opGrave.length },
+    player: { handCount: G.myHand.length, field: G.myField },
+    options: choiceView
+  };
+  var resp = await fetch(_WORKER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: [
+      { role: 'system', content: '너는 카드게임 AI다. 체인 응답 여부를 판단한다. 반드시 JSON으로만 응답: {"action":"pass"} 또는 {"action":"activate","index":number}. index는 options 배열의 index를 사용.' },
+      { role: 'user', content: JSON.stringify(state) }
+    ], temperature: 0.1 })
+  });
+  if (!resp.ok) throw new Error('AI chain decision 실패');
+  var data = await resp.json();
+  var txt = data.content || data.response || data.choices?.[0]?.message?.content || '{}';
+  var m = String(txt).match(/\{[\s\S]*\}/);
+  var parsed = JSON.parse(m ? m[0] : '{}');
+  if (parsed && parsed.action === 'activate' && Number.isInteger(parsed.index)) return parsed;
+  return { action: 'pass' };
+}
+
 async function _runAIChainWindow() {
   if (!window.AI.active || !activeChainState || !activeChainState.active) return;
   if (activeChainState.priority !== window.AI.role) return;
@@ -124,7 +162,25 @@ async function _runAIChainWindow() {
       try { passChainPriority(); } finally { myRole = prev; }
       return;
     }
-    var pick = options[0];
+    var decision = null;
+    try {
+      decision = await _groqChainDecision(activeChainState, options);
+    } catch (_) {
+      decision = { action: 'pass' };
+    }
+    if (!decision || decision.action !== 'activate') {
+      var prevPass = myRole;
+      myRole = window.AI.role;
+      try { passChainPriority(); } finally { myRole = prevPass; }
+      return;
+    }
+    var pick = options[decision.index];
+    if (!pick) {
+      var prevInvalid = myRole;
+      myRole = window.AI.role;
+      try { passChainPriority(); } finally { myRole = prevInvalid; }
+      return;
+    }
     if (pick && typeof pick.activate === 'function') pick.activate();
   } finally {
     window.AI.chain.handling = false;

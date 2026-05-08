@@ -397,11 +397,6 @@ function openChainResponse() {
 }
 
 function passChainPriority() {
-  // [디버그] 호출 스택 추적
-  try { throw new Error('passChainPriority caller'); } catch(e) {
-    var stack = e.stack ? e.stack.split('\n').slice(1,4).join(' | ') : 'unknown';
-    notify('[AI디버그] passChainPriority 호출! priority=' + (activeChainState&&activeChainState.priority) + ' myRole=' + myRole + ' | ' + stack.slice(0,80), 10000);
-  }
   if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
 
   const next = { ...activeChainState };
