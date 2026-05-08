@@ -192,8 +192,10 @@ function _setupAIState() {
   G.opKeyDeck   = [];
   G.opDeckCount = window.AI.opDeck.length;
 
-  // 초기 패 7장
-  for (var i = 0; i < 7; i++) _drawOpp();
+  // 초기 패: 선공(host)은 6장, 후공(guest)은 7장
+  // AI가 host(선공)이면 6장, guest(후공)이면 7장
+  var aiInitCards = (window.AI.role === 'host') ? 6 : 7;
+  for (var i = 0; i < aiInitCards; i++) _drawOpp();
 
   // UI 이름 갱신
   var aiName = window.AI.deckTheme
@@ -205,6 +207,13 @@ function _setupAIState() {
   if (opLabel) opLabel.textContent = aiName;
 
   renderAll();
+
+  // AI가 선공(host)이면 즉시 AI 첫 턴 시작
+  // _startNewGame()에서 isMyTurn = (myRole === 'host') 로 설정되므로
+  // AI가 host일 때 isMyTurn = false → AI 턴이 먼저
+  if (window.AI.role === 'host') {
+    setTimeout(_runAITurn, 400);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
