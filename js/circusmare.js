@@ -872,10 +872,6 @@ registerThemeEffectHandler('서커스메어', {
     };
   }
 
-    const btn = document.createElement('button');
-      .find(b => b.textContent.trim() === '초기화');
-  }
-
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', patchPreset);
   } else {
