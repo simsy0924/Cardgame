@@ -29,15 +29,51 @@ function _resetAI() {
 }
 
 function _buildAIDeck() {
-  var base = _aiDeckList('크툴루').filter(function(id) { return !!CARDS[id]; });
+  var presets = Array.isArray(window.STARTER_THEME_PRESETS) ? window.STARTER_THEME_PRESETS.slice() : [];
+  if (!presets.length) presets = ['펭귄','올드원','라이온','타이거','라이거','지배자','마피아','불가사의','엘리멘츠'];
+
+  var shuffledThemes = shuffle(presets.slice());
+  var pickedTheme = shuffledThemes[0] || '올드원';
+  var source = null;
+  if (typeof window.createStarterDeckFromTheme === 'function') {
+    for (var t = 0; t < shuffledThemes.length; t++) {
+      var theme = shuffledThemes[t];
+      var candidate = window.createStarterDeckFromTheme(theme);
+      if (candidate && Array.isArray(candidate.main) && candidate.main.length) {
+        source = candidate;
+        pickedTheme = theme;
+        break;
+      }
+    }
+  }
+
+  var fromStarter = [];
+  if (source && Array.isArray(source.main)) fromStarter = fromStarter.concat(source.main);
+  if (source && Array.isArray(source.key)) fromStarter = fromStarter.concat(source.key);
+
+  var base = fromStarter.filter(function(id) { return !!CARDS[id]; });
+  if (!base.length) {
+    base = Object.keys(CARDS).filter(function(id) {
+      var theme = CARDS[id] && CARDS[id].theme;
+      return theme === '크툴루' || theme === '올드 원' || theme === '올드원';
+    });
+    pickedTheme = '올드원';
+  }
+
+  window.AI.deckTheme = pickedTheme;
   var pads = ['구사일생', '눈에는 눈', '출입통제'].filter(function(id) { return !!CARDS[id]; });
   var i = 0;
+  while (base.length < 40 && base.length && i < 120) {
+    base.push(base[i % base.length]);
+    i++;
+  }
   while (base.length < 40 && pads.length) {
-    base.push(pads[i % pads.length]);
+    base.push(pads[(base.length + i) % pads.length]);
     i++;
   }
   return shuffle(base.map(function(id) { return { id: id, name: CARDS[id].name }; }));
 }
+
 
 function _drawOpp() {
   if (!window.AI.opDeck.length) {
@@ -178,8 +214,9 @@ function _setupAIState() {
 
   for (var i = 0; i < 7; i++) _drawOpp();
 
-  document.getElementById('hdrOpName').textContent = '🤖 AI';
-  document.getElementById('opNameLabel').textContent = '🤖 AI';
+  var aiName = window.AI.deckTheme ? ('🤖 AI (' + window.AI.deckTheme + ')') : '🤖 AI';
+  document.getElementById('hdrOpName').textContent = aiName;
+  document.getElementById('opNameLabel').textContent = aiName;
   renderAll();
 }
 
