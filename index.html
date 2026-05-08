@@ -882,7 +882,17 @@ body[data-sleeve='sleeve_aurora'] .card-back {
     <div id="joinStatus" class="status-msg hidden"></div>
   </div>
 
-  <!-- AI 대전 -->
+
+  <!-- 무료 받기 코드 -->
+  <div class="lobby-card">
+    <h2><span class="icon">🎁</span>무료 받기 코드</h2>
+    <input id="freeCodeInput" type="text" placeholder="코드 입력 (예: FREE)" maxlength="20"
+           style="text-transform:uppercase;letter-spacing:.12em;text-align:center;font-family:'Cinzel',serif;">
+    <button id="applyFreeCodeBtn" class="btn btn-secondary" onclick="applyFreeCode()">코드 적용</button>
+    <div id="freeCodeStatus" class="status-msg hidden"></div>
+  </div>
+
+    <!-- AI 대전 -->
   <div class="lobby-card">
     <h2><span class="icon">🤖</span>AI 대전</h2>
     <button id="startAIBtn" class="btn btn-secondary" onclick="startAIMode()">AI전 입장</button>
@@ -1155,6 +1165,43 @@ body[data-sleeve='sleeve_aurora'] .card-back {
       confirmPick();
     } else {
       closeModal('cardPickerModal');
+    }
+  }
+
+  async function applyFreeCode() {
+    const input = document.getElementById('freeCodeInput');
+    const status = document.getElementById('freeCodeStatus');
+    const code = (input?.value || '').trim().toUpperCase();
+
+    if (!code) {
+      status.textContent = '코드를 입력하세요.';
+      status.classList.remove('hidden');
+      return;
+    }
+
+    if (code !== 'FREE') {
+      status.textContent = '사용할 수 없는 코드입니다.';
+      status.classList.remove('hidden');
+      return;
+    }
+
+    if (typeof window.chooseStarterThemeWithCurrency !== 'function') {
+      status.textContent = '코드 기능을 불러오지 못했습니다.';
+      status.classList.remove('hidden');
+      return;
+    }
+
+    const originalPrompt = window.prompt;
+    try {
+      window.prompt = () => code;
+      await window.chooseStarterThemeWithCurrency();
+      status.textContent = '코드 적용을 시도했습니다. 알림 메시지를 확인하세요.';
+      status.classList.remove('hidden');
+    } catch (e) {
+      status.textContent = '코드 적용 실패: ' + (e?.message || e);
+      status.classList.remove('hidden');
+    } finally {
+      window.prompt = originalPrompt;
     }
   }
 </script>
