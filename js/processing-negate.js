@@ -76,6 +76,8 @@
 
     if (type === 'keyFetch' || /search|fetch|add.*hand/i.test(text) || ko.includes('서치') || ko.includes('패에 넣')) addTag(tags, 'deckSearch');
     if (/summon.*deck|deck.*summon|aiSummonDeck/i.test(text) || (ko.includes('덱') && ko.includes('소환'))) addTag(tags, 'deckSummon');
+    if (/summon|Summon/.test(`${type} ${effectId}`) || (ko.includes('소환한다') || ko.includes('소환할') || ko.includes('소환하는') || /몬스터\s*소환/.test(ko))) addTag(tags, 'monsterSummon');
+    if (['deckSummon','handSummon','graveSummon','exileSummon','keyDeckSummon'].some(t => tags.includes(t))) addTag(tags, 'monsterSummon');
     if (/discard|forceDiscard|버리/.test(text) || ko.includes('버리')) addTag(tags, 'discardHand');
     if (/targetMyField|targetField|대상/.test(text) || ko.includes('대상')) addTag(tags, 'targetMyField');
     if (/send.*field.*grave|grave.*field|field.*grave|묘지/.test(text) && (ko.includes('필드') || /field/i.test(text))) addTag(tags, 'sendMyFieldToGrave');

@@ -903,6 +903,23 @@
       if (typeof isCircusmareCard === 'function') return isCircusmareCard(id);
       return isCircus(id);
     };
+    const cmMaterialKeyIds = ['서커스메어 스프링 제스터', '서커스메어 메드 키메라', '서커스메어 퍼핏 마스터'];
+    const cmMedIds = ['서커스메어 메드 울프','서커스메어 메드 베어','서커스메어 메드 이글','서커스메어 메드 씰'];
+    const isCmMaterialKey = (id) => {
+      if (typeof isCircusmareMaterialKeyMonster === 'function') return isCircusmareMaterialKeyMonster(id);
+      return cmMaterialKeyIds.includes(id);
+    };
+    const cmGraveExileMonsterCount = () => (G?.myGrave || []).filter(c => isCircusMon(c.id)).length + (G?.myExile || []).filter(c => isCircusMon(c.id)).length;
+    const cmCanPayKeyFromPool = (keyId, pool) => {
+      const cards = (pool || []).filter(c => c && isCircusMon(c.id));
+      if (typeof _cmCanPayKeyMaterial === 'function') return _cmCanPayKeyMaterial(keyId, cards);
+      if (!isCmMaterialKey(keyId)) return false;
+      if (keyId === '서커스메어 스프링 제스터') return cards.length >= 3;
+      if (keyId === '서커스메어 메드 키메라') return cmMedIds.every(id => cards.some(c => c.id === id));
+      if (keyId === '서커스메어 퍼핏 마스터') return cmGraveExileMonsterCount() >= 12 && cards.length >= 5;
+      return false;
+    };
+    const cmMaterialKeyOptions = (pool) => G && (G.myKeyDeck || []).filter(c => c && isCmMaterialKey(c.id) && cmCanPayKeyFromPool(c.id, pool));
     const cmCanUse = (cardId, num, max) => (typeof canUseEffect !== 'function') || canUseEffect(cardId, num, max);
     const cmDeckHas = (pred) => G && (G.myDeck || []).some(c => c && pred(c));
     const cmGraveHas = (pred) => G && (G.myGrave || []).some(c => c && pred(c));
@@ -910,11 +927,11 @@
     const cmFieldHas = (pred) => G && (G.myField || []).some(c => c && pred(c));
     const cmHandHas = (pred) => G && (G.myHand || []).some(c => c && pred(c));
     const cmKeyHas = (id) => G && (G.myKeyDeck || []).some(c => c && (!id || c.id === id));
-    const cmAnyKeySummonable = () => G && (G.myKeyDeck || []).some(c => c && !['서커스메어 코인 제스터','서커스메어 마스크 제스터'].includes(c.id));
+    const cmAnyKeySummonable = (pool) => cmMaterialKeyOptions(pool || []).length > 0;
     const cmInDeploy = () => typeof currentPhase !== 'undefined' && currentPhase === 'deploy';
     const cmMyTurn = () => typeof isMyTurn !== 'undefined' && !!isMyTurn;
     const cmOpponentEffectOnChain = () => !!(typeof activeChainState !== 'undefined' && activeChainState && activeChainState.active && (activeChainState.links || []).some(l => l.by !== myRole));
-    const cmGraveExileCount = () => (G?.myGrave || []).filter(c => isCircusCard(c.id)).length + (G?.myExile || []).filter(c => isCircusCard(c.id)).length;
+    const cmGraveExileCount = () => cmGraveExileMonsterCount();
 
     function registerCmWrapper(id, def, fnName) {
       ENGINE.registerEffect(id, Object.assign({
@@ -935,7 +952,7 @@
     // 손패/묘지 발동 카드
     registerCmWrapper('cm_fusion_1', {
       cardId: '서커스메어 퓨전', effectNum: 1, zone: 'hand', kind: 'quick', label: '서커스메어 퓨전 ① 키카드 소환', maxPerTurn: 2,
-      condition: (c) => hasFn('activateCmFusion1') && cmInDeploy() && c.handIdx >= 0 && G.myHand[c.handIdx]?.id === '서커스메어 퓨전' && cmAnyKeySummonable() && (cmHandHas(x => isCircusMon(x.id)) || cmFieldHas(x => isCircusMon(x.id))) && cmCanUse('서커스메어 퓨전', 1, 2),
+      condition: (c) => { const pool = [...(G.myHand || []).filter(x => isCircusMon(x.id)), ...(G.myField || []).filter(x => isCircusMon(x.id))]; return hasFn('activateCmFusion1') && cmInDeploy() && c.handIdx >= 0 && G.myHand[c.handIdx]?.id === '서커스메어 퓨전' && cmAnyKeySummonable(pool) && cmCanUse('서커스메어 퓨전', 1, 2); },
     }, 'activateCmFusion1');
 
     registerCmWrapper('cm_fusion_2_grave', {
@@ -950,12 +967,12 @@
 
     registerCmWrapper('cm_nightmare_fusion_1', {
       cardId: '악몽 융합', effectNum: 1, zone: 'hand', kind: 'ignition', label: '악몽 융합 ① 덱 코스트 → 키카드 소환', maxPerTurn: 2,
-      condition: (c) => hasFn('activateCmNightmareFusion1') && c.handIdx >= 0 && G.myHand[c.handIdx]?.id === '악몽 융합' && cmAnyKeySummonable() && cmDeckHas(x => isCircusCard(x.id)) && ((window._cmNightmareFusionCount || 0) < 2),
+      condition: (c) => { const pool = (G.myDeck || []).filter(x => isCircusMon(x.id)); return hasFn('activateCmNightmareFusion1') && c.handIdx >= 0 && G.myHand[c.handIdx]?.id === '악몽 융합' && cmAnyKeySummonable(pool) && ((window._cmNightmareFusionCount || 0) < 2); },
     }, 'activateCmNightmareFusion1');
 
     registerCmWrapper('cm_wild_circus_1', {
       cardId: '광란의 서커스', effectNum: 1, zone: 'hand', kind: 'quick', label: '광란의 서커스 ① 묘지/제외→덱 + 키카드 소환', maxPerTurn: 1,
-      condition: (c) => hasFn('activateCmWildCircus1') && !cmMyTurn() && cmInDeploy() && c.handIdx >= 0 && G.myHand[c.handIdx]?.id === '광란의 서커스' && cmAnyKeySummonable() && [...(G.myGrave || []), ...(G.myExile || [])].some(x => isCircusCard(x.id)) && cmCanUse('광란의 서커스', 1),
+      condition: (c) => { const pool = [...(G.myGrave || []).filter(x => isCircusMon(x.id)), ...(G.myExile || []).filter(x => isCircusMon(x.id))]; return hasFn('activateCmWildCircus1') && !cmMyTurn() && cmInDeploy() && c.handIdx >= 0 && G.myHand[c.handIdx]?.id === '광란의 서커스' && cmAnyKeySummonable(pool) && cmCanUse('광란의 서커스', 1); },
     }, 'activateCmWildCircus1');
 
     registerCmWrapper('cm_wild_circus_2_grave', {
@@ -1021,7 +1038,7 @@
 
     registerCmWrapper('cm_field_4', {
       cardId: '악몽의 서커스장', effectNum: 4, zone: 'field', kind: 'quick', label: '악몽의 서커스장 ④ 제외 코스트 → 키카드 소환', maxPerTurn: 1,
-      condition: () => hasFn('activateCmField4') && cmInDeploy() && cmFieldHas(x => x.id === '악몽의 서커스장') && cmAnyKeySummonable() && (cmFieldHas(x => isCircusMon(x.id)) || cmGraveHas(x => isCircusMon(x.id))) && cmCanUse('악몽의 서커스장', 4),
+      condition: () => { const pool = [...(G.myField || []).filter(x => isCircusMon(x.id)), ...(G.myGrave || []).filter(x => isCircusMon(x.id))]; return hasFn('activateCmField4') && cmInDeploy() && cmFieldHas(x => x.id === '악몽의 서커스장') && cmAnyKeySummonable(pool) && cmCanUse('악몽의 서커스장', 4); },
     }, 'activateCmField4');
 
     // 상대 효과 체인으로 키 카드 덱에서 튀어나오는 효과

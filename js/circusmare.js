@@ -19,6 +19,71 @@ const CIRCUSMARE_MED_IDS = [
   '서커스메어 메드 이글','서커스메어 메드 씰',
 ];
 
+const CIRCUSMARE_MATERIAL_KEY_IDS = [
+  '서커스메어 스프링 제스터',
+  '서커스메어 메드 키메라',
+  '서커스메어 퍼핏 마스터',
+];
+const CIRCUSMARE_SELF_SUMMON_KEY_IDS = [
+  '서커스메어 코인 제스터',
+  '서커스메어 마스크 제스터',
+];
+
+function isCircusmareKeyMonster(id) {
+  return !!(id && CARDS[id]?.theme === '서커스메어' && CARDS[id]?.cardType === 'monster' && CARDS[id]?.isKeyCard);
+}
+function isCircusmareMaterialKeyMonster(id) {
+  return CIRCUSMARE_MATERIAL_KEY_IDS.includes(id);
+}
+function _cmGraveExileMonsterCount() {
+  return (G.myGrave || []).filter(c => isCircusmareMonster(c.id)).length
+       + (G.myExile || []).filter(c => isCircusmareMonster(c.id)).length;
+}
+function _cmKeyRequiredMaterialCount(keyId) {
+  if (keyId === '서커스메어 스프링 제스터') return 3;
+  if (keyId === '서커스메어 메드 키메라') return 4;
+  if (keyId === '서커스메어 퍼핏 마스터') return 5;
+  return 0;
+}
+function _cmHasRequiredMedSet(cards) {
+  return CIRCUSMARE_MED_IDS.every(id => cards.some(c => c && c.id === id));
+}
+function _cmCanPayKeyMaterial(keyId, pool) {
+  const cards = (pool || []).filter(c => c && isCircusmareMonster(c.id));
+  if (!isCircusmareMaterialKeyMonster(keyId)) return false;
+  if (keyId === '서커스메어 스프링 제스터') return cards.length >= 3;
+  if (keyId === '서커스메어 메드 키메라') return _cmHasRequiredMedSet(cards);
+  if (keyId === '서커스메어 퍼핏 마스터') return _cmGraveExileMonsterCount() >= 12 && cards.length >= 5;
+  return false;
+}
+function _cmMaterialKeyOptions(pool) {
+  return (G.myKeyDeck || []).filter(c => c && isCircusmareMaterialKeyMonster(c.id) && _cmCanPayKeyMaterial(c.id, pool));
+}
+function _cmValidateKeyMaterialSelection(keyId, selectedCards) {
+  const cards = (selectedCards || []).filter(Boolean);
+  const required = _cmKeyRequiredMaterialCount(keyId);
+  if (!isCircusmareMaterialKeyMonster(keyId)) {
+    return { ok: false, msg: '이 효과로는 서커스메어 소재 소환형 키 카드 몬스터만 소환할 수 있습니다.' };
+  }
+  if (cards.some(c => !isCircusmareMonster(c.id))) {
+    return { ok: false, msg: '소재는 반드시 서커스메어 몬스터여야 합니다.' };
+  }
+  if (cards.length !== required) {
+    return { ok: false, msg: `${CARDS[keyId]?.name || keyId} 소환에는 서커스메어 몬스터 ${required}장이 정확히 필요합니다.` };
+  }
+  if (keyId === '서커스메어 메드 키메라' && !_cmHasRequiredMedSet(cards)) {
+    return { ok: false, msg: '메드 키메라는 울프/베어/이글/씰을 각각 1장씩 소재로 해야 합니다.' };
+  }
+  if (keyId === '서커스메어 퍼핏 마스터' && _cmGraveExileMonsterCount() < 12) {
+    return { ok: false, msg: '퍼핏 마스터는 묘지/제외의 서커스메어 몬스터가 합계 12장 이상이어야 합니다.' };
+  }
+  return { ok: true };
+}
+function _cmKeyMaterialPrompt(keyId, actionText) {
+  if (keyId === '서커스메어 메드 키메라') return `${CARDS[keyId]?.name || keyId} 소환: 울프/베어/이글/씰을 각각 1장씩 ${actionText}`;
+  return `${CARDS[keyId]?.name || keyId} 소환: 서커스메어 몬스터 ${_cmKeyRequiredMaterialCount(keyId)}장을 ${actionText}`;
+}
+
 function _cmCoinToss(n, label) {
   let heads = 0;
   const results = [];
@@ -32,11 +97,14 @@ function _cmCoinToss(n, label) {
 }
 
 function _cmGraveExileCount() {
-  return G.myGrave.filter(c => isCircusmareCard(c.id)).length
-       + G.myExile.filter(c => isCircusmareCard(c.id)).length;
+  return _cmGraveExileMonsterCount();
 }
 
 function _cmSummonKeyCard(cardId) {
+  if (!isCircusmareKeyMonster(cardId)) {
+    notify(`${CARDS[cardId]?.name || cardId}: 서커스메어 키 카드 몬스터가 아닙니다.`);
+    return false;
+  }
   const idx = G.myKeyDeck.findIndex(c => c.id === cardId);
   if (idx < 0) { notify(`키카드 덱에 ${CARDS[cardId]?.name || cardId}가 없습니다.`); return false; }
   const c = G.myKeyDeck.splice(idx, 1)[0];
@@ -512,22 +580,24 @@ function resolveCmPuppetMaster1() {
       if (window._discardOpponentHandRandomly) _discardOpponentHandRandomly(1, '퍼핏 마스터 ①');
     }
     if (count >= 3) {
-      const keyOpts = G.myKeyDeck.filter(c => c.id !== '서커스메어 코인 제스터' && c.id !== '서커스메어 마스크 제스터');
+      const materialPool = G.myField.filter(f => isCircusmareMonster(f.id));
+      const keyOpts = _cmMaterialKeyOptions(materialPool);
       if (keyOpts.length) {
-        openCardPicker(keyOpts, '퍼핏 마스터 ①(3장+): 소환할 키카드', 1, (kSel) => {
-          if (kSel.length) {
-            const keyCard = keyOpts[kSel[0]];
-            if (G.opField.length) {
-              openCardPicker(G.opField, `${keyCard.name} 소환: 덱으로 돌려보낼 상대 몬스터 (선택)`, 1, (oSel) => {
-                if (oSel.length) { const m = G.opField.splice(oSel[0], 1)[0]; sendAction({ type: 'opFieldRemove', cardId: m.id, to: 'deck' }); log(`퍼핏 마스터 ①: ${m.name} 상대 덱으로`, 'mine'); }
-                _cmSummonKeyCard(keyCard.id); onSummon(keyCard.id, 'keyDeck');
-                _cmAfterPuppet5(count);
-              });
-            } else {
-              _cmSummonKeyCard(keyCard.id); onSummon(keyCard.id, 'keyDeck');
-              _cmAfterPuppet5(count);
-            }
-          } else { _cmAfterPuppet5(count); }
+        openCardPicker(keyOpts, '퍼핏 마스터 ①(3장+): 소환할 서커스메어 키카드', 1, (kSel) => {
+          if (!kSel.length) { _cmAfterPuppet5(count); return; }
+          const keyCard = keyOpts[kSel[0]];
+          const req = _cmKeyRequiredMaterialCount(keyCard.id);
+          openCardPicker(materialPool, _cmKeyMaterialPrompt(keyCard.id, '덱으로 되돌림'), req, (mSel) => {
+            const chosen = mSel.map(i => materialPool[i]).filter(Boolean);
+            const check = _cmValidateKeyMaterialSelection(keyCard.id, chosen);
+            if (!check.ok) { notify(check.msg); _cmAfterPuppet5(count); return; }
+            chosen.forEach(t => {
+              const fi = G.myField.findIndex(f => f.id === t.id);
+              if (fi >= 0) { G.myDeck.push(G.myField.splice(fi, 1)[0]); sendAction({ type: 'myFieldRemove', cardId: t.id, to: 'deck' }); }
+            });
+            _cmSummonKeyCard(keyCard.id); onSummon(keyCard.id, 'keyDeck');
+            _cmAfterPuppet5(count);
+          });
         });
         return;
       }
@@ -601,23 +671,26 @@ function resolveCmField3() {
 function activateCmField4() {
   if (currentPhase !== 'deploy') { notify('전개 단계에만 발동 가능합니다.'); return; }
   if (!canUseEffect('악몽의 서커스장', 4)) { notify('이미 사용했습니다.'); return; }
-  const keyOpts = G.myKeyDeck.filter(c => c.id !== '서커스메어 코인 제스터' && c.id !== '서커스메어 마스크 제스터');
-  if (!keyOpts.length) { notify('소환 가능한 키카드 없음'); return; }
   const costPool = [...G.myField.filter(f => isCircusmareMonster(f.id)), ...G.myGrave.filter(g => isCircusmareMonster(g.id))];
-  if (!costPool.length) { notify('제외할 서커스메어 몬스터가 없습니다.'); return; }
+  const keyOpts = _cmMaterialKeyOptions(costPool);
+  if (!keyOpts.length) { notify('소환 조건을 만족하는 서커스메어 키카드가 없습니다.'); return; }
   markEffectUsed('악몽의 서커스장', 4);
   activateQuickEffect({ type: 'quickCmField4', label: '악몽의 서커스장 ④' });
 }
 function resolveCmField4() {
-  const keyOpts = G.myKeyDeck.filter(c => c.id !== '서커스메어 코인 제스터' && c.id !== '서커스메어 마스크 제스터');
-  if (!keyOpts.length) { notify('소환 가능한 키카드 없음'); return; }
-  openCardPicker(keyOpts, '악몽의 서커스장 ④: 소환할 키카드', 1, (kSel) => {
+  const basePool = [...G.myField.filter(f => isCircusmareMonster(f.id)), ...G.myGrave.filter(g => isCircusmareMonster(g.id))];
+  const keyOpts = _cmMaterialKeyOptions(basePool);
+  if (!keyOpts.length) { notify('소환 조건을 만족하는 서커스메어 키카드가 없습니다.'); return; }
+  openCardPicker(keyOpts, '악몽의 서커스장 ④: 소환할 서커스메어 키카드', 1, (kSel) => {
     if (!kSel.length) return;
     const keyCard = keyOpts[kSel[0]];
     const costPool = [...G.myField.filter(f => isCircusmareMonster(f.id)), ...G.myGrave.filter(g => isCircusmareMonster(g.id))];
-    openCardPicker(costPool, `${keyCard.name} 소환 코스트: 제외할 서커스메어 (필드/묘지)`, costPool.length, (cSel) => {
-      if (!cSel.length) return;
-      cSel.map(i => costPool[i]).filter(Boolean).forEach(t => {
+    const req = _cmKeyRequiredMaterialCount(keyCard.id);
+    openCardPicker(costPool, _cmKeyMaterialPrompt(keyCard.id, '제외'), req, (cSel) => {
+      const chosen = cSel.map(i => costPool[i]).filter(Boolean);
+      const check = _cmValidateKeyMaterialSelection(keyCard.id, chosen);
+      if (!check.ok) { notify(check.msg); return; }
+      chosen.forEach(t => {
         const fi = G.myField.findIndex(f => f.id === t.id);
         if (fi >= 0) { G.myExile.push(G.myField.splice(fi, 1)[0]); sendAction({ type: 'myFieldRemove', cardId: t.id, to: 'exile' }); return; }
         const gi = G.myGrave.findIndex(g => g.id === t.id);
@@ -635,25 +708,28 @@ function resolveCmField4() {
 function activateCmFusion1(handIdx) {
   if (currentPhase !== 'deploy') { notify('전개 단계에만 발동 가능합니다.'); return; }
   if (!canUseEffect('서커스메어 퓨전', 1, 2)) { notify('이미 2번 사용했습니다.'); return; }
-  const keyOpts = G.myKeyDeck.filter(c => c.id !== '서커스메어 코인 제스터' && c.id !== '서커스메어 마스크 제스터');
-  if (!keyOpts.length) { notify('소환 가능한 키카드 없음'); return; }
   const costPool = [...G.myHand.filter(h => isCircusmareMonster(h.id)), ...G.myField.filter(f => isCircusmareMonster(f.id))];
-  if (!costPool.length) { notify('코스트로 보낼 서커스메어 몬스터가 없습니다.'); return; }
+  const keyOpts = _cmMaterialKeyOptions(costPool);
+  if (!keyOpts.length) { notify('소환 조건을 만족하는 서커스메어 키카드가 없습니다.'); return; }
   markEffectUsed('서커스메어 퓨전', 1);
   const src = G.myHand[handIdx];
   if (!src) return;
   activateQuickEffect({ type: 'quickCmFusion1', label: '서커스메어 퓨전 ①', srcIID: ensureCardInstanceId(src) });
 }
 function resolveCmFusion1(link) {
-  const keyOpts = G.myKeyDeck.filter(c => c.id !== '서커스메어 코인 제스터' && c.id !== '서커스메어 마스크 제스터');
-  if (!keyOpts.length) { notify('소환 가능한 키카드 없음'); return; }
-  openCardPicker(keyOpts, '서커스메어 퓨전 ①: 소환할 키카드', 1, (kSel) => {
+  const basePool = [...G.myHand.filter(h => isCircusmareMonster(h.id)), ...G.myField.filter(f => isCircusmareMonster(f.id))];
+  const keyOpts = _cmMaterialKeyOptions(basePool);
+  if (!keyOpts.length) { notify('소환 조건을 만족하는 서커스메어 키카드가 없습니다.'); return; }
+  openCardPicker(keyOpts, '서커스메어 퓨전 ①: 소환할 서커스메어 키카드', 1, (kSel) => {
     if (!kSel.length) return;
     const keyCard = keyOpts[kSel[0]];
     const costPool = [...G.myHand.filter(h => isCircusmareMonster(h.id)), ...G.myField.filter(f => isCircusmareMonster(f.id))];
-    openCardPicker(costPool, `${keyCard.name} 소환 코스트: 묘지로 보낼 서커스메어 (패/필드)`, costPool.length, (cSel) => {
-      if (!cSel.length) return;
-      cSel.map(i => costPool[i]).filter(Boolean).forEach(t => {
+    const req = _cmKeyRequiredMaterialCount(keyCard.id);
+    openCardPicker(costPool, _cmKeyMaterialPrompt(keyCard.id, '묘지로 보냄'), req, (cSel) => {
+      const chosen = cSel.map(i => costPool[i]).filter(Boolean);
+      const check = _cmValidateKeyMaterialSelection(keyCard.id, chosen);
+      if (!check.ok) { notify(check.msg); return; }
+      chosen.forEach(t => {
         const hi = G.myHand.findIndex(h => h.id === t.id); if (hi >= 0) { G.myGrave.push(G.myHand.splice(hi, 1)[0]); return; }
         const fi = G.myField.findIndex(f => f.id === t.id); if (fi >= 0) { G.myGrave.push(G.myField.splice(fi, 1)[0]); sendAction({ type: 'myFieldRemove', cardId: t.id, to: 'grave' }); }
       });
@@ -716,25 +792,30 @@ function activateCmNightmareFusion1(handIdx) {
   if (!isMyTurn || currentPhase !== 'deploy') { notify('전개 단계에만 발동 가능합니다.'); return; }
   if (!window._cmNightmareFusionCount) window._cmNightmareFusionCount = 0;
   if (window._cmNightmareFusionCount >= 2) { notify('악몽 융합은 게임 중 2번까지만 사용 가능합니다.'); return; }
-  const keyOpts = G.myKeyDeck.filter(c => c.id !== '서커스메어 코인 제스터' && c.id !== '서커스메어 마스크 제스터');
-  if (!keyOpts.length) { notify('소환 가능한 키카드 없음'); return; }
-  if (!G.myDeck.some(d => isCircusmareCard(d.id))) { notify('덱에 서커스메어 카드 없음'); return; }
+  const costPool = G.myDeck.filter(d => isCircusmareMonster(d.id));
+  const keyOpts = _cmMaterialKeyOptions(costPool);
+  if (!keyOpts.length) { notify('소환 조건을 만족하는 서커스메어 키카드가 없습니다.'); return; }
   window._cmNightmareFusionCount++;
   const src = G.myHand[handIdx]; if (!src) return;
   activateIgnitionEffect({ type: 'ignitionCmNightmareFusion1', label: '악몽 융합 ①', srcIID: ensureCardInstanceId(src) });
 }
 function resolveCmNightmareFusion1() {
-  const keyOpts = G.myKeyDeck.filter(c => c.id !== '서커스메어 코인 제스터' && c.id !== '서커스메어 마스크 제스터');
-  openCardPicker(keyOpts, '악몽 융합 ①: 소환할 키카드', 1, (kSel) => {
+  const basePool = G.myDeck.filter(d => isCircusmareMonster(d.id));
+  const keyOpts = _cmMaterialKeyOptions(basePool);
+  if (!keyOpts.length) { notify('소환 조건을 만족하는 서커스메어 키카드가 없습니다.'); return; }
+  openCardPicker(keyOpts, '악몽 융합 ①: 소환할 서커스메어 키카드', 1, (kSel) => {
     if (!kSel.length) return;
     const keyCard = keyOpts[kSel[0]];
-    const dc = G.myDeck.filter(d => isCircusmareCard(d.id));
-    openCardPicker(dc, `${keyCard.name} 소환 코스트: 덱에서 묘지로 보낼 서커스메어`, dc.length, (cSel) => {
-      if (!cSel.length) return;
-      cSel.map(i => dc[i]).filter(Boolean).forEach(t => { const di = G.myDeck.findIndex(d => d.id === t.id); if (di >= 0) G.myGrave.push(G.myDeck.splice(di, 1)[0]); });
+    const dc = G.myDeck.filter(d => isCircusmareMonster(d.id));
+    const req = _cmKeyRequiredMaterialCount(keyCard.id);
+    openCardPicker(dc, _cmKeyMaterialPrompt(keyCard.id, '덱에서 묘지로 보냄'), req, (cSel) => {
+      const chosen = cSel.map(i => dc[i]).filter(Boolean);
+      const check = _cmValidateKeyMaterialSelection(keyCard.id, chosen);
+      if (!check.ok) { notify(check.msg); return; }
+      chosen.forEach(t => { const di = G.myDeck.findIndex(d => d.id === t.id); if (di >= 0) G.myGrave.push(G.myDeck.splice(di, 1)[0]); });
       const ph = G.myHand.findIndex(h => h.id === '악몽 융합'); if (ph >= 0) G.myGrave.push(G.myHand.splice(ph, 1)[0]);
       _cmSummonKeyCard(keyCard.id); onSummon(keyCard.id, 'keyDeck');
-      log('악몽 융합 ①: 덱 서커스메어 묘지 → 키카드 소환', 'mine');
+      log('악몽 융합 ①: 덱 서커스메어 몬스터 묘지 → 키카드 소환', 'mine');
       sendGameState(); renderAll();
     });
   });
@@ -746,28 +827,32 @@ function resolveCmNightmareFusion1() {
 function activateCmWildCircus1(handIdx) {
   if (isMyTurn) { notify('광란의 서커스 ①은 상대 턴에만 발동 가능합니다.'); return; }
   if (!canUseEffect('광란의 서커스', 1)) { notify('이미 사용했습니다.'); return; }
-  const keyOpts = G.myKeyDeck.filter(c => c.id !== '서커스메어 코인 제스터' && c.id !== '서커스메어 마스크 제스터');
-  if (!keyOpts.length) { notify('소환 가능한 키카드 없음'); return; }
-  const costPool = [...G.myGrave.filter(g => isCircusmareCard(g.id)), ...G.myExile.filter(e => isCircusmareCard(e.id))];
-  if (!costPool.length) { notify('묘지/제외에 서커스메어 카드 없음'); return; }
+  const costPool = [...G.myGrave.filter(g => isCircusmareMonster(g.id)), ...G.myExile.filter(e => isCircusmareMonster(e.id))];
+  const keyOpts = _cmMaterialKeyOptions(costPool);
+  if (!keyOpts.length) { notify('소환 조건을 만족하는 서커스메어 키카드가 없습니다.'); return; }
   markEffectUsed('광란의 서커스', 1);
   activateQuickEffect({ type: 'quickCmWildCircus1', label: '광란의 서커스 ①', srcIID: ensureCardInstanceId(G.myHand[handIdx]) });
 }
 function resolveCmWildCircus1() {
-  const keyOpts = G.myKeyDeck.filter(c => c.id !== '서커스메어 코인 제스터' && c.id !== '서커스메어 마스크 제스터');
-  openCardPicker(keyOpts, '광란의 서커스 ①: 소환할 키카드', 1, (kSel) => {
+  const basePool = [...G.myGrave.filter(g => isCircusmareMonster(g.id)), ...G.myExile.filter(e => isCircusmareMonster(e.id))];
+  const keyOpts = _cmMaterialKeyOptions(basePool);
+  if (!keyOpts.length) { notify('소환 조건을 만족하는 서커스메어 키카드가 없습니다.'); return; }
+  openCardPicker(keyOpts, '광란의 서커스 ①: 소환할 서커스메어 키카드', 1, (kSel) => {
     if (!kSel.length) return;
     const keyCard = keyOpts[kSel[0]];
-    const costPool = [...G.myGrave.filter(g => isCircusmareCard(g.id)), ...G.myExile.filter(e => isCircusmareCard(e.id))];
-    openCardPicker(costPool, `${keyCard.name} 소환 코스트: 덱으로 돌려보낼 서커스메어 (묘지/제외)`, costPool.length, (cSel) => {
-      if (!cSel.length) return;
-      cSel.map(i => costPool[i]).filter(Boolean).forEach(t => {
+    const costPool = [...G.myGrave.filter(g => isCircusmareMonster(g.id)), ...G.myExile.filter(e => isCircusmareMonster(e.id))];
+    const req = _cmKeyRequiredMaterialCount(keyCard.id);
+    openCardPicker(costPool, _cmKeyMaterialPrompt(keyCard.id, '덱으로 되돌림'), req, (cSel) => {
+      const chosen = cSel.map(i => costPool[i]).filter(Boolean);
+      const check = _cmValidateKeyMaterialSelection(keyCard.id, chosen);
+      if (!check.ok) { notify(check.msg); return; }
+      chosen.forEach(t => {
         let gi = G.myGrave.findIndex(g => g.id === t.id); if (gi >= 0) { G.myDeck.push(G.myGrave.splice(gi, 1)[0]); return; }
         let ei = G.myExile.findIndex(e => e.id === t.id); if (ei >= 0) G.myDeck.push(G.myExile.splice(ei, 1)[0]);
       });
       const ph = G.myHand.findIndex(h => h.id === '광란의 서커스'); if (ph >= 0) G.myGrave.push(G.myHand.splice(ph, 1)[0]);
       _cmSummonKeyCard(keyCard.id); onSummon(keyCard.id, 'keyDeck');
-      log('광란의 서커스 ①: 묘지/제외 덱으로 → 키카드 소환', 'mine');
+      log('광란의 서커스 ①: 묘지/제외 서커스메어 몬스터 덱으로 → 키카드 소환', 'mine');
       sendGameState(); renderAll();
     });
   });
@@ -961,8 +1046,8 @@ function activateCmWildCircus2FromGrave() {
       effectNum: 1, label: '① 상대 턴: 묘지/제외→덱 + 키카드 소환',
       condition: (hi) => {
         if (isMyTurn || currentPhase !== 'deploy') return false;
-        return [...G.myGrave,...G.myExile].some(c=>isCircusmareCard(c.id)) &&
-               G.myKeyDeck.some(c=>c.id!=='서커스메어 코인 제스터'&&c.id!=='서커스메어 마스크 제스터');
+        const pool = [...G.myGrave, ...G.myExile].filter(c => isCircusmareMonster(c.id));
+        return _cmMaterialKeyOptions(pool).length > 0;
       },
       activate: (hi) => activateCmWildCircus1(hi),
     }]);
@@ -1074,7 +1159,8 @@ function activateCircusmareFieldEffect(fieldIdx, effectNum) {
       };
       builderKeyDeck = {
         '서커스메어 스프링 제스터':1,'서커스메어 메드 키메라':1,'서커스메어 코인 제스터':1,
-        '서커스메어 마스크 제스터':1,'서커스메어 퍼핏 마스터':1,'일격필살':1,'단 한번의 기회':1,'카드의 흑기사':1,
+        '서커스메어 마스크 제스터':1,'서커스메어 퍼핏 마스터':1,
+        '일격필살':1,'단 한번의 기회':1,'카드의 흑기사':1,'풀려난 항아리의 마귀':1,'카드 세계의 영웅':1,
       };
       notify('서커스메어 기본 덱 로드! (메인 40장)');
       if (typeof renderBuilderDeck === 'function') renderBuilderDeck();

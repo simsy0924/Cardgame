@@ -157,6 +157,43 @@ function _chainHasOpponentSearchLink() {
   });
 }
 
+function _inferChainLinkTagsForResponse(link) {
+  if (!link) return [];
+  if (window.ProcessingNegateEngine && typeof window.ProcessingNegateEngine.inferTags === 'function') {
+    try { return window.ProcessingNegateEngine.inferTags(link) || []; }
+    catch (e) { console.warn('[Chain] inferTags 오류:', e); }
+  }
+  const tags = [];
+  const add = (t) => { if (t && !tags.includes(t)) tags.push(t); };
+  (link.effectTags || link.tags || []).forEach(t => add(String(t)));
+  const type = String(link.type || '');
+  const label = String(link.label || '');
+  const effectId = String(link.effectId || '');
+  const text = `${type} ${label} ${effectId}`;
+  if (/aiSummonDeck|summonFrom(Deck|Hand|Grave|Exile)|deckSummon|handSummon|graveSummon|exileSummon|keyDeckSummon/i.test(text)) add('monsterSummon');
+  if (/(소환한다|소환할|소환하는|몬스터 소환|덱.*소환|묘지.*소환|제외.*소환|패.*소환|키 카드.*소환)/.test(text)) add('monsterSummon');
+  return tags;
+}
+
+function _chainLinkIncludesMonsterSummon(link) {
+  const tags = _inferChainLinkTagsForResponse(link);
+  return tags.includes('monsterSummon')
+      || tags.includes('deckSummon')
+      || tags.includes('handSummon')
+      || tags.includes('graveSummon')
+      || tags.includes('exileSummon')
+      || tags.includes('keyDeckSummon');
+}
+
+/** 체인에 상대가 발동한 "몬스터를 소환하는 효과" 링크가 있는가 (출입통제 조건) */
+function _chainHasOpponentMonsterSummonLink() {
+  if (!activeChainState || !activeChainState.active) return false;
+  return (activeChainState.links || []).some(l => {
+    if (l.by === myRole) return false;
+    return _chainLinkIncludesMonsterSummon(l);
+  });
+}
+
 /**
  * collectChainOptions()
  * 현재 패를 순회하며 체인에 응답 가능한 모든 옵션을 반환
@@ -195,6 +232,9 @@ function _buildChainActivate(entry, idx, aiCtx) {
       myRole_val: myRole,
       addChainLink: window.addChainLink,
       markEffectUsed: window.markEffectUsed,
+      sendGameState: window.sendGameState,
+      renderAll: window.renderAll,
+      log: window.log,
     };
 
     G.myHand = aiCtx.hand; G.myField = aiCtx.field;
@@ -204,6 +244,12 @@ function _buildChainActivate(entry, idx, aiCtx) {
     G.opGrave = s2.grave; G.opExile = s2.exile;
     isMyTurn = aiCtx.isMyTurn || false;
     myRole = aiCtx.role || 'guest';
+
+    // AI 응답은 전역 G를 잠깐 뒤집어 실행한다.
+    // 이 상태에서 기존 효과 함수가 renderAll()/sendGameState()를 호출하면
+    // 화면이 AI 시점으로 잠깐 렌더링되어 깜빡인다. 실행 중에는 막고, 복원 후 한 번만 갱신한다.
+    window.sendGameState = function() {};
+    window.renderAll = function() {};
 
     window.addChainLink = function(effect) {
       if (!activeChainState || !activeChainState.active) return;
@@ -215,7 +261,7 @@ function _buildChainActivate(entry, idx, aiCtx) {
       next.passCount = 0;
       next.priority = aiOpponent;
       activeChainState = next;
-      log('🤖 ' + (effect.label || effect.type) + ' 체인 발동!', 'opponent');
+      if (typeof s2.log === 'function') s2.log('🤖 ' + (effect.label || effect.type) + ' 체인 발동!', 'opponent');
     };
 
     if (aiCtx.usedFx) {
@@ -236,6 +282,11 @@ function _buildChainActivate(entry, idx, aiCtx) {
       myRole = s2.myRole_val || 'host';
       window.addChainLink = s2.addChainLink;
       window.markEffectUsed = s2.markEffectUsed;
+      window.sendGameState = s2.sendGameState;
+      window.renderAll = s2.renderAll;
+      window.log = s2.log;
+      if (typeof s2.sendGameState === 'function') s2.sendGameState();
+      if (typeof s2.renderAll === 'function') s2.renderAll();
     }
   };
 }
@@ -933,14 +984,12 @@ function resolvePenguinVillage1() {
     return;
   }
 
-  // 출입통제: 체인이 활성 중이고 상대 링크가 있을 때 무효
+  // 출입통제: 상대가 "몬스터를 소환하는 효과"를 포함한 효과를 발동했을 때만 무효
   registerChainHandResponse('출입통제', [
     {
       effectNum: 1,
-      label: '① 상대 효과 무효',
-      // [수정] 체인 활성은 collectChainOptions()가 보장.
-      // 여기선 "상대 링크가 있어야" 조건만 체크.
-      condition: () => _chainHasOpponentLink(),
+      label: '① 몬스터 소환 효과 무효',
+      condition: () => _chainHasOpponentMonsterSummonLink(),
       activate: (handIdx) => {
         G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
         log('출입통제 발동!', 'mine');
