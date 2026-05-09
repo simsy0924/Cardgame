@@ -325,7 +325,125 @@
     return Array.from(new Set([...fromCard, ...fromMap]));
   };
 
+  function _fieldActivationEffectId(cardId) {
+    return `field_activate__${String(cardId || '').replace(/\s+/g, '_')}`;
+  }
+
+  function _fieldActivationHasResolve(cardId) {
+    const text = String(getCardDef(cardId).effects || '');
+    return /발동\s*시\s*효과\s*처리/.test(text);
+  }
+
+  function _fieldActivationEffectNum(cardId) {
+    return _fieldActivationHasResolve(cardId) ? 1 : 0;
+  }
+
+  function _resolveFieldActivationEffect(cardId, c, link) {
+    const card = getCardDef(cardId);
+    const name = card.name || cardId;
+
+    // 발동 시 효과 처리가 없는 필드 카드는 해결 시 아무 일도 하지 않고 그대로 남는다.
+    if (!_fieldActivationHasResolve(cardId)) {
+      return true;
+    }
+
+    // 엘리멘츠 in rainbow forest ①: 발동 시 효과 처리로 덱에서 엘리멘츠 몬스터 1장 서치 가능.
+    if (cardId === '엘리멘츠 in rainbow forest') {
+      const targets = (typeof findAllInDeck === 'function')
+        ? findAllInDeck(x => x && window.CARDS && CARDS[x.id]?.theme === '엘리멘츠' && CARDS[x.id]?.cardType === 'monster')
+        : [];
+      if (!targets.length) { c.sync(); return true; }
+      openCardPicker(targets, '엘리멘츠 in rainbow forest ①: 엘리멘츠 몬스터 서치', 1, (sel) => {
+        if (sel && sel.length && typeof searchToHand === 'function') {
+          searchToHand(targets[sel[0]].id);
+        }
+        c.sync();
+      }, true);
+      return true;
+    }
+
+    // 수호의 빛 ①: 발동 시 효과 처리로 제외되어 있는 자신의 카드 1장을 패에 넣을 수 있다.
+    if (cardId === '수호의 빛') {
+      const targets = Array.isArray(G.myExile) ? G.myExile.slice() : [];
+      if (!targets.length) { c.sync(); return true; }
+      openCardPicker(targets, '수호의 빛 ①: 제외된 카드 1장 패에 넣기 (선택)', 1, (sel) => {
+        if (sel && sel.length) {
+          const idx = sel[0];
+          const z = G.myExile[idx];
+          if (z) {
+            G.myExile.splice(idx, 1);
+            G.myHand.push({ id: z.id, name: z.name || CARDS[z.id]?.name || z.id, isPublic: true });
+            safeLog(`수호의 빛 ①: ${z.name || z.id} 패로`, 'mine');
+          }
+        }
+        c.sync();
+      }, true);
+      return true;
+    }
+
+    safeLog(`${name}: 발동 시 효과 처리가 아직 등록되지 않았습니다.`, 'system');
+    c.sync();
+    return true;
+  }
+
+  function registerGenericFieldActivations() {
+    if (!window.CARDS) return;
+    Object.keys(CARDS).forEach(cardId => {
+      const card = CARDS[cardId];
+      if (!card || card.cardType !== 'field') return;
+      const hasResolve = _fieldActivationHasResolve(cardId);
+      const effectNum = _fieldActivationEffectNum(cardId);
+      const id = _fieldActivationEffectId(cardId);
+
+      ENGINE.registerEffect(id, {
+        cardId,
+        effectNum,
+        zone: 'hand',
+        kind: 'ignition',
+        label: `${card.name || cardId} 발동`,
+        maxPerTurn: hasResolve ? 1 : 0,
+        markOnActivate: hasResolve,
+        effectTags: hasResolve ? ['fieldActivationEffect'] : [],
+        condition: (c) => {
+          return c.handIdx >= 0
+            && G.myHand[c.handIdx]?.id === cardId
+            && _isOwnTurnNow()
+            && _phaseNow() === 'deploy'
+            && !_isChainActiveNow()
+            && (!hasResolve || (typeof canUseEffect !== 'function') || canUseEffect(cardId, effectNum));
+        },
+        cost: (c, done) => {
+          // 필드 카드 발동의 선처리: 발동 시 일단 필드 존에 놓는다.
+          // 이 발동이 무효가 되면 effects-chain.js에서 방금 놓인 필드 카드를 묘지로 보낸다.
+          const ok = (typeof placeMyFieldCard === 'function')
+            ? placeMyFieldCard(cardId, { handIdx: c.handIdx, source: 'hand', activate: true, send: true, sync: true, render: true, reason: 'fieldActivateReplace' })
+            : false;
+          done(!!ok);
+        },
+        buildLink: () => ({
+          fieldActivation: true,
+          fieldCardId: cardId,
+          fieldActivationHasEffect: hasResolve,
+          fieldActivationEffectNum: effectNum,
+          effectTags: hasResolve ? ['fieldActivationEffect'] : [],
+        }),
+        resolve: (c, link) => _resolveFieldActivationEffect(cardId, c, link),
+      });
+
+      const list = CARD_EFFECTS[cardId] || [];
+      if (!list.includes(id)) CARD_EFFECTS[cardId] = [id, ...list];
+    });
+  }
+
   ENGINE.getActivatableEffects = function getActivatableEffects(cardId, zone, base = {}) {
+    const card = getCardDef(cardId);
+    // 필드 카드를 패에서 여는 경우에는 항상 공통 “필드 카드 발동” 버튼만 보여준다.
+    // 필드 존에 놓인 뒤 사용하는 ①/②/③ 효과는 zone:'fieldCard'에서 따로 표시된다.
+    if (zone === 'hand' && card && card.cardType === 'field') {
+      const fid = _fieldActivationEffectId(cardId);
+      const fdef = EFFECTS[fid];
+      return fdef && canActivate(fdef, base) ? [fdef] : [];
+    }
     return ENGINE.getCardEffectIds(cardId)
       .map(id => EFFECTS[id])
       .filter(def => def && zoneMatches(def, zone) && canActivate(def, base));
@@ -494,6 +612,14 @@
     if (window.activateCard.__effectRegistryPatched) return;
     const oldActivateCard = window.activateCard;
     window.activateCard = function patchedActivateCard(handIdx) {
+      const c = G.myHand && G.myHand[handIdx];
+      const card = c && getCardDef(c.id);
+      if (card && card.cardType === 'field') {
+        // 필드 카드 발동은 공통 필드 발동 라우터가 전담한다.
+        // 실패해도 구버전 activateCard로 넘기면 수호의 빛/기존 필드 처리와 겹쳐 규칙이 깨진다.
+        ENGINE.activateCardFromHand(handIdx);
+        return;
+      }
       if (ENGINE.activateCardFromHand(handIdx)) return;
       return oldActivateCard.apply(this, arguments);
     };
@@ -934,8 +1060,45 @@
     const cmGraveExileCount = () => cmGraveExileMonsterCount();
 
     function registerCmWrapper(id, def, fnName) {
+      // 서커스메어 기존 activate 함수들은 대부분 activateIgnitionEffect/activateQuickEffect로
+      // 다시 체인을 여는 함수다. 등록형 효과의 resolve 단계에서 activate 함수를 부르면
+      // registeredEffect 체인 → 기존 체인이 다시 열려 패스를 두 번 해야 하는 문제가 생긴다.
+      // 따라서 가능한 경우 resolve 함수로 직접 연결한다.
+      const cmResolveMap = {
+        activateCmFusion1: 'resolveCmFusion1',
+        activateCmFusion2FromGrave: 'resolveCmFusion2',
+        activateCmMedParade1: 'resolveCmMedParade1',
+        activateCmNightmareFusion1: 'resolveCmNightmareFusion1',
+        activateCmWildCircus1: 'resolveCmWildCircus1',
+        activateCmMedWolf2: 'resolveCmMedWolf2',
+        activateCmMedBear2: 'resolveCmMedBear2',
+        activateCmMedEagle2: 'resolveCmMedEagle2',
+        activateCmCrownDragon1: 'resolveCmCrownDragon1',
+        activateCmCrownDragon2: 'resolveCmCrownDragon2',
+        activateCmMedChimera2: 'resolveCmMedChimera2',
+        activateCmCoinJester: 'resolveCmCoinJester1',
+        activateCmCoinJester2: 'resolveCmCoinJester2',
+        activateCmMaskJester: 'resolveCmMaskJester1',
+        activateCmMaskJester2: 'resolveCmMaskJester2',
+        activateCmPuppetMaster1: 'resolveCmPuppetMaster1',
+        activateCmField2: 'resolveCmField2',
+        activateCmField3: 'resolveCmField3',
+        activateCmField4: 'resolveCmField4',
+        triggerCmMedWolf: 'resolveCmMedWolf1',
+        triggerCmMedBear: 'resolveCmMedBear1',
+        triggerCmMedEagle: 'resolveCmMedEagle1',
+        triggerCmMedSeal: 'resolveCmMedSeal1',
+        triggerCmCrownDragon3: 'resolveCmCrownDragon3',
+        triggerCmSpringJester: 'resolveCmSpringJester1',
+        triggerCmMedChimera3: 'resolveCmMedChimera3',
+        triggerCmPuppetMaster2: 'resolveCmPuppetMaster2',
+      };
       ENGINE.registerEffect(id, Object.assign({
-        activate: (c) => {
+        resolve: (c, link) => {
+          const resolverName = def.resolveFn || cmResolveMap[fnName];
+          const resolver = resolverName && window[resolverName];
+          if (typeof resolver === 'function') return resolver(link || c.link || {});
+
           const fn = window[fnName];
           if (typeof fn !== 'function') {
             safeNotify(`${def.label || id}: 실행 함수 ${fnName}을 찾을 수 없습니다.`);
@@ -948,6 +1111,16 @@
         },
       }, def));
     }
+
+    // 필드 카드 발동: 악몽의 서커스장은 패에서 발동하면 즉시 필드 존에 놓는다.
+    // 이건 서커스메어 키카드 소환 효과가 아니라 카드 발동 절차이므로 소재/키카드 조건을 보지 않는다.
+    ENGINE.registerEffect('cm_field_card_activate', {
+      cardId: '악몽의 서커스장', effectNum: 0, zone: 'hand', kind: 'procedure', label: '악몽의 서커스장 발동', noChain: true, markOnActivate: false,
+      condition: (c) => c.handIdx >= 0 && G.myHand[c.handIdx]?.id === '악몽의 서커스장' && cmMyTurn() && cmInDeploy() && !(window.activeChainState && window.activeChainState.active),
+      resolve: (c) => {
+        if (typeof placeMyFieldCard === 'function') placeMyFieldCard('악몽의 서커스장', { handIdx: c.handIdx, source: 'hand', activate: true, send: true, sync: true, render: true });
+      },
+    });
 
     // 손패/묘지 발동 카드
     registerCmWrapper('cm_fusion_1', {
@@ -968,6 +1141,7 @@
     registerCmWrapper('cm_nightmare_fusion_1', {
       cardId: '악몽 융합', effectNum: 1, zone: 'hand', kind: 'ignition', label: '악몽 융합 ① 덱 코스트 → 키카드 소환', maxPerTurn: 2,
       condition: (c) => { const pool = (G.myDeck || []).filter(x => isCircusMon(x.id)); return hasFn('activateCmNightmareFusion1') && c.handIdx >= 0 && G.myHand[c.handIdx]?.id === '악몽 융합' && cmAnyKeySummonable(pool) && ((window._cmNightmareFusionCount || 0) < 2); },
+      preActivate: () => { window._cmNightmareFusionCount = (window._cmNightmareFusionCount || 0) + 1; return true; },
     }, 'activateCmNightmareFusion1');
 
     registerCmWrapper('cm_wild_circus_1', {
@@ -976,7 +1150,7 @@
     }, 'activateCmWildCircus1');
 
     registerCmWrapper('cm_wild_circus_2_grave', {
-      cardId: '광란의 서커스', effectNum: 2, zone: 'grave', kind: 'ignition', label: '광란의 서커스 ② 묘지 제외 → 드로우', maxPerTurn: 1,
+      cardId: '광란의 서커스', effectNum: 2, zone: 'grave', kind: 'ignition', label: '광란의 서커스 ② 묘지 제외 → 드로우', maxPerTurn: 1, markOnActivate: false,
       condition: () => hasFn('activateCmWildCircus2FromGrave') && cmGraveHas(x => x.id === '광란의 서커스') && cmCanUse('광란의 서커스', 2),
     }, 'activateCmWildCircus2FromGrave');
 
@@ -1679,7 +1853,7 @@
     ENGINE.registerCardEffects('서커스메어 코인 제스터', ['cm_coin_jester_1_chain', 'cm_coin_jester_2']);
     ENGINE.registerCardEffects('서커스메어 마스크 제스터', ['cm_mask_jester_1_chain', 'cm_mask_jester_2']);
     ENGINE.registerCardEffects('서커스메어 퍼핏 마스터', ['cm_puppet_master_1']);
-    ENGINE.registerCardEffects('악몽의 서커스장', ['cm_field_2', 'cm_field_3', 'cm_field_4']);
+    ENGINE.registerCardEffects('악몽의 서커스장', ['cm_field_card_activate', 'cm_field_2', 'cm_field_3', 'cm_field_4']);
     ENGINE.registerCardEffects('서커스메어 퓨전', ['cm_fusion_1', 'cm_fusion_2_grave']);
     ENGINE.registerCardEffects('서커스메어 메드 퍼레이드', ['cm_med_parade_1']);
     ENGINE.registerCardEffects('악몽 융합', ['cm_nightmare_fusion_1']);
@@ -1708,4 +1882,5 @@
   // openCardDetail은 다른 테마 레지스트리도 감싸므로, 모든 스크립트 로드 뒤 마지막에 UI 패치를 건다.
   setTimeout(() => { patchViewFieldCardForRegistryUi(); patchCardDetail(); }, 0);
   registerBuiltIns();
+  registerGenericFieldActivations();
 })();

@@ -623,6 +623,9 @@ const CHAIN_RESOLVERS = {
   // 공용
   keyFetch:                  (link) => resolveKeyFetch(link.cardId),
   registeredEffect:          (link) => { if (window.EffectEngine && typeof window.EffectEngine.resolveChainLink === 'function') window.EffectEngine.resolveChainLink(link); },
+  // 구버전 필드 카드 발동 링크 호환: 필드 카드는 발동 비용으로 이미 필드 존에 놓였으므로,
+  // 발동 시 효과 처리가 없는 경우 해결 시 아무 일도 하지 않는다.
+  fieldActivate:             (link) => { sendGameState(); renderAll(); },
   // AI 효과 리졸버
   aiForceDiscard:            (link) => forceDiscard(Math.max(1, Number(link.count) || 1)),
   aiEyeForEye:               ()     => { _aiDrawN(2); log('🤖 눈에는 눈: 드로우 2장', 'opponent'); renderAll(); },
@@ -824,6 +827,33 @@ function executeChainLocally(links) {
     }
   };
 
+  function handleNegatedFieldActivation(link) {
+    if (!link) return;
+    const isFieldActivation = link.fieldActivation === true || link.type === 'fieldActivate';
+    if (!isFieldActivation) return;
+    const cardId = link.fieldCardId || link.cardId;
+    if (!cardId) return;
+    const mine = link.by === myRole;
+    const zoneCard = mine ? G.myFieldCard : G.opFieldCard;
+    if (!zoneCard || zoneCard.id !== cardId) return;
+    const moved = { ...zoneCard };
+    if (mine) {
+      G.myFieldCard = null;
+      G.myGrave.push(moved);
+      if (typeof onSentToGrave === 'function') onSentToGrave(moved.id, 'fieldCard', moved);
+      if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+        window.GameEvents.emit('fieldCardLeave', { cardId: moved.id, card: moved, from: 'fieldCard', to: 'grave', player: 'mine', reason: 'fieldActivationNegated' });
+      }
+    } else {
+      G.opFieldCard = null;
+      G.opGrave.push(moved);
+      if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+        window.GameEvents.emit('fieldCardLeave', { cardId: moved.id, card: moved, from: 'fieldCard', to: 'grave', player: 'opponent', reason: 'fieldActivationNegated' });
+      }
+    }
+    log(`필드 카드 발동 무효: ${moved.name || moved.id} 묘지로`, mine ? 'mine' : 'opponent');
+  }
+
   const runAt = (i) => {
     if (i >= links.length) { finish(); return; }
 
@@ -831,6 +861,7 @@ function executeChainLocally(links) {
     const next = () => setTimeout(() => runAt(i + 1), 0);
 
     if (negatedIndices.has(i)) {
+      handleNegatedFieldActivation(link);
       log(`효과 무효: ${link.label || link.type}`, 'system');
       next();
       return;
@@ -844,6 +875,7 @@ function executeChainLocally(links) {
         if (processingNegateCallbackUsed) return;
         processingNegateCallbackUsed = true;
         if (negated) {
+          handleNegatedFieldActivation(link);
           log(`처리 시 무효: ${link.label || link.type}`, 'system');
           next();
           return;

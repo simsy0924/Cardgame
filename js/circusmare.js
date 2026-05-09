@@ -79,6 +79,17 @@ function _cmValidateKeyMaterialSelection(keyId, selectedCards) {
   }
   return { ok: true };
 }
+
+function _cmMaterialPoolForKey(keyId, pool) {
+  const cards = (pool || []).filter(c => c && isCircusmareMonster(c.id));
+  // 메드 키메라는 반드시 메드 울프/베어/이글/씰만 소재 후보로 보여준다.
+  // 비-메드 서커스메어 몬스터가 후보에 섞이면 선택 후 취소되는 UX가 발생한다.
+  if (keyId === '서커스메어 메드 키메라') {
+    return cards.filter(c => CIRCUSMARE_MED_IDS.includes(c.id));
+  }
+  return cards;
+}
+
 function _cmKeyMaterialPrompt(keyId, actionText) {
   if (keyId === '서커스메어 메드 키메라') return `${CARDS[keyId]?.name || keyId} 소환: 울프/베어/이글/씰을 각각 1장씩 ${actionText}`;
   return `${CARDS[keyId]?.name || keyId} 소환: 서커스메어 몬스터 ${_cmKeyRequiredMaterialCount(keyId)}장을 ${actionText}`;
@@ -587,8 +598,9 @@ function resolveCmPuppetMaster1() {
           if (!kSel.length) { _cmAfterPuppet5(count); return; }
           const keyCard = keyOpts[kSel[0]];
           const req = _cmKeyRequiredMaterialCount(keyCard.id);
-          openCardPicker(materialPool, _cmKeyMaterialPrompt(keyCard.id, '덱으로 되돌림'), req, (mSel) => {
-            const chosen = mSel.map(i => materialPool[i]).filter(Boolean);
+          const selectableMaterials = _cmMaterialPoolForKey(keyCard.id, materialPool);
+          openCardPicker(selectableMaterials, _cmKeyMaterialPrompt(keyCard.id, '덱으로 되돌림'), req, (mSel) => {
+            const chosen = mSel.map(i => selectableMaterials[i]).filter(Boolean);
             const check = _cmValidateKeyMaterialSelection(keyCard.id, chosen);
             if (!check.ok) { notify(check.msg); _cmAfterPuppet5(count); return; }
             chosen.forEach(t => {
@@ -686,8 +698,9 @@ function resolveCmField4() {
     const keyCard = keyOpts[kSel[0]];
     const costPool = [...G.myField.filter(f => isCircusmareMonster(f.id)), ...G.myGrave.filter(g => isCircusmareMonster(g.id))];
     const req = _cmKeyRequiredMaterialCount(keyCard.id);
-    openCardPicker(costPool, _cmKeyMaterialPrompt(keyCard.id, '제외'), req, (cSel) => {
-      const chosen = cSel.map(i => costPool[i]).filter(Boolean);
+    const selectableMaterials = _cmMaterialPoolForKey(keyCard.id, costPool);
+    openCardPicker(selectableMaterials, _cmKeyMaterialPrompt(keyCard.id, '제외'), req, (cSel) => {
+      const chosen = cSel.map(i => selectableMaterials[i]).filter(Boolean);
       const check = _cmValidateKeyMaterialSelection(keyCard.id, chosen);
       if (!check.ok) { notify(check.msg); return; }
       chosen.forEach(t => {
@@ -725,8 +738,9 @@ function resolveCmFusion1(link) {
     const keyCard = keyOpts[kSel[0]];
     const costPool = [...G.myHand.filter(h => isCircusmareMonster(h.id)), ...G.myField.filter(f => isCircusmareMonster(f.id))];
     const req = _cmKeyRequiredMaterialCount(keyCard.id);
-    openCardPicker(costPool, _cmKeyMaterialPrompt(keyCard.id, '묘지로 보냄'), req, (cSel) => {
-      const chosen = cSel.map(i => costPool[i]).filter(Boolean);
+    const selectableMaterials = _cmMaterialPoolForKey(keyCard.id, costPool);
+    openCardPicker(selectableMaterials, _cmKeyMaterialPrompt(keyCard.id, '묘지로 보냄'), req, (cSel) => {
+      const chosen = cSel.map(i => selectableMaterials[i]).filter(Boolean);
       const check = _cmValidateKeyMaterialSelection(keyCard.id, chosen);
       if (!check.ok) { notify(check.msg); return; }
       chosen.forEach(t => {
@@ -808,8 +822,9 @@ function resolveCmNightmareFusion1() {
     const keyCard = keyOpts[kSel[0]];
     const dc = G.myDeck.filter(d => isCircusmareMonster(d.id));
     const req = _cmKeyRequiredMaterialCount(keyCard.id);
-    openCardPicker(dc, _cmKeyMaterialPrompt(keyCard.id, '덱에서 묘지로 보냄'), req, (cSel) => {
-      const chosen = cSel.map(i => dc[i]).filter(Boolean);
+    const selectableMaterials = _cmMaterialPoolForKey(keyCard.id, dc);
+    openCardPicker(selectableMaterials, _cmKeyMaterialPrompt(keyCard.id, '덱에서 묘지로 보냄'), req, (cSel) => {
+      const chosen = cSel.map(i => selectableMaterials[i]).filter(Boolean);
       const check = _cmValidateKeyMaterialSelection(keyCard.id, chosen);
       if (!check.ok) { notify(check.msg); return; }
       chosen.forEach(t => { const di = G.myDeck.findIndex(d => d.id === t.id); if (di >= 0) G.myGrave.push(G.myDeck.splice(di, 1)[0]); });
@@ -842,8 +857,9 @@ function resolveCmWildCircus1() {
     const keyCard = keyOpts[kSel[0]];
     const costPool = [...G.myGrave.filter(g => isCircusmareMonster(g.id)), ...G.myExile.filter(e => isCircusmareMonster(e.id))];
     const req = _cmKeyRequiredMaterialCount(keyCard.id);
-    openCardPicker(costPool, _cmKeyMaterialPrompt(keyCard.id, '덱으로 되돌림'), req, (cSel) => {
-      const chosen = cSel.map(i => costPool[i]).filter(Boolean);
+    const selectableMaterials = _cmMaterialPoolForKey(keyCard.id, costPool);
+    openCardPicker(selectableMaterials, _cmKeyMaterialPrompt(keyCard.id, '덱으로 되돌림'), req, (cSel) => {
+      const chosen = cSel.map(i => selectableMaterials[i]).filter(Boolean);
       const check = _cmValidateKeyMaterialSelection(keyCard.id, chosen);
       if (!check.ok) { notify(check.msg); return; }
       chosen.forEach(t => {
@@ -1132,7 +1148,7 @@ function activateCircusmareFieldEffect(fieldIdx, effectNum) {
     activateCard = function(handIdx) {
       const c = G.myHand[handIdx];
       if (c && CARDS[c.id]?.theme === '서커스메어') { activateCircusmareCard(handIdx, 1); return; }
-      if (c && ['악몽의 서커스장','악몽 융합','광란의 서커스'].includes(c.id)) { activateCircusmareCard(handIdx, 1); return; }
+      if (c && ['악몽 융합','광란의 서커스'].includes(c.id)) { activateCircusmareCard(handIdx, 1); return; }
       _orig.apply(this, arguments);
     };
   }
