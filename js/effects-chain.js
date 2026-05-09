@@ -449,15 +449,14 @@ function enqueueTriggeredEffect(effect) {
   const normalized = normalizeTriggeredEffect(effect);
   if (!normalized) return;
 
-  // optional 여부와 무관하게 항상 큐에 먼저 쌓는다.
-  // 체인 활성 중 gameConfirm 팝업이 뜨면 흐름이 꼬이므로
-  // 발동 여부 확인은 flushTriggeredEffects에서 체인 해결 후 처리한다.
   pendingTriggerEffects.push(normalized);
 
-  // 체인 활성 중이면 대기 — 해결 후 _onLocalChainStateChanged에서 flush 호출
-  if (!activeChainState || !activeChainState.active) {
-    setTimeout(flushTriggeredEffects, 0);
+  // 체인 활성 중이거나 체인 해결 진행 중이면 대기
+  // — 해결 완료 후 executeChainLocally 또는 _onLocalChainStateChanged에서 flush 호출
+  if ((activeChainState && activeChainState.active) || window._chainResolving) {
+    return;
   }
+  setTimeout(flushTriggeredEffects, 0);
 }
 
 function normalizeTriggeredEffect(effect) {
@@ -714,18 +713,19 @@ const CHAIN_RESOLVERS = {
 // 인덱스 i=0이 체인의 마지막 링크(최상위), i=last가 체인 1(최초 발동)
 function executeChainLocally(links) {
   // ── 무효 인덱스 계산 ──────────────────────────────────────
-  // 무효 카드(genericNegate, quickPenguinStrike1)는 자신보다 1 앞의 링크
-  // 즉, 역순 배열에서 i+1 번째(더 먼저 발동된 링크)를 무효화한다.
-  // 단, 무효 카드 자신도 무효화 대상이 된 경우(이중 무효) 먼저 판정한다.
   const negatedIndices = new Set();
-
   links.forEach((link, i) => {
-    if (negatedIndices.has(i)) return; // 이미 무효화된 링크는 무효 효력도 없음
+    if (negatedIndices.has(i)) return;
     if (link.type === 'quickPenguinStrike1' || link.type === 'genericNegate') {
-      // 바로 다음 인덱스(체인 번호 기준 한 단계 아래)를 무효화
       if (i + 1 < links.length) negatedIndices.add(i + 1);
     }
   });
+
+  // ── 실행 중 플래그 ─────────────────────────────────────────
+  // resolve 함수 내부에서 enqueueTriggeredEffect가 호출될 때
+  // activeChainState는 이미 null이므로 즉시 flush가 실행된다.
+  // 이를 막기 위해 전역 플래그로 "체인 해결 진행 중" 상태를 표시한다.
+  window._chainResolving = true;
 
   links.forEach((link, i) => {
     if (negatedIndices.has(i)) {
@@ -737,7 +737,6 @@ function executeChainLocally(links) {
     }
 
     if (link.by === myRole) {
-      // 내 링크
       if (window.tryResolveMafiaChainTransform && window.tryResolveMafiaChainTransform(link)) {
         return;
       }
@@ -745,22 +744,26 @@ function executeChainLocally(links) {
       if (resolver) resolver(link);
       else console.warn('[Chain] 알 수 없는 링크 타입:', link.type);
     } else {
-      // 상대 링크 — AI전/대인전 공용으로 CHAIN_RESOLVERS 실행
-      // (대인전에서 listenChainState가 호출하는 executeChainLocally도 동일 경로)
       const resolver = CHAIN_RESOLVERS[link.type];
       if (resolver) {
         resolver(link);
       } else if (window.AI && window.AI.active) {
-        _executeAIChainLink(link); // AI 전용 레거시 폴백
+        _executeAIChainLink(link);
       } else {
         console.warn('[Chain] 상대 링크: 알 수 없는 타입', link.type);
       }
     }
   });
 
+  window._chainResolving = false;
   sendGameState();
   renderAll();
   usedKeyFetchInChain = {};
+
+  // 체인 해결 완료 후 쌓인 유발효과 처리
+  if (pendingTriggerEffects.length > 0) {
+    setTimeout(flushTriggeredEffects, 0);
+  }
 }
 
 // AI 체인 링크 실행 폴백 (CHAIN_RESOLVERS에 없는 레거시 타입용)

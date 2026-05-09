@@ -188,16 +188,24 @@ function activateSummonerPenguin1(fieldIdx) {
   const source = G.myField[fieldIdx];
   if (!source || source.id !== '수문장 펭귄') { notify('수문장 펭귄이 필드에 없습니다.'); return; }
   markEffectUsed('수문장 펭귄', 1);
+  // sourceInstanceId 방식은 상태 동기화 시 배열이 교체되면 _iid가 사라져 resolve 실패.
+  // cardId만 링크에 담고 resolve에서 필드를 직접 탐색한다.
   activateIgnitionEffect({
-    type:             'ignitionSummonerPenguin1',
-    label:            '수문장 펭귄 ①',
-    sourceInstanceId: ensureCardInstanceId(source),
+    type:   'ignitionSummonerPenguin1',
+    label:  '수문장 펭귄 ①',
+    cardId: '수문장 펭귄',
   });
 }
 
 function resolveSummonerPenguin1(sourceInstanceId) {
-  const fieldIdx = findCardIndexByInstanceId(G.myField, sourceInstanceId);
-  if (fieldIdx < 0 || G.myField[fieldIdx]?.id !== '수문장 펭귄') {
+  // sourceInstanceId가 있으면 우선 시도, 없으면 cardId로 폴백
+  let fieldIdx = sourceInstanceId
+    ? findCardIndexByInstanceId(G.myField, sourceInstanceId)
+    : -1;
+  if (fieldIdx < 0) {
+    fieldIdx = G.myField.findIndex(c => c.id === '수문장 펭귄');
+  }
+  if (fieldIdx < 0) {
     notify('수문장 펭귄 ①: 발동한 카드가 필드에 없습니다.');
     return;
   }
@@ -281,19 +289,22 @@ function resolvePenguinStrike2() {
 function activatePenguinCharge1(handIdx) {
   const source = G.myHand[handIdx];
   if (!source || source.id !== '펭귄!돌격!') { notify('패의 펭귄!돌격! 카드가 필요합니다.'); return; }
+  if (findAllInDeck(c => isPenguinMonster(c.id)).length === 0) { notify('덱에 펭귄 몬스터가 없습니다.'); return; }
+  // 발동 시점의 handIdx를 링크에 저장 (패 조작으로 인덱스 변경 가능성 없음 — activate에서만 쓰임)
   activateIgnitionEffect({
-    type:             'ignitionPenguinCharge1',
-    label:            '펭귄!돌격! ①',
-    sourceInstanceId: ensureCardInstanceId(source),
+    type:    'ignitionPenguinCharge1',
+    label:   '펭귄!돌격! ①',
+    cardId:  '펭귄!돌격!',
   });
 }
 
 function resolvePenguinCharge1(sourceInstanceId) {
   const targets = findAllInDeck(c => isPenguinMonster(c.id));
   if (targets.length === 0) { notify('덱에 펭귄 몬스터가 없습니다.'); return; }
-  const handIdx = findCardIndexByInstanceId(G.myHand, sourceInstanceId);
-  if (handIdx < 0 || G.myHand[handIdx]?.id !== '펭귄!돌격!') {
-    notify('펭귄!돌격! ①: 발동한 카드가 유효하지 않습니다.');
+  // resolve 시점에 패에서 카드 이름으로 탐색 (체인 해결 시 패 상태가 그대로임)
+  const handIdx = G.myHand.findIndex(c => c.id === '펭귄!돌격!');
+  if (handIdx < 0) {
+    notify('펭귄!돌격! ①: 발동한 카드가 패에 없습니다.');
     return;
   }
   G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
@@ -337,16 +348,20 @@ function activatePenguinGlory1(handIdx) {
     return;
   }
   activateQuickEffect({
-    type:             'ignitionPenguinGlory1',
-    label:            '펭귄의 영광 ①',
-    sourceInstanceId: ensureCardInstanceId(source),
+    type:   'ignitionPenguinGlory1',
+    label:  '펭귄의 영광 ①',
+    cardId: '펭귄의 영광',
   });
 }
 
 function resolvePenguinGlory1(sourceInstanceId) {
-  const handIdx = findCardIndexByInstanceId(G.myHand, sourceInstanceId);
-  if (handIdx < 0 || G.myHand[handIdx]?.id !== '펭귄의 영광') {
-    notify('펭귄의 영광 ①: 발동한 카드가 유효하지 않습니다.');
+  // 발동 시점 링크의 sourceInstanceId가 있으면 우선 시도, 없으면 cardId로 폴백
+  let handIdx = sourceInstanceId
+    ? findCardIndexByInstanceId(G.myHand, sourceInstanceId)
+    : -1;
+  if (handIdx < 0) handIdx = G.myHand.findIndex(c => c.id === '펭귄의 영광');
+  if (handIdx < 0) {
+    notify('펭귄의 영광 ①: 발동한 카드가 패에 없습니다.');
     return;
   }
   G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
@@ -654,7 +669,7 @@ function activatePenguinWizard1(handIdx) {
   const source = G.myHand[handIdx];
   if (!source || source.id !== '펭귄 마법사' || source.isPublic) { notify('일반 패의 펭귄 마법사가 필요합니다.'); return; }
   markEffectUsed('펭귄 마법사', 1);
-  activateIgnitionEffect({ type: 'ignitionPenguinWizard1', label: '펭귄 마법사 ①', sourceInstanceId: ensureCardInstanceId(source) });
+  activateIgnitionEffect({ type: 'ignitionPenguinWizard1', label: '펭귄 마법사 ①', cardId: '펭귄 마법사' });
 }
 
 function resolvePenguinWizard1() {
