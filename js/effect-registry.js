@@ -75,7 +75,7 @@
       effectNum: def.effectNum || 1,
       zone: def.zone || 'hand',       // hand | field | grave | exile | any
       kind: def.kind || 'ignition',   // ignition | quick | trigger | direct | procedure
-      optional: def.optional !== false,
+      optional: def.optional !== undefined ? !!def.optional : undefined,
       maxPerTurn: def.maxPerTurn || 1,
       chain: def.chain !== false,
       condition: () => true,
@@ -87,6 +87,14 @@
     }, def, { id });
     out.label = out.label || defaultLabel(out);
     out.text = out.text || getEffectText(out.cardId, out.effectNum);
+
+    // 강제/임의 유발 기본값.
+    // “발동할 수 있다”는 임의, “발동한다”는 강제로 취급한다.
+    // 카드별로 optional을 명시하면 명시값이 우선한다.
+    if (out.optional === undefined) {
+      const tx = String(out.text || '');
+      out.optional = !/발동한다/.test(tx);
+    }
 
     // 레거시 패치 때는 실제 실행 함수를 activate에 넣은 등록이 많았다.
     // 이제 activate는 "즉시 실행"이 아니라 resolve 별칭으로 취급해서
@@ -1201,18 +1209,18 @@
     }, 'activateCmPuppetMaster1');
 
     registerCmWrapper('cm_field_2', {
-      cardId: '악몽의 서커스장', effectNum: 2, zone: 'field', kind: 'ignition', label: '악몽의 서커스장 ② 서커스메어 서치', maxPerTurn: 1,
-      condition: () => hasFn('activateCmField2') && cmMyTurn() && cmInDeploy() && cmFieldHas(x => x.id === '악몽의 서커스장') && cmDeckHas(x => isCircusCard(x.id)) && cmCanUse('악몽의 서커스장', 2),
+      cardId: '악몽의 서커스장', effectNum: 2, zone: 'fieldCard', kind: 'ignition', label: '악몽의 서커스장 ② 서커스메어 서치', maxPerTurn: 1,
+      condition: () => hasFn('activateCmField2') && cmMyTurn() && cmInDeploy() && G.myFieldCard?.id === '악몽의 서커스장' && cmDeckHas(x => isCircusCard(x.id)) && cmCanUse('악몽의 서커스장', 2),
     }, 'activateCmField2');
 
     registerCmWrapper('cm_field_3', {
-      cardId: '악몽의 서커스장', effectNum: 3, zone: 'field', kind: 'ignition', label: '악몽의 서커스장 ③ 3장 덤핑 + 드로우', maxPerTurn: 1,
-      condition: () => hasFn('activateCmField3') && cmMyTurn() && cmInDeploy() && cmFieldHas(x => x.id === '악몽의 서커스장') && cmCanUse('악몽의 서커스장', 3),
+      cardId: '악몽의 서커스장', effectNum: 3, zone: 'fieldCard', kind: 'ignition', label: '악몽의 서커스장 ③ 3장 덤핑 + 드로우', maxPerTurn: 1,
+      condition: () => hasFn('activateCmField3') && cmMyTurn() && cmInDeploy() && G.myFieldCard?.id === '악몽의 서커스장' && cmCanUse('악몽의 서커스장', 3),
     }, 'activateCmField3');
 
     registerCmWrapper('cm_field_4', {
-      cardId: '악몽의 서커스장', effectNum: 4, zone: 'field', kind: 'quick', label: '악몽의 서커스장 ④ 제외 코스트 → 키카드 소환', maxPerTurn: 1,
-      condition: () => { const pool = [...(G.myField || []).filter(x => isCircusMon(x.id)), ...(G.myGrave || []).filter(x => isCircusMon(x.id))]; return hasFn('activateCmField4') && cmInDeploy() && cmFieldHas(x => x.id === '악몽의 서커스장') && cmAnyKeySummonable(pool) && cmCanUse('악몽의 서커스장', 4); },
+      cardId: '악몽의 서커스장', effectNum: 4, zone: 'fieldCard', kind: 'quick', label: '악몽의 서커스장 ④ 제외 코스트 → 키카드 소환', maxPerTurn: 1,
+      condition: () => { const pool = [...(G.myField || []).filter(x => isCircusMon(x.id)), ...(G.myGrave || []).filter(x => isCircusMon(x.id))]; return hasFn('activateCmField4') && cmInDeploy() && G.myFieldCard?.id === '악몽의 서커스장' && cmAnyKeySummonable(pool) && cmCanUse('악몽의 서커스장', 4); },
     }, 'activateCmField4');
 
     // 상대 효과 체인으로 키 카드 덱에서 튀어나오는 효과
@@ -1254,7 +1262,7 @@
 
     registerCmWrapper('cm_med_chimera_1_event', {
       cardId: '서커스메어 메드 키메라', effectNum: 1, zone: 'event', kind: 'trigger', trigger: 'summon', label: '메드 키메라 ① 서커스메어 보호 ON', markOnActivate: false, chain: false,
-      condition: (c) => c.event?.cardId === '서커스메어 메드 키메라',
+      condition: () => false, // ①은 지속 효과이므로 소환 유발 체인으로 만들지 않는다.
     }, 'triggerCmMedChimera');
 
     registerCmWrapper('cm_crown_dragon_3_event', {

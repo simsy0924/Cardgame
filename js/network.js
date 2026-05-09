@@ -412,14 +412,9 @@ function handleOpponentAction(action) {
       break;
     case 'summon': {
       const sc = CARDS[action.cardId] || {};
-      if (!action.localApplied) {
-        const publicIdx = G.opHand.findIndex(c => c.id === action.cardId);
-        if (publicIdx >= 0) G.opHand.splice(publicIdx, 1);
-        else if (G.opHand.length > 0) G.opHand.pop();
-        if (G.opField.length < maxFieldSlots()) {
-          G.opField.push({ id: action.cardId, name: sc.name || action.cardId, atk: sc.atk || 0 });
-        }
-      }
+      // 상태 동기화는 listenOpponentState(hostState/guestState)가 전담한다.
+      // 여기서 상대 필드/패를 직접 수정하면 Firebase state sync와 중복되어
+      // 한쪽 화면에 같은 몬스터가 2장 보이는 문제가 생긴다.
       log(`상대 소환: ${sc.name || action.cardId}${sc.atk !== undefined ? ` (ATK ${sc.atk})` : ''}`, 'opponent');
       if (G.goldenAppleActive) {
         drawOne();

@@ -808,6 +808,22 @@ function executeChainLocally(links) {
   };
 
   const resolveOne = (link) => {
+    const ownerScoped = link && (
+      link.ownerScoped === true ||
+      link.type === 'registeredEffect' ||
+      link.type === 'themeEffect' ||
+      /^triggerCm|^quickCm|^ignitionCm/.test(String(link.type || ''))
+    );
+
+    // 등록형/테마 효과는 기본적으로 발동자 관점의 G.my*를 조작한다.
+    // 상대 클라이언트에서 같은 resolver를 다시 실행하면 상대 효과가 내 효과처럼 처리되어
+    // 필드가 서로 다르게 보이거나, 스프링 제스터처럼 내 필드까지 날아가는 문제가 생긴다.
+    // 상대 링크는 발동자가 sendGameState/sendAction으로 동기화하므로 여기서는 실행하지 않는다.
+    if (link.by !== myRole && ownerScoped && !(window.AI && window.AI.active)) {
+      log(`상대 효과 처리: ${link.label || link.type}`, 'opponent');
+      return;
+    }
+
     if (link.by === myRole) {
       if (window.tryResolveMafiaChainTransform && window.tryResolveMafiaChainTransform(link)) {
         return;
