@@ -338,41 +338,161 @@
     window.activateFieldEffect.__effectRegistryPatched = true;
   }
 
-  // 상세 모달에 등록형 효과 버튼 추가. 기존 수작업 버튼과 중복되면 새 버튼이 맨 위에 뜬다.
+  // 상세 모달의 등록형 효과 버튼을 최종 렌더링한다.
+  // 기존 수작업 버튼과 등록형 버튼이 겹치지 않도록, 모든 테마 레지스트리가 로드된 뒤 마지막에 패치한다.
   function patchCardDetail() {
     if (typeof window.openCardDetail !== 'function') { setTimeout(patchCardDetail, 50); return; }
-    if (window.openCardDetail.__effectRegistryPatched) return;
+    if (window.openCardDetail.__effectRegistryUiPatched) return;
+
     const oldOpen = window.openCardDetail;
-    window.openCardDetail = function patchedOpenCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -1) {
-      oldOpen.apply(this, arguments);
-      if (opponentCard) return;
+
+    const getState = () => window.G || (typeof G !== 'undefined' ? G : null);
+    const notifySafe = (msg) => {
+      if (typeof window.notify === 'function') window.notify(msg);
+      else console.warn(msg);
+    };
+    const closeCardModal = () => {
+      if (typeof window.closeModal === 'function') window.closeModal('cardDetailModal');
+    };
+    const addButton = (actions, label, className, onClick) => {
+      const b = document.createElement('button');
+      b.className = className || 'btn btn-secondary';
+      b.textContent = label;
+      b.onclick = onClick;
+      actions.appendChild(b);
+      return b;
+    };
+    const addCloseButton = (actions) => addButton(actions, '닫기', 'btn btn-secondary', closeCardModal);
+    const addHeader = (actions, text) => {
+      const header = document.createElement('div');
+      header.className = 'effect-registry-header effect-registry-clean-header';
+      header.textContent = text || '사용 가능한 효과';
+      header.style.marginTop = '8px';
+      header.style.marginBottom = '2px';
+      header.style.opacity = '0.75';
+      actions.appendChild(header);
+      return header;
+    };
+
+    function findZone(cardId, handIdx, opponentCard, fieldIdx) {
+      if (opponentCard) return null;
+      const state = getState();
+
+      if (handIdx >= 0) {
+        return { zone: 'hand', base: { cardId, handIdx } };
+      }
+      if (fieldIdx >= 0) {
+        return { zone: 'field', base: { cardId, fieldIdx } };
+      }
+      // ui.js의 zoneViewModal에서 묘지 카드를 열 때 handIdx=-2를 사용한다.
+      if (handIdx === -2) {
+        const grave = state && Array.isArray(state.myGrave) ? state.myGrave : [];
+        return {
+          zone: 'grave',
+          base: { cardId, sourceZone: 'grave', zoneIndex: grave.findIndex(c => c && c.id === cardId) },
+        };
+      }
+      // viewFieldCard('me')에서 상세창을 열었을 때만 필드 존 카드 효과를 보여준다.
+      if (window.__EFFECT_REGISTRY_VIEWING_MY_FIELD_CARD__) {
+        return { zone: 'fieldCard', base: { cardId, sourceZone: 'fieldCard' } };
+      }
+      return null;
+    }
+
+    function getRegistryEffects(cardId, zoneInfo) {
+      if (!zoneInfo || !ENGINE || typeof ENGINE.getActivatableEffects !== 'function') return [];
+      try {
+        const effects = ENGINE.getActivatableEffects(cardId, zoneInfo.zone, zoneInfo.base || {});
+        const seen = new Set();
+        return effects.filter(def => {
+          if (!def || !def.id) return false;
+          if (seen.has(def.id)) return false;
+          seen.add(def.id);
+          return true;
+        });
+      } catch (e) {
+        console.warn('[effect-registry] 등록형 버튼 조회 오류:', e);
+        return [];
+      }
+    }
+
+    function renderRegisteredButtons(cardId, zoneInfo, effects) {
+      const actions = document.getElementById('mdCardActions');
+      if (!actions || !zoneInfo || !effects.length) return false;
+
+      actions.innerHTML = '';
+      addHeader(actions, '사용 가능한 효과');
+
+      effects.forEach(def => {
+        addButton(actions, def.label || def.id, 'btn btn-primary', () => {
+          closeCardModal();
+          try {
+            ENGINE.activateEffect(def.id, Object.assign({ cardId }, zoneInfo.base || {}));
+          } catch (e) {
+            console.error('[effect-registry] activateEffect 오류:', e);
+            notifySafe('효과 처리 오류: ' + (e && e.message ? e.message : e));
+          }
+        });
+      });
+
+      // 손패 카드는 등록형 효과만 남기되, 수동 버리기는 기본 조작이라 유지한다.
+      if (zoneInfo.zone === 'hand' && typeof window.manualDiscard === 'function' && zoneInfo.base && zoneInfo.base.handIdx >= 0) {
+        addButton(actions, '패에서 버리기', 'btn btn-danger', () => {
+          closeCardModal();
+          try { window.manualDiscard(zoneInfo.base.handIdx); }
+          catch (e) {
+            console.error('[effect-registry] manualDiscard 오류:', e);
+            notifySafe('버리기 처리 오류: ' + (e && e.message ? e.message : e));
+          }
+        });
+      }
+
+      addCloseButton(actions);
+      return true;
+    }
+
+    function removeExactDuplicateButtons() {
       const actions = document.getElementById('mdCardActions');
       if (!actions) return;
-      const zone = handIdx >= 0 ? 'hand' : fieldIdx >= 0 ? 'field' : null;
-      if (!zone) return;
-      const base = { handIdx, fieldIdx, cardId };
-      const effects = ENGINE.getActivatableEffects(cardId, zone, base);
-      if (!effects.length) return;
-
-      const header = document.createElement('div');
-      header.className = 'effect-registry-header';
-      header.textContent = '등록형 효과';
-      header.style.marginTop = '8px';
-      header.style.opacity = '0.75';
-      actions.prepend(header);
-
-      effects.slice().reverse().forEach(def => {
-        const b = document.createElement('button');
-        b.className = 'btn btn-primary';
-        b.textContent = def.label;
-        b.onclick = () => {
-          if (typeof closeModal === 'function') closeModal('cardDetailModal');
-          ENGINE.activateEffect(def.id, base);
-        };
-        actions.prepend(b);
+      const seen = new Set();
+      Array.from(actions.querySelectorAll('button')).forEach(btn => {
+        const key = `${(btn.textContent || '').trim()}@@${btn.className || ''}`;
+        if (seen.has(key) && (btn.textContent || '').trim() !== '닫기') {
+          btn.remove();
+          return;
+        }
+        seen.add(key);
       });
+    }
+
+    window.openCardDetail = function openCardDetailEffectRegistryUi(cardId, handIdx = -1, opponentCard = false, fieldIdx = -1) {
+      const result = oldOpen.apply(this, arguments);
+      try {
+        const zoneInfo = findZone(cardId, handIdx, opponentCard, fieldIdx);
+        const effects = getRegistryEffects(cardId, zoneInfo);
+        if (effects.length) renderRegisteredButtons(cardId, zoneInfo, effects);
+        else removeExactDuplicateButtons();
+      } catch (e) {
+        console.warn('[effect-registry] 상세 버튼 정리 오류:', e);
+      }
+      return result;
     };
-    window.openCardDetail.__effectRegistryPatched = true;
+    window.openCardDetail.__effectRegistryUiPatched = true;
+  }
+
+  function patchViewFieldCardForRegistryUi() {
+    if (typeof window.viewFieldCard !== 'function') { setTimeout(patchViewFieldCardForRegistryUi, 50); return; }
+    if (window.viewFieldCard.__effectRegistryUiPatched) return;
+    const oldView = window.viewFieldCard;
+    window.viewFieldCard = function viewFieldCardEffectRegistryUi(who) {
+      window.__EFFECT_REGISTRY_VIEWING_MY_FIELD_CARD__ = who === 'me';
+      try {
+        return oldView.apply(this, arguments);
+      } finally {
+        setTimeout(() => { window.__EFFECT_REGISTRY_VIEWING_MY_FIELD_CARD__ = false; }, 0);
+      }
+    };
+    window.viewFieldCard.__effectRegistryUiPatched = true;
   }
 
   // 펭귄 테마 등록: 카드 텍스트를 파싱하지 않고, cardId/effectNum -> 실제 함수로 연결한다.
@@ -1404,6 +1524,7 @@
   patchActivateCard();
   patchFieldEffect();
   patchGraveEffect();
-  patchCardDetail();
+  // openCardDetail은 다른 테마 레지스트리도 감싸므로, 모든 스크립트 로드 뒤 마지막에 UI 패치를 건다.
+  setTimeout(() => { patchViewFieldCardForRegistryUi(); patchCardDetail(); }, 0);
   registerBuiltIns();
 })();
