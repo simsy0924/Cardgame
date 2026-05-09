@@ -1,4 +1,3 @@
-
 // effects-core.js — 턴/전투/승리 등 공용 게임 효과
 
 // effects.js — 페이즈, 전투, 승리조건, 체인, 범용 카드 효과
@@ -181,11 +180,12 @@ function _resolveForceDiscardWithGuard(dmg) {
       `구사일생 발동?\n전투 데미지 0 + 드로우 1장\n조건: 공격력 차(${dmg}) ≥ 패 수(${G.myHand.length})`,
       (yes) => {
         if (!yes) { forceDiscard(dmg); return; }
+        // 코스트: 구사일생을 묘지로
         G.myHand.splice(guIdx, 1);
         G.myGrave.push({ id: '구사일생', name: '구사일생' });
-        drawOne();
-        log('구사일생: 전투 데미지 0 + 드로우', 'mine');
-        sendGameState(); renderAll();
+        log('구사일생 발동!', 'mine');
+        // 체인 블록 형성 — 해결 시 드로우
+        window.beginChain({ type: 'guSaIlSaeng', label: '구사일생', dmg });
       }
     );
   } else {

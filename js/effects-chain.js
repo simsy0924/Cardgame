@@ -1,4 +1,3 @@
-
 // effects-chain.js — 체인/유발/퀵 이펙트 처리
 function nextChainId() {
   window._CHAIN_SEQ = (window._CHAIN_SEQ || 0) + 1;
@@ -449,18 +448,13 @@ function addChainLink(effect, options = {}) {
 function enqueueTriggeredEffect(effect) {
   const normalized = normalizeTriggeredEffect(effect);
   if (!normalized) return;
-  if (normalized.optional) {
-    gameConfirm(`${normalized.label}\n이 유발효과를 발동하시겠습니까?`, (yes) => {
-      if (!yes) return;
-      pendingTriggerEffects.push(normalized);
-      // [BUG FIX] 체인 활성 중이면 대기 — 체인 해결 후 flushTriggeredEffects가 호출됨
-      if (!activeChainState || !activeChainState.active) {
-        setTimeout(flushTriggeredEffects, 0);
-      }
-    });
-    return;
-  }
+
+  // optional 여부와 무관하게 항상 큐에 먼저 쌓는다.
+  // 체인 활성 중 gameConfirm 팝업이 뜨면 흐름이 꼬이므로
+  // 발동 여부 확인은 flushTriggeredEffects에서 체인 해결 후 처리한다.
   pendingTriggerEffects.push(normalized);
+
+  // 체인 활성 중이면 대기 — 해결 후 _onLocalChainStateChanged에서 flush 호출
   if (!activeChainState || !activeChainState.active) {
     setTimeout(flushTriggeredEffects, 0);
   }
@@ -480,8 +474,28 @@ function flushTriggeredEffects() {
   const queued = [...pendingTriggerEffects];
   pendingTriggerEffects = [];
 
-  window.beginChain(queued[0]); // [BUG FIX] window 경유로 ai.js 훅 적용
-  queued.slice(1).forEach(e => addChainLink(e, { force: true }));
+  // optional 효과가 큐 첫 번째라면 발동 여부를 확인한 후 체인 시작
+  const first = queued[0];
+  const rest  = queued.slice(1);
+
+  const _doChain = () => {
+    window.beginChain(first); // window 경유 → ai.js 훅 적용
+    rest.forEach(e => addChainLink(e, { force: true }));
+  };
+
+  if (first.optional) {
+    gameConfirm(`${first.label || first.type}\n이 유발효과를 발동하시겠습니까?`, (yes) => {
+      if (!yes) {
+        // 취소 시 나머지 큐 복구 후 다음 효과로
+        pendingTriggerEffects.unshift(...rest);
+        setTimeout(flushTriggeredEffects, 0);
+        return;
+      }
+      _doChain();
+    });
+  } else {
+    _doChain();
+  }
 }
 
 function activateQuickEffect(effect) {
@@ -594,8 +608,8 @@ const CHAIN_RESOLVERS = {
   // 현자 펭귄
   ignitionSagePenguin1:      ()     => resolveSagePenguin1(),
   ignitionSagePenguin2:      ()     => resolveSagePenguin2(),
-  // 수문장 펭귄
-  ignitionSummonerPenguin1:  (link) => resolveSummonerPenguin1(link.sourceInstanceId),
+  // 수문장 펭귄 ②
+  triggerSummonerPenguin2:   ()     => resolveSummonerPenguin2(),
   // 펭귄!돌격!
   ignitionPenguinCharge1:    (link) => resolvePenguinCharge1(link.sourceInstanceId),
   ignitionPenguinCharge2:    ()     => resolvePenguinCharge2(),
@@ -621,6 +635,8 @@ const CHAIN_RESOLVERS = {
   ignitionPenguinWizard3:    ()     => resolvePenguinWizard3(),
   // 동적 테마 (theme-common.js)
   themeEffect:               (link) => resolveThemeEffect(link),
+  // 슈브 니구라스 ① — GOO 소환 후 덱에서 GOO 묘지
+  shubniggurath1:            ()     => { if (typeof window._resolveShubniggurath1 === 'function') window._resolveShubniggurath1(); },
   // 지배자 ① — 코스트 후 체인 해결
   jibaeShui1:                ()     => resolveJibaeShui1(),
   jibaeHwa1:                 ()     => resolveJibaeHwa1(),
@@ -628,6 +644,43 @@ const CHAIN_RESOLVERS = {
   jibaeFung1:                ()     => resolveJibaeFung1(),
   // 체인 무효
   genericNegate:             ()     => { log('효과 무효!', 'system'); sendGameState(); renderAll(); },
+  // 구사일생: 전투 데미지 0 + 드로우
+  guSaIlSaeng:               ()     => { drawOne(); log('구사일생: 전투 데미지 0 + 드로우!', 'mine'); sendGameState(); renderAll(); },
+  // 단단한 카드 자물쇠 — 필드 효과 무효 (리졸버에서 실제 negateField 적용)
+  fieldNegate:               (link) => {
+    if (link.targetId) {
+      log(`단단한 카드 자물쇠: ${link.targetId} 효과 턴 종료시까지 무효`, 'system');
+      // negateField는 sendAction으로 이미 전송됨. 여기선 로컬 상태 갱신만.
+    }
+    sendGameState(); renderAll();
+  },
+  // 서치 봉인의 항아리 ①: 덱→드로우
+  jarDraw1:                  ()     => { drawOne(); log('서치 봉인의 항아리 ①: 드로우!', 'mine'); sendGameState(); renderAll(); },
+  // 서치 봉인의 항아리 ②: 서치 봉인 (코스트 처리 완료, 상태 적용만)
+  jarSearchBan:              ()     => { G.searchBanActive = true; log('서치 봉인의 항아리 ②: 이 턴 서치 봉인!', 'system'); sendGameState(); renderAll(); },
+  // 유혹의 황금사과
+  goldenApple:               ()     => { G.goldenAppleActive = true; log('유혹의 황금사과: 상대 소환마다 드로우 발동!', 'mine'); sendGameState(); renderAll(); },
+  // 수호의 빛: 제외 존 패 회수 (선택)
+  sacredLight:               (link) => {
+    if ((link.exileCount || 0) > 0 && G.myExile.length > 0) {
+      openCardPicker(G.myExile, '수호의 빛: 제외된 카드 1장 패에 넣기 (선택)', 1, (selected) => {
+        if (selected.length > 0) {
+          const ec = G.myExile.splice(selected[0], 1)[0];
+          G.myHand.push({ id: ec.id, name: ec.name, isPublic: true });
+          log(`수호의 빛: ${ec.name} 패로`, 'mine');
+        }
+        sendGameState(); renderAll();
+      });
+    } else {
+      sendGameState(); renderAll();
+    }
+  },
+  // 신성한 수호자: 제외 봉인 적용
+  holyGuardian:              ()     => { G.exileBanActive = true; log('신성한 수호자: 이 턴 서로 카드 제외 불가!', 'system'); sendGameState(); renderAll(); },
+  // 일격필살: 상대 패 1장 버리기
+  oneHitKill:                ()     => { log('일격필살: 상대 패 1장 버리기!', 'mine'); sendAction({ type: 'forceDiscard', count: 1, reason: '일격필살', attackerPicks: true }); sendGameState(); renderAll(); },
+  // 단 한번의 기회: 드로우
+  onceDraw:                  ()     => { drawOne(); log('단 한번의 기회: 드로우!', 'mine'); sendGameState(); renderAll(); },
   // 아자토스 ③: 필드 효과 무효 + 서로 필드 제외
   azatothEffect3: (link) => {
     const maxExile = Number(link.maxExile) || 0;
@@ -657,18 +710,26 @@ const CHAIN_RESOLVERS = {
 };
 
 // 체인 링크를 역순으로 실행
+// links는 이미 역순(resolvedLinks.reverse())으로 넘어온 상태이므로
+// 인덱스 i=0이 체인의 마지막 링크(최상위), i=last가 체인 1(최초 발동)
 function executeChainLocally(links) {
+  // ── 무효 인덱스 계산 ──────────────────────────────────────
+  // 무효 카드(genericNegate, quickPenguinStrike1)는 자신보다 1 앞의 링크
+  // 즉, 역순 배열에서 i+1 번째(더 먼저 발동된 링크)를 무효화한다.
+  // 단, 무효 카드 자신도 무효화 대상이 된 경우(이중 무효) 먼저 판정한다.
   const negatedIndices = new Set();
 
   links.forEach((link, i) => {
+    if (negatedIndices.has(i)) return; // 이미 무효화된 링크는 무효 효력도 없음
     if (link.type === 'quickPenguinStrike1' || link.type === 'genericNegate') {
+      // 바로 다음 인덱스(체인 번호 기준 한 단계 아래)를 무효화
       if (i + 1 < links.length) negatedIndices.add(i + 1);
     }
   });
 
   links.forEach((link, i) => {
     if (negatedIndices.has(i)) {
-      log(`무효: ${link.label || link.type}`, 'system');
+      log(`효과 무효: ${link.label || link.type}`, 'system');
       return;
     }
     if (window.consumeMafiaChainReplacement && window.consumeMafiaChainReplacement(link)) {
@@ -676,6 +737,7 @@ function executeChainLocally(links) {
     }
 
     if (link.by === myRole) {
+      // 내 링크
       if (window.tryResolveMafiaChainTransform && window.tryResolveMafiaChainTransform(link)) {
         return;
       }
@@ -683,11 +745,15 @@ function executeChainLocally(links) {
       if (resolver) resolver(link);
       else console.warn('[Chain] 알 수 없는 링크 타입:', link.type);
     } else {
-      // 상대(AI) 링크 — CHAIN_RESOLVERS로 통일 실행
-      if (window.AI && window.AI.active) {
-        const resolver = CHAIN_RESOLVERS[link.type];
-        if (resolver) resolver(link);
-        else _executeAIChainLink(link); // 폴백
+      // 상대 링크 — AI전/대인전 공용으로 CHAIN_RESOLVERS 실행
+      // (대인전에서 listenChainState가 호출하는 executeChainLocally도 동일 경로)
+      const resolver = CHAIN_RESOLVERS[link.type];
+      if (resolver) {
+        resolver(link);
+      } else if (window.AI && window.AI.active) {
+        _executeAIChainLink(link); // AI 전용 레거시 폴백
+      } else {
+        console.warn('[Chain] 상대 링크: 알 수 없는 타입', link.type);
       }
     }
   });
@@ -783,21 +849,17 @@ function resolveKeyFetch(cardId) {
   if (idx < 0) { notify(`키 카드 덱에 ${CARDS[cardId]?.name || cardId}가 없습니다.`); return; }
 
   if (['카드의 흑기사','풀려난 항아리의 마귀','카드 세계의 영웅'].includes(cardId)) {
-    notify(`${CARDS[cardId]?.name || cardId}는 패로 가져올 수 없습니다.`);
+    notify(`${CARDS[cardId]?.name || cardId}는 키덱 버튼에서 [소환]으로 직접 소환해야 합니다.`);
     return;
   }
 
-  if (cardId === '펭귄 용사') {
-    if (G.opField.length === 0) {
-      notify('펭귄 용사: 상대 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
-      return;
-    }
+  if (cardId === '펭귄 용사' && G.opField.length === 0) {
+    notify('펭귄 용사: 상대 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
+    return;
   }
-  if (cardId === '펭귄의 전설') {
-    if (G.myField.length === 0) {
-      notify('펭귄의 전설: 자신 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
-      return;
-    }
+  if (cardId === '펭귄의 전설' && G.myField.length === 0) {
+    notify('펭귄의 전설: 자신 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
+    return;
   }
 
   const c = G.myKeyDeck.splice(idx, 1)[0];

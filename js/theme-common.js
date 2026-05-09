@@ -1,4 +1,3 @@
-
 // theme-common.js — 동적 테마(크툴루/올드원/라이온/타이거/라이거/마피아/불가사의) 공용 처리
 
 window.THEME_EFFECT_HANDLERS = window.THEME_EFFECT_HANDLERS || {};
@@ -43,12 +42,44 @@ function _readCount(text, fallback = 1) {
 }
 
 function _splitCostAndMain(effectText) {
-  const marker = '발동할 수 있다.';
-  const idx = effectText.indexOf(marker);
-  if (idx < 0) return { costText: '', mainText: effectText };
+  // "~ 하고 발동할 수 있다." 패턴 전부를 코스트+발동 선언으로 인식.
+  // 효과 내에 이 표현이 여러 번 나올 수 있으므로 **마지막 등장** 기준으로 분리한다.
+  // 마지막 기준을 써야 "소환하고 발동할 수 있다. ...할 수 있다." 형태에서 앞쪽 전체가
+  // costText에, 뒤쪽 선택 드로우 등이 mainText에 올바르게 들어간다.
+  const MARKERS = [
+    '발동할 수 있다.',   // 기본형
+    '발동한다.',         // "~하고 발동한다" (강제 발동)
+  ];
+
+  let bestIdx = -1;
+  let bestMarker = '';
+  for (const marker of MARKERS) {
+    let pos = -1;
+    let cur = effectText.indexOf(marker);
+    // 마지막 등장 위치를 찾는다
+    while (cur >= 0) {
+      pos = cur;
+      cur = effectText.indexOf(marker, cur + 1);
+    }
+    // 효과 텍스트의 첫 번째 문장 내 등장이어야 costText로 인식
+    // (불릿 ① 직후 첫 문장 = 첫 마침표까지)
+    if (pos > bestIdx) {
+      bestIdx = pos;
+      bestMarker = marker;
+    }
+  }
+
+  // 분리 가능한 위치가 없으면 전체가 mainText
+  if (bestIdx < 0) return { costText: '', mainText: effectText };
+
+  const splitEnd = bestIdx + bestMarker.length;
+
+  // "발동할 수 있다." 가 효과 텍스트의 유일한 문장이면 → costText만 있고 mainText 없음
+  // 즉, 텍스트 전체가 발동 선언이고 실제 효과는 resolve에서 카드별로 처리
+  const remainder = effectText.slice(splitEnd).trim();
   return {
-    costText: effectText.slice(0, idx + marker.length).trim(),
-    mainText: effectText.slice(idx + marker.length).trim(),
+    costText: effectText.slice(0, splitEnd).trim(),
+    mainText: remainder,
   };
 }
 

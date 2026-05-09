@@ -1,4 +1,3 @@
-
 // engine.js — 게임 상태, 유틸, 소환/드로우, 클럭
 // Firebase Setup
 // ─────────────────────────────────────────────
@@ -400,6 +399,21 @@ function sendToGrave(cardId, from = 'field') {
   else if (from === 'hand') { const idx = G.myHand.findIndex(c => c.id === cardId); if (idx >= 0) { G.myGrave.push(G.myHand.splice(idx, 1)[0]); } }
   sendGameState();
 }
+
+/**
+ * sendToExile(card, from)
+ * 내 카드를 제외 존으로 보내는 중앙 함수.
+ * G.myExile.push 대신 이 함수를 써야 크툴루 제외 트리거가 작동한다.
+ * card: { id, name } 객체 또는 cardId 문자열
+ * from: 'field' | 'hand' | 'grave' | 'deck' (기본 'field')
+ */
+function sendToExile(card, from = 'field') {
+  const cardObj = (typeof card === 'string') ? { id: card, name: CARDS[card]?.name || card } : card;
+  if (!cardObj) return;
+  G.myExile.push(cardObj);
+  // 크툴루 제외 트리거
+  if (typeof window._onCthulhuExiled === 'function') window._onCthulhuExiled(cardObj.id);
+}
 function onSummon(cardId, from) {
   // 황금사과 드로우는 handleOpponentAction('summon')에서 처리
   switch(cardId) {
@@ -409,6 +423,27 @@ function onSummon(cardId, from) {
     case '펭귄의 전설': triggerPenguinLegend(from); break;
     case '펭귄 마법사': triggerPenguinWizard(from); break;
     case '전원소의 지배자': triggerJibaejaJeon2(); break;
+    // ── 크툴루/올드원 소환 유발 ──
+    case '엘더 갓-크타니트':
+      // ①은 제외에서 소환 시 트리거(exile hook에서 처리)
+      // ②: 이 카드를 소환했을 경우 — 패/제외에서 소환 모두 해당
+      if (typeof _triggerCthulhuOnSummon === 'function') _triggerCthulhuOnSummon(cardId, from);
+      break;
+    case '아우터 갓 니알라토텝':
+      // ②: 소환했을 경우 or 상대 턴에 — 소환 시 유발
+      if (typeof _triggerCthulhuOnSummon === 'function') _triggerCthulhuOnSummon(cardId, from);
+      break;
+    case '아우터 갓 슈브 니구라스':
+      // ①: GOO가 소환됐을 경우 이 카드를 소환하고 발동 → 별도 훅에서 처리
+      if (typeof _triggerShubniggurath1 === 'function') _triggerShubniggurath1(cardId, from);
+      break;
+    case '그레이트 올드 원-크툴루':
+    case '그레이트 올드 원-크투가':
+    case '그레이트 올드 원-크아이가':
+    case '그레이트 올드 원-과타노차':
+      // GOO 소환 → 슈브 니구라스 ① 트리거 체크
+      if (typeof _triggerShubniggurath1 === 'function') _triggerShubniggurath1(null, from);
+      break;
     case '엘리멘츠의 불꽃정령':
     case '엘리멘츠의 물정령':
     case '엘리멘츠의 전기정령':
@@ -430,6 +465,8 @@ function onSentToGrave(cardId) {
       log('엘리멘츠의 바람정령 ③: 엘리멘츠 in rainbow forest 서치', 'mine');
     }
   }
+  // ── 크툴루/올드원 묘지 트리거 ──
+  if (typeof _onCthulhuSentToGrave === 'function') _onCthulhuSentToGrave(cardId);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -455,8 +492,12 @@ function checkImmunity(cardId, effectType, source = 'opponent') {
     }
   }
 
-  // 펭귄의 전설 ③: "이 카드를 대상으로 하지 않는 상대 카드의 효과를 받지 않는다"
-  // → 비대상(effect) 효과는 차단, 대상 지정(target) 효과는 받음
+  // 히프노스 ②: 히프노스가 필드에 있는 한, 상대는 다른 카드를 효과 대상으로 지정 불가
+  if (cardId !== '엘더 갓-히프노스' && source === 'opponent' && effectType === 'target') {
+    if (G.myField.some(c => c.id === '엘더 갓-히프노스')) {
+      return { immune: true, reason: '히프노스 ②: 상대는 히프노스 이외의 카드를 효과 대상으로 지정할 수 없습니다.' };
+    }
+  }
   if (cardId === '펭귄의 전설' && source === 'opponent') {
     if (effectType === 'effect') {
       if (G.myField.some(c => c.id === '펭귄의 전설')) {

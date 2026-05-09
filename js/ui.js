@@ -1,4 +1,3 @@
-
 // ui.js — UI 렌더링, 모달, 카드 픽커, 덱 빌더
 
 // ─────────────────────────────────────────────
@@ -414,13 +413,16 @@ function renderChainStack() {
   wrap.innerHTML = `<div style="margin-bottom:4px;color:#9c7cdf;font-size:.7rem;letter-spacing:.05em">CHAIN STACK — 역순 해결</div>${rows}`;
 }
 
+// 키덱에서 패로 가져올 수 없고 직접 소환해야 하는 카드들
+const KEY_SUMMON_ONLY = new Set(['카드의 흑기사', '풀려난 항아리의 마귀', '카드 세계의 영웅']);
+
 function startKeyFetchEffect() {
   if (!G.myKeyDeck || G.myKeyDeck.length === 0) {
     notify('키 카드 덱이 비어있습니다.');
     return;
   }
   if (currentPhase === 'draw') {
-    notify('드로우 단계에는 키카드 가져오기를 사용할 수 없습니다.');
+    notify('드로우 단계에는 키카드를 사용할 수 없습니다.');
     return;
   }
   if (activeChainState && activeChainState.active && activeChainState.priority !== myRole) {
@@ -431,8 +433,19 @@ function startKeyFetchEffect() {
     notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
     return;
   }
-  // ★ 카드별 가져오기 조건 체크해서 가능한 카드만 보여줌
+
+  // ── 전개 단계 + 체인 없을 때만 직접 소환 카드 표시 ──
+  const inDeployNonChain = isMyTurn && currentPhase === 'deploy' && !(activeChainState && activeChainState.active);
+
   const options = (G.myKeyDeck || []).map(c => {
+    // 직접 소환 전용 카드
+    if (KEY_SUMMON_ONLY.has(c.id)) {
+      if (!inDeployNonChain) {
+        return { id: c.id, name: `${c.name} — 전개 단계에만 소환 가능`, canFetch: false, summonOnly: true };
+      }
+      return { id: c.id, name: `${c.name} [소환]`, canFetch: true, summonOnly: true };
+    }
+    // 패로 가져오는 카드 — 조건 체크
     let canFetch = true;
     let reason = '';
     if (c.id === '펭귄 용사' && G.opField.length === 0) {
@@ -441,27 +454,125 @@ function startKeyFetchEffect() {
     if (c.id === '펭귄의 전설' && G.myField.length === 0) {
       canFetch = false; reason = '(내 필드에 몬스터 필요)';
     }
-    return { id: c.id, name: canFetch ? c.name : `${c.name} ${reason} — 불가`, canFetch };
+    return { id: c.id, name: canFetch ? c.name : `${c.name} ${reason} — 불가`, canFetch, summonOnly: false };
   });
 
-  const fetchableOptions = options.filter(o => o.canFetch);
-  if (fetchableOptions.length === 0) {
-    notify('현재 가져올 수 있는 키 카드가 없습니다. (조건 미충족)');
+  const availableOptions = options.filter(o => o.canFetch);
+  if (availableOptions.length === 0) {
+    notify('현재 사용할 수 있는 키 카드가 없습니다.');
     return;
   }
 
-  openCardPicker(fetchableOptions, '키 카드 덱에서 1장 가져오기 (유발 즉시)', 1, (sel) => {
+  openCardPicker(availableOptions, '키 카드 덱 — 사용할 카드 선택', 1, (sel) => {
     if (!sel || sel.length === 0) return;
-    const picked = fetchableOptions[sel[0]];
+    const picked = availableOptions[sel[0]];
     if (!picked) return;
-    const effect = {
-      type: 'keyFetch',
-      label: `키 카드 가져오기 (${picked.name})`,
-      cardId: picked.id,
-    };
-    if (activeChainState && activeChainState.active) addChainLink(effect);
-    else beginChain(effect);
+
+    if (picked.summonOnly) {
+      // 직접 소환 카드 — activateCard 경로로 위임
+      // 체인 없이 소환 코스트 피커를 바로 띄워도 되나, activateCard 내부에서 처리
+      // 여기선 activateCard의 switch case로 진입하기 위해 임시로 패에 넣지 않고
+      // 바로 전용 소환 함수를 호출한다.
+      _summonKeyCardFromDeck(picked.id);
+    } else {
+      // 패로 가져오기 — 기존 체인 방식
+      const effect = {
+        type: 'keyFetch',
+        label: `키 카드 가져오기 (${picked.name})`,
+        cardId: picked.id,
+      };
+      if (activeChainState && activeChainState.active) addChainLink(effect);
+      else beginChain(effect);
+    }
   });
+}
+
+// ─────────────────────────────────────────────
+// 키덱 직접 소환 카드 — 소환 조건/코스트를 처리하고 필드에 배치
+// activateCard의 해당 케이스와 동일 로직, 키덱에서 직접 진입
+// ─────────────────────────────────────────────
+function _summonKeyCardFromDeck(cardId) {
+  if (!isMyTurn || currentPhase !== 'deploy') {
+    notify('전개 단계에만 소환할 수 있습니다.');
+    return;
+  }
+  if (activeChainState && activeChainState.active) {
+    notify('체인 중에는 소환할 수 없습니다.');
+    return;
+  }
+  if (G.myField.length >= maxFieldSlots()) {
+    notify('몬스터 존이 가득 찼습니다.');
+    return;
+  }
+
+  const card = CARDS[cardId];
+  if (!card) { notify('카드 정보를 찾을 수 없습니다.'); return; }
+
+  if (cardId === '카드의 흑기사') {
+    if (G.myField.length < 2) { notify('소환 불가: 필드 몬스터 2장 이상이 필요합니다.'); return; }
+    const targets = [...G.myField];
+    openCardPicker(targets, '카드의 흑기사 소환 코스트: 공격력 합계 10 이상이 되도록 몬스터 선택', Math.min(5, targets.length), (sel) => {
+      if (!sel.length) return;
+      const picked = sel.map(i => targets[i]);
+      const sumAtk = picked.reduce((a, m) => a + ((m && m.atk) || 0), 0);
+      if (picked.length < 2 || sumAtk < 10) { notify('소환 불가: 2장 이상, 공격력 합계 10 이상이 필요합니다.'); return; }
+      // 코스트: 선택한 몬스터들 묘지
+      picked.forEach(m => {
+        const idx = G.myField.findIndex(x => x === m);
+        if (idx >= 0) G.myGrave.push(G.myField.splice(idx, 1)[0]);
+      });
+      // 키덱에서 제거 후 필드에 소환
+      const ki = G.myKeyDeck.findIndex(c => c.id === cardId);
+      if (ki >= 0) G.myKeyDeck.splice(ki, 1);
+      G.myField.push({ id: cardId, name: card.name, atk: card.atk || 5, atkBase: card.atk || 5, summonedFrom: 'keyDeck' });
+      log('카드의 흑기사 소환!', 'mine');
+      sendAction({ type: 'summon', cardId });
+      sendGameState(); renderAll();
+    });
+
+  } else if (cardId === '풀려난 항아리의 마귀') {
+    if (G.myField.length < 3) { notify('소환 불가: 필드 몬스터 3장이 필요합니다.'); return; }
+    const targets = [...G.myField];
+    openCardPicker(targets, '풀려난 항아리의 마귀 소환 코스트: 몬스터 3장 선택', 3, (sel) => {
+      if (sel.length !== 3) return;
+      sel.sort((a, b) => b - a).forEach(i => G.myGrave.push(G.myField.splice(i, 1)[0]));
+      const ki = G.myKeyDeck.findIndex(c => c.id === cardId);
+      if (ki >= 0) G.myKeyDeck.splice(ki, 1);
+      G.myField.push({ id: cardId, name: card.name, atk: card.atk || 5, atkBase: card.atk || 5, summonedFrom: 'keyDeck' });
+      log('풀려난 항아리의 마귀 소환!', 'mine');
+      sendAction({ type: 'summon', cardId });
+      sendGameState(); renderAll();
+    });
+
+  } else if (cardId === '카드 세계의 영웅') {
+    const hasPot = G.myField.some(m => m.id === '풀려난 항아리의 마귀');
+    if (!hasPot || G.myField.length < 2) {
+      notify('소환 불가: 필드의 풀려난 항아리의 마귀 1장과 다른 몬스터 1장이 필요합니다.');
+      return;
+    }
+    const potIdx   = G.myField.findIndex(m => m.id === '풀려난 항아리의 마귀');
+    const otherIdx = G.myField.findIndex((m, i) => i !== potIdx);
+    // 높은 인덱스부터 제거
+    G.myGrave.push(G.myField.splice(Math.max(potIdx, otherIdx), 1)[0]);
+    G.myGrave.push(G.myField.splice(Math.min(potIdx, otherIdx), 1)[0]);
+    const ki = G.myKeyDeck.findIndex(c => c.id === cardId);
+    if (ki >= 0) G.myKeyDeck.splice(ki, 1);
+    G.myField.push({ id: cardId, name: card.name, atk: card.atk || 5, atkBase: card.atk || 5, summonedFrom: 'keyDeck' });
+    // 영웅의 탄생 서치 (덱→묘지→제외 순)
+    const searchHero = () => {
+      const d = G.myDeck.findIndex(x => x.id === '영웅의 탄생');
+      if (d >= 0) { const z = G.myDeck.splice(d, 1)[0]; G.myHand.push({ id: z.id, name: z.name, isPublic: true }); return true; }
+      const g = G.myGrave.findIndex(x => x.id === '영웅의 탄생');
+      if (g >= 0) { const z = G.myGrave.splice(g, 1)[0]; G.myHand.push({ id: z.id, name: z.name, isPublic: true }); return true; }
+      const e = G.myExile.findIndex(x => x.id === '영웅의 탄생');
+      if (e >= 0) { const z = G.myExile.splice(e, 1)[0]; G.myHand.push({ id: z.id, name: z.name, isPublic: true }); return true; }
+      return false;
+    };
+    if (searchHero()) log('카드 세계의 영웅 ①: 영웅의 탄생을 패에 추가', 'mine');
+    log('카드 세계의 영웅 소환!', 'mine');
+    sendAction({ type: 'summon', cardId });
+    sendGameState(); renderAll();
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -587,25 +698,20 @@ function resolveKeyFetch(cardId) {
   const idx = G.myKeyDeck.findIndex(c => c.id === cardId);
   if (idx < 0) { notify(`키 카드 덱에 ${CARDS[cardId]?.name || cardId}가 없습니다.`); return; }
 
-  // ★ 카드별 가져오기 조건 체크
+  // 직접 소환 전용 카드 — keyFetch 체인으로는 패에 넣을 수 없음
+  // (startKeyFetchEffect에서 _summonKeyCardFromDeck으로 분기되므로 여기 도달하면 오류)
   if (['카드의 흑기사','풀려난 항아리의 마귀','카드 세계의 영웅'].includes(cardId)) {
-    notify(`${CARDS[cardId]?.name || cardId}는 패로 가져올 수 없습니다.`);
+    notify(`${CARDS[cardId]?.name || cardId}는 키덱 버튼에서 [소환]으로 직접 소환해야 합니다.`);
     return;
   }
 
-  if (cardId === '펭귄 용사') {
-    // "상대 필드에 몬스터가 존재할 경우에만 패에 넣을 수 있다"
-    if (G.opField.length === 0) {
-      notify('펭귄 용사: 상대 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
-      return;
-    }
+  if (cardId === '펭귄 용사' && G.opField.length === 0) {
+    notify('펭귄 용사: 상대 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
+    return;
   }
-  if (cardId === '펭귄의 전설') {
-    // "자신 필드에 몬스터가 존재할 경우에만 패에 넣을 수 있다"
-    if (G.myField.length === 0) {
-      notify('펭귄의 전설: 자신 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
-      return;
-    }
+  if (cardId === '펭귄의 전설' && G.myField.length === 0) {
+    notify('펭귄의 전설: 자신 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
+    return;
   }
 
   const c = G.myKeyDeck.splice(idx, 1)[0];
