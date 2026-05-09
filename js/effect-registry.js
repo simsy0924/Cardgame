@@ -74,7 +74,7 @@
       cardId: def.cardId,
       effectNum: def.effectNum || 1,
       zone: def.zone || 'hand',       // hand | field | grave | exile | any
-      kind: def.kind || 'ignition',   // ignition | quick | trigger | direct
+      kind: def.kind || 'ignition',   // ignition | quick | trigger | direct | procedure
       optional: def.optional !== false,
       maxPerTurn: def.maxPerTurn || 1,
       chain: def.chain !== false,
@@ -83,9 +83,33 @@
       buildLink: null,
       resolve: null,
       activate: null,
+      noChain: false,
     }, def, { id });
     out.label = out.label || defaultLabel(out);
     out.text = out.text || getEffectText(out.cardId, out.effectNum);
+
+    // 레거시 패치 때는 실제 실행 함수를 activate에 넣은 등록이 많았다.
+    // 이제 activate는 "즉시 실행"이 아니라 resolve 별칭으로 취급해서
+    // 발동형 효과가 반드시 체인 블록 위에서 해결되도록 한다.
+    if (!out.resolve && typeof out.activate === 'function') {
+      out.resolve = out.activate;
+      out.activate = null;
+    }
+
+    // "소환 조건 실행" 같은 절차는 효과 발동이 아니므로 체인 블록을 만들지 않는다.
+    // 단, 필드 카드 "발동"처럼 effectNum 0이어도 발동인 카드는 이 조건에 걸리지 않는다.
+    const labelText = String(out.label || '');
+    const isProcedure = out.noChain === true || out.kind === 'procedure' || /소환 조건/.test(labelText);
+    if (isProcedure) {
+      out.kind = 'procedure';
+      out.chain = false;
+      out.noChain = true;
+    } else {
+      // 기존 chain:false는 대부분 "체인 처리 미구현"을 의미했으므로
+      // 실제 발동형 효과는 기본적으로 체인 블록을 만들게 강제한다.
+      // kind:'direct'는 이제 "기존 턴/페이즈 제한을 condition에 맡기는 발동형 효과"로 취급한다.
+      out.chain = true;
+    }
     return out;
   }
 
@@ -206,6 +230,8 @@
       sourceZone: def.zone,
       effectTags: Array.isArray(def.effectTags) ? def.effectTags.slice() : [],
       sourceInstanceId: base.sourceInstanceId || null,
+      handIdx: Number.isInteger(base.handIdx) ? base.handIdx : null,
+      fieldIdx: Number.isInteger(base.fieldIdx) ? base.fieldIdx : null,
     }, extra);
   }
 
@@ -223,9 +249,11 @@
 
     const c = ctx(Object.assign({}, base, { effect: def, cardId: def.cardId }));
 
-    if (typeof def.activate === 'function') {
-      def.activate(c);
-      return true;
+    // preActivate는 정말로 체인 생성 전에 처리해야 하는 절차 전용이다.
+    // 일반 등록 효과의 실제 처리는 resolve 단계에서만 실행한다.
+    if (typeof def.preActivate === 'function') {
+      const ok = def.preActivate(c);
+      if (ok === false) return false;
     }
 
     const afterCost = (paid) => {
@@ -235,7 +263,7 @@
         return;
       }
 
-      if (def.chain === false || def.kind === 'direct') {
+      if (def.noChain === true || def.kind === 'procedure') {
         ENGINE.resolveEffect(def.id, c, {});
         c.sync();
         return;
@@ -248,6 +276,15 @@
       } else if (def.kind === 'trigger') {
         if (typeof enqueueTriggeredEffect === 'function') enqueueTriggeredEffect(Object.assign({ optional: def.optional }, link));
         else window.beginChain(link);
+      } else if (def.kind === 'direct') {
+        // 레거시 직접 처리 효과: condition에서 이미 발동 가능 여부를 검사했으므로
+        // activateIgnitionEffect의 "자신 전개 단계" 강제 제한을 걸지 않는다.
+        if (activeChainState && activeChainState.active) {
+          safeNotify('이 효과는 체인 1로만 발동할 수 있습니다.');
+          return;
+        }
+        if (typeof window.beginChain === 'function') window.beginChain(link);
+        else ENGINE.resolveChainLink(link);
       } else {
         if (typeof activateIgnitionEffect === 'function') activateIgnitionEffect(link);
         else window.beginChain(link);
@@ -281,7 +318,14 @@
     if (!link || link.type !== 'registeredEffect') return false;
     const def = EFFECTS[link.effectId];
     if (!def) return false;
-    return ENGINE.resolveEffect(link.effectId, ctx({ effect: def, cardId: def.cardId, link }), link);
+    return ENGINE.resolveEffect(link.effectId, ctx({
+      effect: def,
+      cardId: def.cardId,
+      link,
+      handIdx: Number.isInteger(link.handIdx) ? link.handIdx : undefined,
+      fieldIdx: Number.isInteger(link.fieldIdx) ? link.fieldIdx : undefined,
+      sourceInstanceId: link.sourceInstanceId || null,
+    }), link);
   };
 
   function chooseAndActivate(cardId, zone, base) {
