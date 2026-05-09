@@ -155,7 +155,12 @@
   ENGINE.beforeResolveLink = function beforeResolveLink(link, meta, done) {
     const cb = typeof done === 'function' ? done : function(){};
     const options = ENGINE.getOptionsForLink(link, meta);
-    if (!options.length) { cb(false); return false; }
+
+    // 중요: 처리 시 무효 후보가 없으면 콜백을 호출하지 않는다.
+    // effects-chain.js는 return false를 받으면 일반 resolve 경로로 진행한다.
+    // 여기서 cb(false)를 동기 호출하면 같은 체인 링크가 2번 resolve되고,
+    // next()도 중복 예약되어 로그/효과가 폭증한다.
+    if (!options.length) return false;
 
     const ctx = buildContext(link, meta || {});
     chooseEntry(options, ctx, entry => {

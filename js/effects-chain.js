@@ -788,7 +788,10 @@ function executeChainLocally(links) {
     // 처리 시 무효는 실제 resolver 실행 직전에 확인한다.
     // 불가사의 계열처럼 "처리 시 그 효과를 무효"라고 적힌 효과가 여기서 작동한다.
     if (window.ProcessingNegateEngine && typeof window.ProcessingNegateEngine.beforeResolveLink === 'function') {
+      let processingNegateCallbackUsed = false;
       const paused = window.ProcessingNegateEngine.beforeResolveLink(link, { index: i, links }, (negated) => {
+        if (processingNegateCallbackUsed) return;
+        processingNegateCallbackUsed = true;
         if (negated) {
           log(`처리 시 무효: ${link.label || link.type}`, 'system');
           next();
@@ -801,7 +804,7 @@ function executeChainLocally(links) {
         resolveOne(link);
         next();
       });
-      if (paused) return;
+      if (paused || processingNegateCallbackUsed) return;
     }
 
     if (window.consumeMafiaChainReplacement && window.consumeMafiaChainReplacement(link)) {
