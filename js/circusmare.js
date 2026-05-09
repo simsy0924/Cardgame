@@ -833,14 +833,8 @@ function activateCmWildCircus2FromGrave() {
     const _orig = onSummon;
     onSummon = function(cardId, from) {
       _orig.apply(this, arguments);
-      switch(cardId) {
-        case '서커스메어 메드 울프':     triggerCmMedWolf(from); break;
-        case '서커스메어 메드 베어':     triggerCmMedBear(from); break;
-        case '서커스메어 메드 이글':     triggerCmMedEagle(from); break;
-        case '서커스메어 메드 씰':       triggerCmMedSeal(from); break;
-        case '서커스메어 스프링 제스터': triggerCmSpringJester(); break;
-        case '서커스메어 메드 키메라':   triggerCmMedChimera(); break;
-      }
+      // 서커스메어 소환 유발 효과는 effect-registry.js의 GameEvents 라우터가 처리한다.
+      // 여기서는 지속 공격력 갱신만 유지해 중복 발동을 막는다.
       updateCmSpringJesterAtk();
     };
   }
@@ -857,12 +851,8 @@ function activateCmWildCircus2FromGrave() {
     const _orig = onSentToGrave;
     onSentToGrave = function(cardId) {
       _orig.apply(this, arguments);
-      switch(cardId) {
-        case '서커스메어 크라운 드래곤': triggerCmCrownDragon3(); break;
-        case '서커스메어 스프링 제스터': triggerCmSpringJester3(); break;
-        case '서커스메어 메드 키메라':   triggerCmMedChimera3(); break;
-        case '서커스메어 퍼핏 마스터':   triggerCmPuppetMaster2(); break;
-      }
+      // 서커스메어 묘지 유발 효과는 effect-registry.js의 GameEvents 라우터가 처리한다.
+      // 여기서는 지속 공격력 갱신만 유지해 중복 발동을 막는다.
       updateCmSpringJesterAtk();
     };
   }

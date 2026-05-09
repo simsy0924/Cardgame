@@ -1,4 +1,3 @@
-
 // liger.js — 라이거 테마 효과 엔진
 
 function _isLigerRelated(id) { return ['라이거','라이온','타이거'].includes(CARDS[id]?.theme); }
@@ -161,6 +160,7 @@ function _ligerResolve(link) {
 }
 
 function _ligerOnSummoned(cardId) {
+  if (window.LTL_REGISTRY_EVENTS_ACTIVE) return;
   if (cardId === '베이비 라이거' && canUseEffect('베이비 라이거', 2)) {
     enqueueTriggeredEffect({ type:'themeEffect', label:'베이비 라이거 ②', cardId:'베이비 라이거', effectNum:2, theme:'라이거', mainText:'덱에서 모두의 자연을 필드 존에 놓는다.', extra:{} });
   }
@@ -182,10 +182,10 @@ function _ligerOnSummoned(cardId) {
   const _prev = sendToGrave;
   sendToGrave = function(cardId, from) {
     _prev(cardId, from);
-    if (cardId === '에이스 라이거' && from !== 'hand' && canUseEffect('에이스 라이거', 1)) {
+    if (!window.LTL_REGISTRY_EVENTS_ACTIVE && cardId === '에이스 라이거' && from !== 'hand' && canUseEffect('에이스 라이거', 1)) {
       enqueueTriggeredEffect({ type:'themeEffect', label:'에이스 라이거 ①', cardId:'에이스 라이거', effectNum:1, theme:'라이거', mainText:'이 카드를 소환하고 상대 필드의 카드 1장을 제외할 수 있다.', extra:{ fromGrave: true } });
     }
-    if (cardId === '라이거 킹' && from === 'field') {
+    if (!window.LTL_REGISTRY_EVENTS_ACTIVE && cardId === '라이거 킹' && from === 'field') {
       // ④: 즉발 강제 효과
       enqueueTriggeredEffect({ type:'themeEffect', label:'라이거 킹 ④', cardId:'라이거 킹', effectNum:4, theme:'라이거', mainText:'서로의 필드/묘지의 카드를 전부 제외한다. 턴 종료까지 소환 불가.', extra:{} });
     }
@@ -208,7 +208,7 @@ function _ligerResolveFull(link) {
   }
   if (link.cardId === '베이비 라이거' && link.effectNum === 2) {
     const found = findAllInDeck(d=>d.id==='모두의 자연');
-    if (found.length) { removeFromDeck('모두의 자연'); G.myFieldCard={id:'모두의 자연',name:'모두의 자연'}; log('베이비 라이거 ②: 모두의 자연 필드 존에','mine'); }
+    if (found.length) { removeFromDeck('모두의 자연'); if (typeof placeMyFieldCard === 'function') placeMyFieldCard('모두의 자연', { source:'deck', activate:false }); else G.myFieldCard={id:'모두의 자연',name:'모두의 자연'}; log('베이비 라이거 ②: 모두의 자연 필드 존에','mine'); }
     sendGameState(); renderAll();
     return;
   }

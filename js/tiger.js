@@ -1,4 +1,3 @@
-
 // tiger.js — 타이거 테마 효과 엔진
 // 존 봉인(지속효과), 체인 시스템 완전 준수
 
@@ -151,7 +150,7 @@ function _tigerResolve(link) {
       const horangDeck = findAllInDeck(d => d.id.includes('호랑이') && CARDS[d.id]?.theme==='타이거');
       const doExile = () => {
         const ei = G.myHand.findIndex(h => h.id==='베이비 타이거');
-        if (ei >= 0) { G.myExile.push(G.myHand.splice(ei,1)[0]); log('베이비 타이거 ①: 자신 제외','mine'); }
+        if (ei >= 0) { const ex = G.myHand.splice(ei,1)[0]; if (typeof sendToExile === 'function') sendToExile(ex, 'hand'); else { G.myExile.push(ex); if (window.GameEvents) window.GameEvents.emit('exile', { cardId: ex.id, card: ex, from: 'hand', player: 'mine' }); } log('베이비 타이거 ①: 자신 제외','mine'); }
         sendGameState(); renderAll();
       };
       const doSummon = () => {
@@ -328,6 +327,7 @@ function _tigerResolve(link) {
 
 function _tigerOnSummoned(cardId) {
   _updateTigerZone();
+  if (window.LTL_REGISTRY_EVENTS_ACTIVE) return;
   if (cardId === '젊은 타이거' && canUseEffect('젊은 타이거', 2)) {
     enqueueTriggeredEffect({ type:'themeEffect', label:'젊은 타이거 ②', cardId:'젊은 타이거', effectNum:2, theme:'타이거', mainText:'덱에서 타이거 몬스터 1장을 소환한다.', extra:{} });
   }
@@ -338,7 +338,7 @@ function _tigerOnSummoned(cardId) {
   sendToGrave = function(cardId, from) {
     _prev(cardId, from);
     if (TIGER_ZONE_CARDS.has(cardId)) setTimeout(_updateTigerZone, 0);
-    if (cardId === '에이스 타이거' && from !== 'hand' && canUseEffect('에이스 타이거', 2)) {
+    if (!window.LTL_REGISTRY_EVENTS_ACTIVE && cardId === '에이스 타이거' && from !== 'hand' && canUseEffect('에이스 타이거', 2)) {
       enqueueTriggeredEffect({ type:'themeEffect', label:'에이스 타이거 ②', cardId:'에이스 타이거', effectNum:2, theme:'타이거', mainText:'덱에서 타이거카드와 호랑이카드를 1장씩 패에 넣는다.', extra:{} });
     }
   };

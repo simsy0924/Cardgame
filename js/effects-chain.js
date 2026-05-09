@@ -104,8 +104,16 @@ function beginChain(effect) {
 
 // 상대가 체인을 열었을 때 사원소 ③ 자동 트리거
 function _checkSaWonsoCounterOnOpponentChain() {
-  if (typeof tryActivateSaWonsoJibaeryong3 === 'function') tryActivateSaWonsoJibaeryong3();
-  if (typeof tryActivateSaWonsoJibaeja3    === 'function') tryActivateSaWonsoJibaeja3();
+  // 예전에는 여기서 사원소 ③을 즉시 confirm으로 띄웠다.
+  // 이제는 CHAIN_FIELD_RESPONSES 레지스트리로 응답 후보를 수집하므로
+  // 자동 발동하지 않고, 체인 응답 버튼에서 선택하게 한다.
+  if (typeof collectChainOptions === 'function') {
+    const opts = collectChainOptions();
+    const hasSaWonso = opts.some(o => String(o.cardId || '').includes('사원소의 지배'));
+    if (hasSaWonso && typeof notify === 'function') {
+      notify('사원소 ③ 응답 가능: 체인 응답 버튼에서 선택하세요.');
+    }
+  }
 }
 
 
@@ -563,6 +571,7 @@ function resolveChain(chainState) {
 const CHAIN_RESOLVERS = {
   // 공용
   keyFetch:                  (link) => resolveKeyFetch(link.cardId),
+  registeredEffect:          (link) => { if (window.EffectEngine && typeof window.EffectEngine.resolveChainLink === 'function') window.EffectEngine.resolveChainLink(link); },
   // AI 효과 리졸버
   aiForceDiscard:            (link) => forceDiscard(Math.max(1, Number(link.count) || 1)),
   aiEyeForEye:               ()     => { _aiDrawN(2); log('🤖 눈에는 눈: 드로우 2장', 'opponent'); renderAll(); },
@@ -571,10 +580,14 @@ const CHAIN_RESOLVERS = {
   aiFieldCard:               (link) => {
     if (!link.cardId) return;
     var card = CARDS[link.cardId] || { name: link.cardId };
-    G.opFieldCard = { id: link.cardId, name: card.name };
-    handleOpponentAction({ type:'fieldCard', cardId: link.cardId, by:'guest', ts: Date.now() });
+    if (typeof placeOpponentFieldCard === 'function') {
+      placeOpponentFieldCard(link.cardId, { source: link.source || 'effect', activate: link.activate !== false, reason: 'aiReplace' });
+    } else {
+      if (G.opFieldCard) G.opGrave.push(G.opFieldCard);
+      G.opFieldCard = { id: link.cardId, name: card.name };
+      renderAll();
+    }
     log('🤖 ' + card.name + ' 발동', 'opponent');
-    renderAll();
   },
   aiGraveOpField:            (link) => { _aiGraveFromPlayerField(Number(link.count) || 1); sendGameState(); renderAll(); },
   aiGraveAllOpField:         ()     => { _aiGraveFromPlayerField(G.myField.length); sendGameState(); renderAll(); },
@@ -645,6 +658,8 @@ const CHAIN_RESOLVERS = {
   jibaeFung1:                ()     => resolveJibaeFung1(),
   // 체인 무효
   genericNegate:             ()     => { log('효과 무효!', 'system'); sendGameState(); renderAll(); },
+  sawonsoJibaeryong3:        ()     => { if (typeof resolveSaWonsoJibaeryong3 === 'function') resolveSaWonsoJibaeryong3(); },
+  sawonsoJibaeja3:           ()     => { if (typeof resolveSaWonsoJibaeja3 === 'function') resolveSaWonsoJibaeja3(); },
   // 구사일생: 전투 데미지 0 + 드로우
   guSaIlSaeng:               ()     => { drawOne(); log('구사일생: 전투 데미지 0 + 드로우!', 'mine'); sendGameState(); renderAll(); },
   // 단단한 카드 자물쇠 — 필드 효과 무효 (리졸버에서 실제 negateField 적용)
@@ -714,30 +729,31 @@ const CHAIN_RESOLVERS = {
 // links는 이미 역순(resolvedLinks.reverse())으로 넘어온 상태이므로
 // 인덱스 i=0이 체인의 마지막 링크(최상위), i=last가 체인 1(최초 발동)
 function executeChainLocally(links) {
-  // ── 무효 인덱스 계산 ──────────────────────────────────────
+  // ── 일반 체인 무효 인덱스 계산 ─────────────────────────────
+  // 일반 무효는 이미 체인 링크로 올라와 있으므로 양쪽 클라이언트가 같은 링크를 스킵할 수 있다.
   const negatedIndices = new Set();
   links.forEach((link, i) => {
     if (negatedIndices.has(i)) return;
-    if (link.type === 'quickPenguinStrike1' || link.type === 'genericNegate') {
+    if (link.type === 'quickPenguinStrike1' || link.type === 'genericNegate' || link.type === 'sawonsoJibaeryong3') {
       if (i + 1 < links.length) negatedIndices.add(i + 1);
     }
   });
 
-  // ── 실행 중 플래그 ─────────────────────────────────────────
-  // resolve 함수 내부에서 enqueueTriggeredEffect가 호출될 때
-  // activeChainState는 이미 null이므로 즉시 flush가 실행된다.
-  // 이를 막기 위해 전역 플래그로 "체인 해결 진행 중" 상태를 표시한다.
   window._chainResolving = true;
 
-  links.forEach((link, i) => {
-    if (negatedIndices.has(i)) {
-      log(`효과 무효: ${link.label || link.type}`, 'system');
-      return;
-    }
-    if (window.consumeMafiaChainReplacement && window.consumeMafiaChainReplacement(link)) {
-      return;
-    }
+  const finish = () => {
+    window._chainResolving = false;
+    sendGameState();
+    renderAll();
+    usedKeyFetchInChain = {};
 
+    // 체인 해결 완료 후 쌓인 유발효과 처리
+    if (pendingTriggerEffects.length > 0) {
+      setTimeout(flushTriggeredEffects, 0);
+    }
+  };
+
+  const resolveOne = (link) => {
     if (link.by === myRole) {
       if (window.tryResolveMafiaChainTransform && window.tryResolveMafiaChainTransform(link)) {
         return;
@@ -755,17 +771,49 @@ function executeChainLocally(links) {
         console.warn('[Chain] 상대 링크: 알 수 없는 타입', link.type);
       }
     }
-  });
+  };
 
-  window._chainResolving = false;
-  sendGameState();
-  renderAll();
-  usedKeyFetchInChain = {};
+  const runAt = (i) => {
+    if (i >= links.length) { finish(); return; }
 
-  // 체인 해결 완료 후 쌓인 유발효과 처리
-  if (pendingTriggerEffects.length > 0) {
-    setTimeout(flushTriggeredEffects, 0);
-  }
+    const link = links[i];
+    const next = () => setTimeout(() => runAt(i + 1), 0);
+
+    if (negatedIndices.has(i)) {
+      log(`효과 무효: ${link.label || link.type}`, 'system');
+      next();
+      return;
+    }
+
+    // 처리 시 무효는 실제 resolver 실행 직전에 확인한다.
+    // 불가사의 계열처럼 "처리 시 그 효과를 무효"라고 적힌 효과가 여기서 작동한다.
+    if (window.ProcessingNegateEngine && typeof window.ProcessingNegateEngine.beforeResolveLink === 'function') {
+      const paused = window.ProcessingNegateEngine.beforeResolveLink(link, { index: i, links }, (negated) => {
+        if (negated) {
+          log(`처리 시 무효: ${link.label || link.type}`, 'system');
+          next();
+          return;
+        }
+        if (window.consumeMafiaChainReplacement && window.consumeMafiaChainReplacement(link)) {
+          next();
+          return;
+        }
+        resolveOne(link);
+        next();
+      });
+      if (paused) return;
+    }
+
+    if (window.consumeMafiaChainReplacement && window.consumeMafiaChainReplacement(link)) {
+      next();
+      return;
+    }
+
+    resolveOne(link);
+    next();
+  };
+
+  runAt(0);
 }
 
 // AI 체인 링크 실행 폴백 (CHAIN_RESOLVERS에 없는 레거시 타입용)
@@ -800,8 +848,9 @@ function _checkVillageOnDiscard(cardId, callback) {
           const mon = fieldPenguins[sel[0]];
           sendToGrave(mon.id, 'field');
           log(`펭귄 마을 ②: ${mon.name} 대신 묘지`, 'mine');
-          if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
-          _tryRecoverPenguinStrikeFromGrave();
+          if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+            window.GameEvents.emit('penguinVillageSentToGrave', { cardId: mon.id, card: mon, player: 'mine' });
+          }
           sendGameState(); renderAll();
         }
         callback(true);

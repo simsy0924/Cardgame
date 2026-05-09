@@ -1,4 +1,3 @@
-
 // lion.js — 라이온 테마 효과 엔진
 // ─────────────────────────────────────────────
 // 모든 효과는 기존 체인 시스템을 완전히 따름:
@@ -384,6 +383,7 @@ function _lionResolve(link) {
 // ─── 소환 트리거 ───
 function _lionOnSummoned(cardId) {
   _updateLionSlots();
+  if (window.LTL_REGISTRY_EVENTS_ACTIVE) return;
   // 젊은 라이온 ②: 소환 시 사자 카드 서치
   if (cardId === '젊은 라이온' && canUseEffect('젊은 라이온', 2)) {
     enqueueTriggeredEffect({ type:'themeEffect', label:'젊은 라이온 ②', cardId:'젊은 라이온', effectNum:2, theme:'라이온', mainText:'덱에서 사자 카드 1장을 패에 넣는다.', extra:{} });
@@ -398,7 +398,7 @@ function _lionOnSummoned(cardId) {
   sendToGrave = function(cardId, from) {
     _prev(cardId, from);
     if (LION_SLOT_CARDS.has(cardId)) setTimeout(_updateLionSlots, 0);
-    if (cardId === '에이스 라이온' && from !== 'hand' && canUseEffect('에이스 라이온', 2)) {
+    if (!window.LTL_REGISTRY_EVENTS_ACTIVE && cardId === '에이스 라이온' && from !== 'hand' && canUseEffect('에이스 라이온', 2)) {
       enqueueTriggeredEffect({ type:'themeEffect', label:'에이스 라이온 ②', cardId:'에이스 라이온', effectNum:2, theme:'라이온', mainText:'덱/묘지에서 사자카드와 라이온카드를 1장씩 패에 넣는다.', extra:{} });
     }
     if (cardId === '라이온 킹' && from !== 'hand' && canUseEffect('라이온 킹', 3)) {

@@ -565,12 +565,16 @@ function activateCard(handIdx) {
   // 개별 카드 케이스(예: 수호의 빛)로 분기하지 않는 필드 카드는 필드 존에 놓는다.
   // 기존 필드 카드가 있으면 묘지로 보낸다.
   if (c.cardType === 'field' && c.id !== '수호의 빛') {
-    if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
-    G.myFieldCard = { id: c.id, name: c.name };
-    G.myHand.splice(handIdx, 1);
-    log(`필드 발동: ${c.name}`, 'mine');
-    sendAction({ type: 'fieldCard', cardId: c.id });
-    sendGameState(); renderAll();
+    if (typeof placeMyFieldCard === 'function') {
+      placeMyFieldCard(c.id, { handIdx, source: 'hand', activate: true });
+    } else {
+      if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
+      G.myFieldCard = { id: c.id, name: c.name };
+      G.myHand.splice(handIdx, 1);
+      log(`필드 발동: ${c.name}`, 'mine');
+      sendAction({ type: 'fieldCard', cardId: c.id, source: 'hand', activate: true });
+      sendGameState(); renderAll();
+    }
     return;
   }
 
@@ -685,9 +689,13 @@ function activateCard(handIdx) {
       return;
 
     case '수호의 빛':
-      if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
-      G.myFieldCard = { id: c.id, name: c.name };
-      G.myHand.splice(handIdx, 1);
+      if (typeof placeMyFieldCard === 'function') {
+        placeMyFieldCard(c.id, { handIdx, source: 'hand', activate: true });
+      } else {
+        if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
+        G.myFieldCard = { id: c.id, name: c.name };
+        G.myHand.splice(handIdx, 1);
+      }
       if (G.myExile.length > 0) {
         openCardPicker(G.myExile, '수호의 빛: 제외된 카드 1장 패에 넣기 (선택)', 1, (selected) => {
           if (selected.length > 0) {

@@ -174,13 +174,18 @@ function activateCard(handIdx) {
       notify('필드 카드(기동효과)는 체인에 추가할 수 없습니다.');
       return;
     }
-    // 코스트: 기존 필드카드 묘지
-    const prevField = G.myFieldCard ? { ...G.myFieldCard } : null;
-    if (prevField) G.myGrave.push(prevField);
-    G.myFieldCard = { id: c.id, name: c.name };
-    G.myHand.splice(handIdx, 1);
-    log(`필드 발동: ${c.name}`, 'mine');
-    sendAction({ type: 'fieldCard', cardId: c.id });
+    // 필드 카드는 발동 즉시 필드 존에 놓는다.
+    // 기존 필드 카드 묘지 이동 / 이벤트 / 네트워크 동기화는 중앙 함수로 처리한다.
+    if (typeof placeMyFieldCard === 'function') {
+      placeMyFieldCard(c.id, { handIdx, source: 'hand', activate: true, sync: true, render: true });
+    } else {
+      if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
+      G.myFieldCard = { id: c.id, name: c.name };
+      G.myHand.splice(handIdx, 1);
+      log(`필드 발동: ${c.name}`, 'mine');
+      sendAction({ type: 'fieldCard', cardId: c.id, source: 'hand', activate: true });
+      sendGameState(); renderAll();
+    }
     // 필드 카드 발동도 체인 블록 형성 (상대가 응답 가능)
     window.beginChain({ type: 'fieldActivate', label: `필드: ${c.name}`, cardId: c.id });
     return;
@@ -344,11 +349,15 @@ function activateCard(handIdx) {
       if (activeChainState && activeChainState.active) {
         if (activeChainState.priority !== myRole) { notify('현재 체인 우선권은 상대에게 있습니다.'); return; }
       }
-      if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
-      G.myFieldCard = { id: c.id, name: c.name };
-      G.myHand.splice(handIdx, 1);
-      log('수호의 빛 필드 발동!', 'mine');
-      sendAction({ type: 'fieldCard', cardId: c.id });
+      if (typeof placeMyFieldCard === 'function') {
+        placeMyFieldCard(c.id, { handIdx, source: 'hand', activate: true });
+      } else {
+        if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
+        G.myFieldCard = { id: c.id, name: c.name };
+        G.myHand.splice(handIdx, 1);
+        log('수호의 빛 필드 발동!', 'mine');
+        sendAction({ type: 'fieldCard', cardId: c.id, source: 'hand', activate: true });
+      }
       // 체인 블록 형성 후, 체인 해결 시 제외 패 회수 처리
       if (activeChainState && activeChainState.active) {
         addChainLink({ type: 'sacredLight', label: '수호의 빛', exileCount: G.myExile.length });

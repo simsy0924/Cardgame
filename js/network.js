@@ -1,4 +1,3 @@
-
 // network.js — Firebase 연결, 방 생성/참가, 게임 상태 동기화
 // FIREBASE GAME STATE SYNC
 // ─────────────────────────────────────────────
@@ -443,12 +442,22 @@ function handleOpponentAction(action) {
     }
     case 'fieldCard': {
       const fc = CARDS[action.cardId] || { name: action.cardId };
-      const fhi = G.opHand.findIndex(c => c.id === action.cardId);
-      if (fhi >= 0) G.opHand.splice(fhi, 1);
-      else if (G.opHand.length > 0) G.opHand.pop();
-      G.opFieldCard = { id: action.cardId, name: fc.name };
-      log(`상대 필드 마법 발동: ${fc.name}`, 'opponent');
-      renderAll();
+      const source = action.source || 'hand';
+      // 패에서 발동한 필드 카드만 상대 패에서 제거한다.
+      // 효과로 덱/묘지에서 필드 존에 놓는 경우에는 상대 패를 임의로 pop하지 않는다.
+      if (source === 'hand') {
+        const fhi = G.opHand.findIndex(c => c.id === action.cardId);
+        if (fhi >= 0) G.opHand.splice(fhi, 1);
+        else if (G.opHand.length > 0) G.opHand.pop();
+      }
+      if (typeof placeOpponentFieldCard === 'function') {
+        placeOpponentFieldCard(action.cardId, { source, activate: action.activate !== false, reason: 'remoteReplace' });
+      } else {
+        if (G.opFieldCard) G.opGrave.push(G.opFieldCard);
+        G.opFieldCard = { id: action.cardId, name: fc.name };
+        log(`상대 ${action.activate === false ? '필드 존에 놓음' : '필드 마법 발동'}: ${fc.name}`, 'opponent');
+        renderAll();
+      }
       break;
     }
     case 'combat':
@@ -533,6 +542,10 @@ function handleOpponentAction(action) {
           renderAll();
         }
       }
+      break;
+    case 'processingNegate':
+      log(`상대 처리 시 무효: ${action.reason || ''} → ${action.targetLabel || action.targetType || '효과'}`, 'opponent');
+      notify(`내 효과가 처리 시 무효됐습니다! (${action.reason || ''})`);
       break;
     case 'negate':
       log(`상대 효과 무효: ${action.reason || ''}`, 'opponent');

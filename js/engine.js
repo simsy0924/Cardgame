@@ -356,7 +356,7 @@ function isPenguinCard(cardId) { return cardId.includes('펭귄'); }
 function isPenguinMonster(cardId) { const card = CARDS[cardId]; return card && card.cardType === 'monster' && isPenguinCard(cardId); }
 function findAllInDeck(predicate) { return G.myDeck.filter(predicate); }
 function removeFromDeck(cardId) { const idx = G.myDeck.findIndex(c => c.id === cardId); if (idx >= 0) { G.myDeck.splice(idx, 1); return true; } return false; }
-function searchToHand(cardId) { if (!removeFromDeck(cardId)) return false; const card = CARDS[cardId]; G.myHand.push({ id: cardId, name: card.name, isPublic: true }); log(`서치: ${card.name} → 공개패`, 'mine'); sendAction({ type: 'search', cardName: card.name }); sendGameState(); return true; }
+function searchToHand(cardId) { if (!removeFromDeck(cardId)) return false; const card = CARDS[cardId]; G.myHand.push({ id: cardId, name: card.name, isPublic: true }); log(`서치: ${card.name} → 공개패`, 'mine'); if (window.GameEvents && typeof window.GameEvents.emit === 'function') { window.GameEvents.emit('addedToPublicHand', { cardId, card: { id: cardId, name: card.name, isPublic: true }, player: 'mine', source: 'searchToHand' }); } sendAction({ type: 'search', cardName: card.name }); sendGameState(); return true; }
 function maxFieldSlots() { return 5; }
 
 function summonFromDeck(cardId) {
@@ -390,13 +390,29 @@ function summonFromGrave(cardId) {
 function drawOne() {
   if (G.myDeck.length === 0) { G.myDeck = shuffle(G.myGrave.map(c => ({...c}))); G.myGrave = []; log('덱 소진! 묘지를 덱으로 되돌렸습니다.', 'system'); }
   if (G.myDeck.length === 0) { notify('덱이 비었습니다.'); return null; }
-  const c = G.myDeck.shift(); G.myHand.push({ id: c.id, name: c.name, isPublic: false });
-  log(`드로우: ${c.name}`, 'mine'); sendGameState(); return c;
+  const c = G.myDeck.shift();
+  const handCard = { id: c.id, name: c.name, isPublic: false };
+  G.myHand.push(handCard);
+  const handIdx = G.myHand.length - 1;
+  log(`드로우: ${c.name}`, 'mine');
+  if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+    window.GameEvents.emit('draw', { cardId: c.id, card: handCard, handIdx, player: 'mine', source: 'drawOne' });
+  }
+  sendGameState(); return c;
 }
 function drawN(n) { for (let i = 0; i < n; i++) drawOne(); }
 function sendToGrave(cardId, from = 'field') {
-  if (from === 'field') { const idx = G.myField.findIndex(c => c.id === cardId); if (idx >= 0) { G.myGrave.push(G.myField.splice(idx, 1)[0]); log(`${CARDS[cardId]?.name || cardId} 묘지로`, 'mine'); onSentToGrave(cardId); } }
-  else if (from === 'hand') { const idx = G.myHand.findIndex(c => c.id === cardId); if (idx >= 0) { G.myGrave.push(G.myHand.splice(idx, 1)[0]); } }
+  let moved = null;
+  if (from === 'field') {
+    const idx = G.myField.findIndex(c => c.id === cardId);
+    if (idx >= 0) { moved = G.myField.splice(idx, 1)[0]; G.myGrave.push(moved); log(`${CARDS[cardId]?.name || cardId} 묘지로`, 'mine'); }
+  } else if (from === 'hand') {
+    const idx = G.myHand.findIndex(c => c.id === cardId);
+    if (idx >= 0) { moved = G.myHand.splice(idx, 1)[0]; G.myGrave.push(moved); log(`${CARDS[cardId]?.name || cardId} 패에서 묘지로`, 'mine'); }
+  } else if (from === 'fieldCard') {
+    if (G.myFieldCard && G.myFieldCard.id === cardId) { moved = G.myFieldCard; G.myFieldCard = null; G.myGrave.push(moved); log(`${CARDS[cardId]?.name || cardId} 필드 존에서 묘지로`, 'mine'); }
+  }
+  if (moved) onSentToGrave(cardId, from, moved);
   sendGameState();
 }
 
@@ -411,17 +427,110 @@ function sendToExile(card, from = 'field') {
   const cardObj = (typeof card === 'string') ? { id: card, name: CARDS[card]?.name || card } : card;
   if (!cardObj) return;
   G.myExile.push(cardObj);
+  if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+    window.GameEvents.emit('exile', { cardId: cardObj.id, card: cardObj, from, player: 'mine' });
+  }
   // 크툴루 제외 트리거
   if (typeof window._onCthulhuExiled === 'function') window._onCthulhuExiled(cardObj.id);
 }
+
+
+// ─────────────────────────────────────────────
+// Field Zone helpers
+// 필드 카드는 발동 즉시 필드 존에 놓인다.
+// 단, 기존 필드 카드 교체 / 묘지 이동 이벤트 / 네트워크 동기화는 반드시 여기로 통일한다.
+// ─────────────────────────────────────────────
+function _fieldCardObj(cardOrId) {
+  if (!cardOrId) return null;
+  const id = (typeof cardOrId === 'string') ? cardOrId : cardOrId.id;
+  const def = CARDS[id] || {};
+  return { id, name: (typeof cardOrId === 'object' && cardOrId.name) || def.name || id };
+}
+
+function _sendFieldToGrave(who, reason = 'replace') {
+  const mine = who === 'mine' || who === 'me';
+  const old = mine ? G.myFieldCard : G.opFieldCard;
+  if (!old) return null;
+  const moved = { ...old };
+  if (mine) {
+    G.myFieldCard = null;
+    G.myGrave.push(moved);
+    if (typeof onSentToGrave === 'function') onSentToGrave(moved.id, 'fieldCard', moved);
+    if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+      window.GameEvents.emit('fieldCardLeave', { cardId: moved.id, card: moved, from: 'fieldCard', to: 'grave', player: 'mine', reason });
+    }
+  } else {
+    G.opFieldCard = null;
+    G.opGrave.push(moved);
+    if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+      window.GameEvents.emit('fieldCardLeave', { cardId: moved.id, card: moved, from: 'fieldCard', to: 'grave', player: 'opponent', reason });
+    }
+  }
+  log(`${moved.name} 필드 존에서 묘지로`, mine ? 'mine' : 'opponent');
+  return moved;
+}
+
+/**
+ * placeMyFieldCard(cardOrId, options)
+ * 내 필드 존에 필드 카드를 놓는 중앙 함수.
+ * options:
+ * - source: 'hand' | 'deck' | 'grave' | 'effect' | 'unknown'
+ * - handIdx: 패에서 발동/놓는 경우 제거할 패 인덱스
+ * - activate: true면 “발동”, false면 “놓음”으로 로그/네트워크 표기
+ * - send: 네트워크 전송 여부
+ * - reason: 기존 필드 카드가 묘지로 가는 이유
+ */
+function placeMyFieldCard(cardOrId, options = {}) {
+  const card = _fieldCardObj(cardOrId);
+  if (!card) return false;
+  const source = options.source || (Number.isInteger(options.handIdx) ? 'hand' : 'effect');
+  const activate = !!options.activate;
+
+  _sendFieldToGrave('mine', options.reason || (activate ? 'fieldActivateReplace' : 'fieldPlaceReplace'));
+
+  if (Number.isInteger(options.handIdx)) {
+    const handCard = G.myHand[options.handIdx];
+    if (!handCard || handCard.id !== card.id) return false;
+    G.myHand.splice(options.handIdx, 1);
+  }
+
+  G.myFieldCard = { id: card.id, name: card.name };
+  log(`${activate ? '필드 발동' : '필드 존에 놓음'}: ${card.name}`, 'mine');
+
+  if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+    window.GameEvents.emit('fieldCardPlaced', { cardId: card.id, card: G.myFieldCard, source, player: 'mine', activate });
+  }
+
+  if (options.send !== false && typeof sendAction === 'function') {
+    sendAction({ type: 'fieldCard', cardId: card.id, source, activate });
+  }
+  if (options.sync !== false && typeof sendGameState === 'function') sendGameState();
+  if (options.render !== false && typeof renderAll === 'function') renderAll();
+  return true;
+}
+
+function placeOpponentFieldCard(cardOrId, options = {}) {
+  const card = _fieldCardObj(cardOrId);
+  if (!card) return false;
+  const source = options.source || 'unknown';
+  const activate = !!options.activate;
+  _sendFieldToGrave('opponent', options.reason || (activate ? 'fieldActivateReplace' : 'fieldPlaceReplace'));
+  G.opFieldCard = { id: card.id, name: card.name };
+  if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+    window.GameEvents.emit('fieldCardPlaced', { cardId: card.id, card: G.opFieldCard, source, player: 'opponent', activate });
+  }
+  log(`상대 ${activate ? '필드 마법 발동' : '필드 존에 놓음'}: ${card.name}`, 'opponent');
+  if (typeof renderAll === 'function') renderAll();
+  return true;
+}
+
 function onSummon(cardId, from) {
   // 황금사과 드로우는 handleOpponentAction('summon')에서 처리
+  // 펭귄 등 등록형 유발효과는 GameEvents에서 일괄 처리한다.
+  if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+    window.GameEvents.emit('summon', { cardId, from, player: 'mine' });
+  }
   switch(cardId) {
-    case '꼬마 펭귄': triggerKkomaPenguin(from); break;
-    case '펭귄 부부': triggerPenguinBubu(from); break;
-    case '펭귄 용사': triggerPenguinHero(from); break;
-    case '펭귄의 전설': triggerPenguinLegend(from); break;
-    case '펭귄 마법사': triggerPenguinWizard(from); break;
     case '전원소의 지배자': triggerJibaejaJeon2(); break;
     // ── 크툴루/올드원 소환 유발 ──
     case '엘더 갓-크타니트':
@@ -444,26 +553,14 @@ function onSummon(cardId, from) {
       // GOO 소환 → 슈브 니구라스 ① 트리거 체크
       if (typeof _triggerShubniggurath1 === 'function') _triggerShubniggurath1(null, from);
       break;
-    case '엘리멘츠의 불꽃정령':
-    case '엘리멘츠의 물정령':
-    case '엘리멘츠의 전기정령':
-    case '엘리멘츠의 바람정령':
-      if (window.THEME_EFFECT_HANDLERS?.['엘리멘츠']?.onElementsSummoned) {
-        window.THEME_EFFECT_HANDLERS['엘리멘츠'].onElementsSummoned(cardId);
-      }
-      break;
+    // 엘리멘츠 소환 유발은 EffectEngine/GameEvents 레지스트리에서 처리한다.
   }
   renderAll();
 }
-function onSentToGrave(cardId) {
-  if (cardId === '펭귄 용사') autoTriggerHeroGrave();
-  if (cardId === '엘리멘츠의 바람정령' && canUseEffect('엘리멘츠의 바람정령', 3)) {
-    markEffectUsed('엘리멘츠의 바람정령', 3);
-    const t = findAllInDeck(c => c.id === '엘리멘츠 in rainbow forest');
-    if (t.length > 0) {
-      searchToHand('엘리멘츠 in rainbow forest');
-      log('엘리멘츠의 바람정령 ③: 엘리멘츠 in rainbow forest 서치', 'mine');
-    }
+function onSentToGrave(cardId, from = 'unknown', card = null) {
+  // 등록형 묘지 유발효과는 GameEvents에서 일괄 처리한다.
+  if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+    window.GameEvents.emit('sentToGrave', { cardId, card, from, player: 'mine' });
   }
   // ── 크툴루/올드원 묘지 트리거 ──
   if (typeof _onCthulhuSentToGrave === 'function') _onCthulhuSentToGrave(cardId);
@@ -561,4 +658,24 @@ function resetTurnEffects() {
   G.myField.forEach(c => { if (c) c.effectNegatedUntilEndTurn = false; });
   if (G.myFieldCard) G.myFieldCard.effectNegatedUntilEndTurn = false;
   resetJibaeEffects();
+  if (typeof resetMafiaTurnFlags === 'function') resetMafiaTurnFlags();
+}
+// ─────────────────────────────────────────────
+// Global bridge for registry modules
+// Top-level let variables are not window properties in browsers. Several
+// registry engines intentionally read window.G / window.isMyTurn / phase data,
+// so expose them with live getters/setters instead of one-time copies.
+// ─────────────────────────────────────────────
+if (typeof window !== 'undefined' && !window.__handbattleEngineGlobalBridge) {
+  Object.defineProperties(window, {
+    G: { configurable: true, get: () => G, set: (v) => { G = v; } },
+    isMyTurn: { configurable: true, get: () => isMyTurn, set: (v) => { isMyTurn = v; } },
+    currentPhase: { configurable: true, get: () => currentPhase, set: (v) => { currentPhase = v; } },
+    activeChainState: { configurable: true, get: () => activeChainState, set: (v) => { activeChainState = v; } },
+    myRole: { configurable: true, get: () => myRole, set: (v) => { myRole = v; } },
+    myName: { configurable: true, get: () => myName, set: (v) => { myName = v; } },
+    opName: { configurable: true, get: () => opName, set: (v) => { opName = v; } },
+    roomCode: { configurable: true, get: () => roomCode, set: (v) => { roomCode = v; } },
+  });
+  window.__handbattleEngineGlobalBridge = true;
 }

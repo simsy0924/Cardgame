@@ -276,10 +276,15 @@ function _cthulhuResolve(link) {
         // [효과] 덱에서 태평양 속 르뤼에를 필드 존에 배치
         if (!findAllInDeck(d => d.id === '태평양 속 르뤼에').length) { log('크툴루 ①: 덱에 르뤼에 없음', 'mine'); return; }
         removeFromDeck('태평양 속 르뤼에');
-        G.myFieldCard = { id: '태평양 속 르뤼에', name: '태평양 속 르뤼에' };
+        if (typeof placeMyFieldCard === 'function') {
+          placeMyFieldCard('태평양 속 르뤼에', { source: 'deck', activate: false });
+        } else {
+          if (G.myFieldCard) G.myGrave.push(G.myFieldCard);
+          G.myFieldCard = { id: '태평양 속 르뤼에', name: '태평양 속 르뤼에' };
+          sendAction({ type: 'fieldCard', cardId: '태평양 속 르뤼에', source: 'deck', activate: false });
+          sendGameState(); renderAll();
+        }
         log('크툴루 ①: 태평양 속 르뤼에 배치', 'mine');
-        sendAction({ type: 'fieldCard', cardId: '태평양 속 르뤼에' });
-        sendGameState(); renderAll();
       } else if (effectNum === 2) {
         // [효과/패널티] 코스트는 activate에서 완료. 여기서는 자신 필드 1장 묘지(패널티)
         if (!G.myField.length) { sendGameState(); renderAll(); return; }

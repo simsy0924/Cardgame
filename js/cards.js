@@ -595,3 +595,13 @@ const CARD_TYPE_COLOR = {
   trap: "#7A3A5A",
   field: "#5A6A3A"
 };
+// ─────────────────────────────────────────────
+// Global bridge for registry modules
+// Top-level const/let are not automatically exposed on window in browsers.
+// Registry modules use window.CARDS, so expose the shared card database here.
+// ─────────────────────────────────────────────
+if (typeof window !== 'undefined') {
+  window.CARDS = CARDS;
+  window.CARD_TYPE_LABEL = CARD_TYPE_LABEL;
+  window.CARD_TYPE_COLOR = CARD_TYPE_COLOR;
+}

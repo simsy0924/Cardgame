@@ -231,11 +231,11 @@ function forceDiscard(n) {
                 const mon = fieldPenguins[sel[0]];
                 sendToGrave(mon.id, 'field');
                 log(`펭귄 마을 ②: ${mon.name} 대신 묘지`, 'mine');
-                // [BUG FIX] 수문장 펭귄 ②: "자신 펭귄 몬스터가 펭귄 마을 효과로 묘지로 보내졌을 경우"
-                // 수문장 자신뿐 아니라, 수문장이 필드에 남아있을 때 다른 펭귄이 묘지로 가도 트리거
-                const summonerOnField = G.myField.some(m => m.id === '수문장 펭귄');
-                if (summonerOnField || mon.id === '수문장 펭귄') triggerSummonerPenguin2();
-                _tryRecoverPenguinStrikeFromGrave();
+                // 펭귄 마을 ②로 몬스터가 묘지로 간 사실만 이벤트로 발행한다.
+                // 수문장/마법사/일격 등 실제 반응은 effect-registry.js가 판단한다.
+                if (window.GameEvents && typeof window.GameEvents.emit === 'function') {
+                  window.GameEvents.emit('penguinVillageSentToGrave', { cardId: mon.id, card: mon, player: 'mine' });
+                }
               }
               // 마을 제외 나머지만 버리기
               const remainIdx = indices.filter(i => i !== villageSelIdx).sort((a, b) => b - a);
