@@ -607,6 +607,8 @@ const CHAIN_RESOLVERS = {
   // 현자 펭귄
   ignitionSagePenguin1:      ()     => resolveSagePenguin1(),
   ignitionSagePenguin2:      ()     => resolveSagePenguin2(),
+  // 수문장 펭귄
+  ignitionSummonerPenguin1:  (link) => resolveSummonerPenguin1(link.sourceInstanceId),
   // 수문장 펭귄 ②
   triggerSummonerPenguin2:   ()     => resolveSummonerPenguin2(),
   // 펭귄!돌격!
