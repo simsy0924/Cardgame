@@ -495,17 +495,9 @@ function resolvePenguinVillage1() {
 // MANUAL DISCARD
 // ─────────────────────────────────────────────
 function manualDiscard(handIdx) {
-  if (handIdx < 0 || !G.myHand[handIdx]) return;
-  const c = G.myHand.splice(handIdx, 1)[0];
-  G.myGrave.push({ id: c.id, name: c.name });
-  selectedCardIdx = -1;
-  log(`패를 버림: ${c.name}`, 'mine');
-  sendAction({ type: 'discard', cardId: c.id });
-  onJibaeryongDiscarded(c.id);
-  onHandDiscarded_jibaeSasl();
-  sendGameState();
-  renderAll();
-  checkWinCondition();
+  // 임의 수동 버리기는 정식 행동이 아니므로 금지한다.
+  // 패 버리기는 카드 효과/코스트 처리 함수에서만 수행한다.
+  notify('임의로 패를 버릴 수 없습니다. 카드 효과나 코스트로만 버릴 수 있습니다.');
 }
 
 /** 강제 1장 버리기 — 반드시 선택해야 하며 취소 불가 */

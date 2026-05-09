@@ -666,17 +666,9 @@ function executeChainLocally(links) {
 }
 
 function manualDiscard(handIdx) {
-  if (handIdx < 0 || !G.myHand[handIdx]) return;
-  const c = G.myHand.splice(handIdx, 1)[0];
-  G.myGrave.push({ id: c.id, name: c.name });
-  selectedCardIdx = -1;
-  log(`패를 버림: ${c.name}`, 'mine');
-  sendAction({ type: 'discard', cardId: c.id });
-  onJibaeryongDiscarded(c.id);
-  onHandDiscarded_jibaeSasl();
-  sendGameState();
-  renderAll();
-  checkWinCondition();
+  // 임의 수동 버리기는 정식 행동이 아니므로 금지한다.
+  // 패 버리기는 카드 효과/코스트 처리 함수에서만 수행한다.
+  notify('임의로 패를 버릴 수 없습니다. 카드 효과나 코스트로만 버릴 수 있습니다.');
 }
 
 // ★ 강제 패 버리기 — 반드시 1장 선택해야 함, 취소 불가
@@ -948,12 +940,10 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
             // 키카드 — 언제든 발동 가능, 묘지에 있을 때 효과 대상 안 됨
             if (handIdx >= 0 && currentPhase !== 'draw')
               addBtn('① 상대 패 1장 버리기', 'btn-primary', () => activateCard(handIdx));
-            if (handIdx >= 0) addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
           } else if (cardId === '단 한번의 기회') {
             // 키카드 — 언제든 발동 가능
             if (handIdx >= 0 && currentPhase !== 'draw')
               addBtn('① 드로우 1장', 'btn-primary', () => activateCard(handIdx));
-            if (handIdx >= 0) addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
           } else if (cardId === '카드의 흑기사' || cardId === '풀려난 항아리의 마귀' || cardId === '카드 세계의 영웅') {
             if (isMyTurn && currentPhase === 'deploy')
               addBtn('소환', 'btn-primary', () => activateCard(handIdx));
@@ -1026,7 +1016,6 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
             if (effectText.includes('①')) addBtn('① 효과 발동', 'btn-primary', () => activateCard(handIdx));
             if (effectText.includes('②')) addBtn('② 효과 발동', 'btn-secondary', () => { const h = window.THEME_EFFECT_HANDLERS?.[card.theme]; h ? h.activateFromHand(handIdx, 2) : activateThemeCardEffectFromHand(handIdx, 2); });
             if (effectText.includes('③')) addBtn('③ 효과 발동', 'btn-secondary', () => { const h = window.THEME_EFFECT_HANDLERS?.[card.theme]; h ? h.activateFromHand(handIdx, 3) : activateThemeCardEffectFromHand(handIdx, 3); });
-            addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
           } else {
             // [BUG FIX] 몬스터 카드도 activateCard로 — "통상 소환 없음" 메시지 제거
             // 효과로 소환하는 경우(엘리멘츠 궁극신 등) 포함, 조건은 activateCard/핸들러 내부에서 체크

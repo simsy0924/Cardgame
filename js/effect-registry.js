@@ -99,8 +99,12 @@
     // "소환 조건 실행" 같은 절차는 효과 발동이 아니므로 체인 블록을 만들지 않는다.
     // 단, 필드 카드 "발동"처럼 effectNum 0이어도 발동인 카드는 이 조건에 걸리지 않는다.
     const labelText = String(out.label || '');
-    const isProcedure = out.noChain === true || out.kind === 'procedure' || /소환 조건/.test(labelText);
+    const cardInfo = getCardDef(out.cardId);
+    const isElementSummonProcedure = cardInfo && cardInfo.theme === '엘리멘츠' && /자체 소환|소환 조건/.test(labelText);
+    const isProcedure = out.noChain === true || out.kind === 'procedure' || /소환 조건/.test(labelText) || isElementSummonProcedure;
     if (isProcedure) {
+      // 소환 조건/자체 소환은 "효과 발동"이 아니라 절차다.
+      // 특히 엘리멘츠 정령 자체 소환은 체인 블록을 만들지 않는다.
       out.kind = 'procedure';
       out.chain = false;
       out.noChain = true;
@@ -109,6 +113,13 @@
       // 실제 발동형 효과는 기본적으로 체인 블록을 만들게 강제한다.
       // kind:'direct'는 이제 "기존 턴/페이즈 제한을 condition에 맡기는 발동형 효과"로 취급한다.
       out.chain = true;
+
+      // 마법/함정은 카드 텍스트가 특별히 자신 전개 단계로 제한하지 않는 한
+      // 상대 턴에도 발동 가능한 체인형 효과로 다룬다.
+      // 함정은 기본적으로 상대 턴에만 발동 가능하며, canActivate의 타이밍 게이트에서 다시 검사한다.
+      if ((cardInfo.cardType === 'magic' || cardInfo.cardType === 'trap') && out.kind !== 'trigger') {
+        out.kind = 'quick';
+      }
     }
     return out;
   }
@@ -140,7 +151,7 @@
       fieldIdx: base.fieldIdx,
       source: base.source,
       link: base.link,
-      isMyTurn: () => myTurn(),
+      isMyTurn: () => _isOwnTurnNow(),
       phase: () => window.currentPhase,
       notify: safeNotify,
       log: safeLog,
@@ -179,13 +190,128 @@
     return def.zone === 'any' || def.zone === zone;
   }
 
+
+  function _isOwnTurnNow() {
+    return !!(typeof window !== 'undefined' ? window.isMyTurn : (typeof isMyTurn !== 'undefined' && isMyTurn));
+  }
+
+  function _phaseNow() {
+    return (typeof window !== 'undefined' && window.currentPhase != null) ? window.currentPhase : (typeof currentPhase !== 'undefined' ? currentPhase : null);
+  }
+
+  function _isChainActiveNow() {
+    return !!(typeof window !== 'undefined' && window.activeChainState && window.activeChainState.active);
+  }
+
+  function _effectTimingText(def) {
+    if (!def) return '';
+    const own = String(def.text || getEffectText(def.cardId, def.effectNum) || '');
+    if (own.trim()) return own;
+    return String(getCardDef(def.cardId).effects || '');
+  }
+
+  function _timingResult(ok, reason = '') {
+    return ok ? { ok: true } : { ok: false, reason };
+  }
+
+  function _isMagicOrTrap(def) {
+    const type = getCardDef(def.cardId).cardType;
+    return type === 'magic' || type === 'trap';
+  }
+
+  function _manualActivationTimingAllowed(def, base = {}) {
+    // 이벤트 유발은 사건 자체가 타이밍을 결정한다. 여기서 마법/함정의 수동 타이밍을 걸지 않는다.
+    if (!def || def.zone === 'event' || base.sourceZone === 'event' || def.kind === 'trigger') return _timingResult(true);
+
+    const text = _effectTimingText(def);
+    const phase = _phaseNow();
+    const own = _isOwnTurnNow();
+    const chainActive = _isChainActiveNow();
+    const type = getCardDef(def.cardId).cardType;
+
+    // 절차성 소환: 체인을 만들지 않고, 자신 전개 단계 + 체인 없음에서만 가능.
+    if (def.noChain === true || def.kind === 'procedure') {
+      if (/소환 조건|자체 소환/.test(String(def.label || ''))) {
+        if (!own || phase !== 'deploy') return _timingResult(false, '소환 절차는 자신 전개 단계에만 실행할 수 있습니다.');
+        if (chainActive) return _timingResult(false, '소환 절차는 체인이 없을 때만 실행할 수 있습니다.');
+      }
+      return _timingResult(true);
+    }
+
+    if (type !== 'magic' && type !== 'trap') return _timingResult(true);
+
+    const mentionsDrawPhase = /드로우 단계/.test(text);
+    if (phase === 'draw' && !mentionsDrawPhase) {
+      return _timingResult(false, '드로우 단계에는 이 효과를 발동할 수 없습니다.');
+    }
+
+    // 함정: 기본적으로 상대 턴에만. 텍스트에 전개 단계가 있으면 상대 전개 단계로 제한.
+    if (type === 'trap') {
+      if (own) return _timingResult(false, '함정 카드는 상대 턴에만 발동할 수 있습니다.');
+      if (/상대 전개 단계|자신\/상대 전개 단계/.test(text)) {
+        return _timingResult(phase === 'deploy', '함정 카드는 상대 전개 단계에만 발동할 수 있습니다.');
+      }
+      return _timingResult(true);
+    }
+
+    // 마법: "자신 전개 단계"라고 명시된 효과만 기동형처럼 제한.
+    if (/자신\/상대 전개 단계/.test(text)) return _timingResult(phase === 'deploy', '전개 단계에만 발동할 수 있습니다.');
+    if (/상대 전개 단계/.test(text)) return _timingResult(!own && phase === 'deploy', '상대 전개 단계에만 발동할 수 있습니다.');
+    if (/자신 전개 단계/.test(text)) return _timingResult(own && phase === 'deploy', '자신 전개 단계에만 발동할 수 있습니다.');
+    if (/상대 턴/.test(text) && !/자신\/상대 턴/.test(text)) return _timingResult(!own, '상대 턴에만 발동할 수 있습니다.');
+    if (/자신 턴/.test(text) && !/자신\/상대 턴/.test(text)) return _timingResult(own, '자신 턴에만 발동할 수 있습니다.');
+
+    // 별도 제한이 없는 마법은 상대 턴에도 발동 가능한 체인형 효과로 허용.
+    return _timingResult(true);
+  }
+
+  function _runCondition(def, base) {
+    if (!def.condition) return true;
+    return !!def.condition(ctx(Object.assign({}, base, { effect: def, cardId: def.cardId })));
+  }
+
+  function _runConditionAsOwnDeploy(def, base) {
+    if (typeof window === 'undefined') return false;
+    const oldTurn = window.isMyTurn;
+    const oldPhase = window.currentPhase;
+    try {
+      window.isMyTurn = true;
+      window.currentPhase = 'deploy';
+      return _runCondition(def, base);
+    } finally {
+      window.isMyTurn = oldTurn;
+      window.currentPhase = oldPhase;
+    }
+  }
+
+  function _shouldRelaxLegacyMagicTrapCondition(def) {
+    if (!_isMagicOrTrap(def)) return false;
+    if (def.zone === 'event' || def.kind === 'trigger') return false;
+    const text = _effectTimingText(def);
+    const type = getCardDef(def.cardId).cardType;
+    // "자신 전개 단계"가 명시된 마법은 원래 기동형 제한을 유지한다.
+    if (type === 'magic' && /자신 전개 단계/.test(text) && !/자신\/상대 전개 단계/.test(text)) return false;
+    return true;
+  }
+
   function canActivate(def, base) {
     try {
       if (!def) return false;
       if (def.zone === 'hand' && (base.handIdx == null || base.handIdx < 0)) return false;
       if (def.zone === 'field' && (base.fieldIdx == null || base.fieldIdx < 0)) return false;
-      if (def.condition && !def.condition(ctx(Object.assign({}, base, { effect: def, cardId: def.cardId })))) return false;
-      return true;
+
+      const timing = _manualActivationTimingAllowed(def, base);
+      if (!timing.ok) return false;
+
+      if (_runCondition(def, base)) return true;
+
+      // 레거시 등록 중 일부 마법/함정은 condition 안에 myTurn()+phaseDeploy()가 섞여 있어
+      // 상대 턴 발동 가능 카드도 기동효과처럼 막혔다.
+      // 타이밍 게이트를 이미 통과한 마법/함정만 조건을 "자신 전개 단계 가정"으로 재검사해
+      // 자원/존/횟수 조건은 살리고 낡은 턴 제한만 완화한다.
+      if (_shouldRelaxLegacyMagicTrapCondition(def) && _runConditionAsOwnDeploy(def, base)) return true;
+
+      return false;
     } catch (e) {
       console.warn('[EffectEngine] condition 오류:', def.id, e);
       return false;
@@ -229,6 +355,7 @@
       effectNum: def.effectNum,
       sourceZone: def.zone,
       effectTags: Array.isArray(def.effectTags) ? def.effectTags.slice() : [],
+      allowDrawPhase: /드로우 단계/.test(_effectTimingText(def)),
       sourceInstanceId: base.sourceInstanceId || null,
       handIdx: Number.isInteger(base.handIdx) ? base.handIdx : null,
       fieldIdx: Number.isInteger(base.fieldIdx) ? base.fieldIdx : null,
@@ -264,6 +391,8 @@
       }
 
       if (def.noChain === true || def.kind === 'procedure') {
+        const timing = _manualActivationTimingAllowed(def, base);
+        if (!timing.ok) { safeNotify(timing.reason || '지금은 실행할 수 없습니다.'); return; }
         ENGINE.resolveEffect(def.id, c, {});
         c.sync();
         return;
@@ -479,17 +608,8 @@
         });
       });
 
-      // 손패 카드는 등록형 효과만 남기되, 수동 버리기는 기본 조작이라 유지한다.
-      if (zoneInfo.zone === 'hand' && typeof window.manualDiscard === 'function' && zoneInfo.base && zoneInfo.base.handIdx >= 0) {
-        addButton(actions, '패에서 버리기', 'btn btn-danger', () => {
-          closeCardModal();
-          try { window.manualDiscard(zoneInfo.base.handIdx); }
-          catch (e) {
-            console.error('[effect-registry] manualDiscard 오류:', e);
-            notifySafe('버리기 처리 오류: ' + (e && e.message ? e.message : e));
-          }
-        });
-      }
+      // 임의 수동 버리기는 정식 행동이 아니므로 버튼을 만들지 않는다.
+      // 패 버리기는 카드 효과/코스트 처리 함수에서만 발생해야 한다.
 
       addCloseButton(actions);
       return true;
