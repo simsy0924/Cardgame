@@ -849,12 +849,11 @@
       cardId: '펭귄!돌격!',
       effectNo: 1,
       text: '자신 전개 단계에 발동할 수 있다. 덱에서 펭귄 몬스터 1장을 소환한다.',
-      type: EFFECT_TYPES.ACTIVATION,
+      type: EFFECT_TYPES.ACTIVATION, cardActivationCost: true,
       timing: TIMING.MY_DEPLOY,
       zone: ZONES.HAND,
       tags: [TAGS.DECK_SUMMON],
       condition(ctx) { return findDeckCards(ctx, c => isPenguinMonster(c.id)).length > 0 && hasFieldSpace(ctx); },
-      cost(ctx) { return moveSourceSpellToGrave(ctx, 'penguinCharge1Activation'); },
       resolve(ctx) {
         const target = firstOrSelected(ctx, findDeckCards(ctx, c => isPenguinMonster(c.id)), { byId: true });
         return target ? summonFromDeck(ctx, target.id, 'penguinCharge1') : { ok: false, error: '덱에 펭귄 몬스터가 없습니다.' };
@@ -881,7 +880,7 @@
       cardId: '펭귄의 영광',
       effectNo: 1,
       text: '자신/상대 전개 단계에 발동할 수 있다. 패에서 펭귄 용사를 소환하고, 상대 패를 전부 공개한다.',
-      type: EFFECT_TYPES.QUICK,
+      type: EFFECT_TYPES.QUICK, cardActivationCost: true,
       timing: TIMING.EITHER_TURN,
       zone: ZONES.HAND,
       tags: [TAGS.HAND_SUMMON, 'revealOpponentHand'],
@@ -889,7 +888,6 @@
         return isDeployPhase(ctx) && hasFieldSpace(ctx)
           && findZoneCards(ctx, ZONES.HAND, c => c.id === '펭귄 용사' || c.id === '펭귄의 전설').length > 0;
       },
-      cost(ctx) { return moveSourceSpellToGrave(ctx, 'penguinGlory1Activation'); },
       resolve(ctx) {
         const candidates = findZoneCards(ctx, ZONES.HAND, c => c.id === '펭귄 용사' || c.id === '펭귄의 전설');
         const target = firstOrSelected(ctx, candidates, { byId: true });
@@ -1008,7 +1006,7 @@
       cardId: '펭귄의 일격',
       effectNo: 1,
       text: '상대가 몬스터 효과를 발동했을 때 자신 필드에 펭귄 몬스터가 존재할 경우, 패를 1장 버리고 발동할 수 있다. 그 효과를 무효로 한다.',
-      type: EFFECT_TYPES.QUICK,
+      type: EFFECT_TYPES.QUICK, cardActivationCost: true,
       timing: TIMING.EITHER_TURN,
       zone: ZONES.HAND,
       tags: [TAGS.NEGATE_EFFECT, TAGS.COST_DISCARD],
@@ -1018,10 +1016,7 @@
           && chainHasOpponentMonsterEffect(ctx);
       },
       cost(ctx) {
-        const discarded = discardOneFromHand(ctx, '펭귄의 일격 ① 코스트: 패 1장 버리기', { excludeCardId: '펭귄의 일격' });
-        if (!discarded.ok) return discarded;
-        const self = moveSourceSpellToGrave(ctx, 'penguinStrike1Activation');
-        return { ok: self.ok, discarded, self };
+        return discardOneFromHand(ctx, '펭귄의 일격 ① 코스트: 패 1장 버리기', { excludeCardId: '펭귄의 일격' });
       },
       resolve(ctx) {
         // 체인 링크 객체는 freeze될 수 있으므로 직접 수정하지 않는다.
@@ -1050,14 +1045,13 @@
       cardId: '각성의 펭귄 군단',
       effectNo: 1,
       text: '자신/상대 턴에 발동할 수 있다. 자신 패를 1장 버리고 상대 필드의 몬스터 1장을 묘지로 보낸 뒤, 묘지의 펭귄 몬스터 1장을 소환하는 처리를 원하는 만큼 반복한다.',
-      type: EFFECT_TYPES.QUICK,
+      type: EFFECT_TYPES.QUICK, cardActivationCost: true,
       timing: TIMING.EITHER_TURN,
       zone: ZONES.HAND,
       tags: [TAGS.DISCARD_HAND, 'sendOpponentMonsterToGrave', TAGS.GRAVE_SUMMON, 'repeatable'],
       condition(ctx) {
         return getAwakenedLegionStopReason(ctx) === null;
       },
-      cost(ctx) { return moveSourceSpellToGrave(ctx, 'awakenedPenguinLegion1Activation'); },
       resolve(ctx) {
         const results = [];
         let guard = 0;
@@ -1151,7 +1145,7 @@
       cardId: '평화의 펭귄',
       effectNo: 1,
       text: '상대가 효과를 발동했을 때 상대 필드의 몬스터 1장을 대상으로 발동할 수 있다. 자신 필드의 펭귄 몬스터 공격력을 각각 그 몬스터의 공격력 절반만큼 올린다.',
-      type: EFFECT_TYPES.QUICK,
+      type: EFFECT_TYPES.QUICK, cardActivationCost: true,
       timing: TIMING.EITHER_TURN,
       zone: ZONES.HAND,
       tags: ['chainResponse', 'attackUp'],
@@ -1161,7 +1155,6 @@
           && zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).some(isMonster)
           && zoneArray(ctx, ctx.controller, ZONES.FIELD).some(isPenguinMonster);
       },
-      cost(ctx) { return moveSourceSpellToGrave(ctx, 'peacefulPenguin1Activation'); },
       target(ctx) {
         const opponentMonsters = zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).filter(isMonster);
         const target = firstOrSelected(ctx, opponentMonsters, { byId: true });
@@ -1200,12 +1193,11 @@
       cardId: '펭귄이여 영원하라',
       effectNo: 1,
       text: '서로의 필드의 카드를 1장씩 대상으로 하고 발동할 수 있다. 그 카드를 패로 되돌린다. 그 후, 패에서 펭귄 몬스터 1장을 소환할 수 있다.',
-      type: EFFECT_TYPES.ACTIVATION,
+      type: EFFECT_TYPES.ACTIVATION, cardActivationCost: true,
       zone: ZONES.HAND,
       tags: ['bounceFieldCards', TAGS.HAND_SUMMON],
       oncePerTurn: { key: '펭귄이여 영원하라_1', limit: 1 },
       condition(ctx) { return zoneArray(ctx, ctx.controller, ZONES.FIELD).length > 0 && zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).length > 0; },
-      cost(ctx) { return moveSourceSpellToGrave(ctx, 'penguinForever1Activation'); },
       resolve(ctx) {
         const myTarget = firstOrSelected(ctx, zoneArray(ctx, ctx.controller, ZONES.FIELD), { byId: true });
         const opTarget = firstOrSelected(ctx, zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD), { byId: true });
