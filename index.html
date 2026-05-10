@@ -933,7 +933,6 @@ body[data-sleeve='sleeve_aurora'] .card-back {
     <div class="deck-tab" onclick="filterDeckPool('마피아')">마피아</div>
     <div class="deck-tab" onclick="filterDeckPool('불가사의')">불가사의</div>
     <div class="deck-tab" onclick="filterDeckPool('엘리멘츠')">엘리멘츠</div>
-    <div class="deck-tab" onclick="filterDeckPool('서커스메어')">서커스메어</div>
     <div class="deck-tab" onclick="filterDeckPool('범용')">범용</div>
   </div>
 
@@ -1129,34 +1128,47 @@ body[data-sleeve='sleeve_aurora'] .card-back {
 
 <!-- ════════════ SCRIPTS ════════════ -->
 <script src="js/cards.js"></script>
+<!-- 룰 상수: 기존 script 환경용 전역 네임스페이스(window.HB_RULES). 실제 게임 동작은 아직 변경하지 않는다. -->
+<script src="js/rules/effect-types.js"></script>
+<script src="js/rules/zones.js"></script>
+<script src="js/rules/phases.js"></script>
+<script src="js/rules/card-types.js"></script>
+<script src="js/rules/effect-tags.js"></script>
+<script src="js/rules/events.js"></script>
+<script src="js/rules/timing.js"></script>
+<script src="js/engine/effect-definition.js"></script>
+<script src="js/effects/effect-registry.js"></script>
 <script src="js/engine.js"></script>
+<script src="js/engine/zone-access.js"></script>
+<script src="js/engine/event-bus.js"></script>
+<script src="js/engine/card-move.js"></script>
+<script src="js/engine/effect-context.js"></script>
+<script src="js/effects/theme/penguin.js"></script>
+<script src="js/effects/theme/circusmare.js"></script>
+<script src="js/effects/theme/elements.js"></script>
+<script src="js/effects/theme/cthulhu.js"></script>
+<script src="js/effects/theme/ruler.js"></script>
+<script src="js/effects/theme/bulgasaui.js"></script>
+<script src="js/effects/theme/mafia.js"></script>
+<script src="js/effects/theme/lion.js"></script>
+<script src="js/effects/theme/tiger.js"></script>
+<script src="js/effects/theme/liger.js"></script>
+<script src="js/engine/processing-negate-engine.js"></script>
+<script src="js/engine/chain-engine.js"></script>
+<script src="js/engine/trigger-queue.js"></script>
+<script src="js/engine/continuous-engine.js"></script>
+<script src="js/engine/field-zone.js"></script>
+<script src="js/engine/network-sync.js"></script>
+<script src="js/engine/effect-ui.js"></script>
+<script src="js/engine/legacy-bridge.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/network.js"></script>
-<script src="js/penguin.js"></script>
-<script src="js/jibaeja.js"></script>
 <script src="js/effects-core.js"></script>
 <script src="js/effects-chain.js"></script>
-<script src="js/theme-common.js"></script>
-<script src="js/lion.js"></script>
-<script src="js/tiger.js"></script>
-<script src="js/liger.js"></script>
-<script src="js/cthulhu.js"></script>
-<script src="js/mafia.js"></script>
-<script src="js/bulgasaui.js"></script>
-<script src="js/Elements.js"></script>
 <script src="js/effects-theme.js"></script>
 <script src="js/progression.js"></script>
 <script src="js/account.js"></script>
-<script src="js/patch.js"></script>
 <script src="js/ai.js"></script>
-<script src="js/circusmare.js"></script>
-<script src="js/effect-registry.js"></script>
-<script src="js/processing-negate.js"></script>
-<script src="js/lion-tiger-liger-registry.js"></script>
-<script src="js/bulgasaui-registry.js"></script>
-<script src="js/opponent-choice.js"></script>
-<script src="js/cthulhu-registry.js"></script>
-<script src="js/rule-stabilizer.js"></script>
 
 <script>
   function closeModal(modalId) {
