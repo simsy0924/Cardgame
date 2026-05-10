@@ -632,8 +632,14 @@
     if (!chainState.active) return makeFail('활성 체인이 없습니다.');
     const passer = controller || chainState.priority;
     chainState.passCount += 1;
+    // [BUG-1 FIX] passCount >= 2 체크를 priority 전환 전에 수행한다.
+    // 기존 코드는 priority를 먼저 뒤집은 뒤 resolveChain에 뒤집힌 값을 넘겨
+    // "패스한 쪽"이 아니라 "상대"를 resolver controller로 전달하는 버그가 있었다.
+    if (chainState.passCount >= 2) {
+      // [BUG-6 FIX] 전역 resolveChain(레거시)이 아닌 신엔진 내부 함수를 직접 호출
+      return resolveChain({ controller: passer });
+    }
     chainState.priority = passer === CONTROLLERS.ME ? CONTROLLERS.OPPONENT : CONTROLLERS.ME;
-    if (chainState.passCount >= 2) return resolveChain({ controller: chainState.priority || CONTROLLERS.ME });
     return makeOk({ chain: getChainState() });
   }
 
@@ -670,6 +676,7 @@
     const response = openChainResponseWindow(ctx);
 
     if (opts.autoResolve === true || opts.resolveImmediately === true) {
+      // [BUG-6 FIX] 신엔진 내부 resolveChain(클로저 스코프)을 직접 호출 — 전역 함수와 혼용 금지
       const resolved = resolveChain(ctx);
       return makeOk({ effect, ctx, chainLink: addResult.chainLink, paidCost: cost.paidCost, targets: target.targets, usage, response, resolved });
     }
@@ -687,6 +694,13 @@
     return Object.freeze(Array.from(usageCounters.entries()).map(([key, count]) => Object.freeze({ key, count })));
   }
 
+  // [BUG-6 FIX] 신엔진 내부에서 resolveChain을 local 변수로 캡처해두어
+  // 나중에 로드되는 engine.js / effects-chain.js의 동명 전역 함수가
+  // 클로저 내부 참조를 덮어쓰지 못하도록 보호한다.
+  // passChainResponse, activateEffect 내부의 resolveChain 호출은
+  // 모두 이 localResolveChain을 통해 실행된다.
+  const localResolveChain = resolveChain;
+
   const api = Object.freeze({
     canActivateEffect,
     payCost,
@@ -694,7 +708,7 @@
     createChainLink,
     addChainLink,
     openChainResponseWindow,
-    resolveChain,
+    resolveChain: localResolveChain,
     resolveChainLink,
     clearChain,
 
