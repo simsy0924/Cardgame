@@ -617,6 +617,15 @@ function handleOpponentAction(action) {
       // [BUG FIX] 상대 턴 종료 시 내 턴 시작 — 턴 종료 효과 리셋
       G.exileBanActive  = false;
       G.goldenAppleActive = false;
+      // [BUG-4 FIX] 수신 측에서도 G.turn을 동기화한다.
+      // 발신 측(endTurn 함수)이 G.turn++를 수행한 뒤 action.turn에 새 값을 포함해서 보내므로,
+      // 수신 측은 그 값으로 덮어써 양측 turn 카운트를 일치시킨다.
+      // action.turn이 없는 구버전 클라이언트와의 호환을 위해 undefined 시 ++로 폴백한다.
+      if (typeof action.turn === 'number' && action.turn > 0) {
+        G.turn = action.turn;
+      } else {
+        G.turn = (G.turn || 0) + 1;
+      }
       advancePhase('draw');
       log(`상대 턴 종료 — 내 턴 (드로우 단계)`, 'system');
       notify('내 턴! 드로우 버튼을 눌러 드로우하세요.');

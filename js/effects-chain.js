@@ -80,17 +80,22 @@ function beginChain(effect) {
   }
   // myRole 로그 (notify 대신 log로 — 화면에 겹치지 않게)
 
+  // [BUG-3 FIX] AI 컨텍스트 스왑 중 myRole이 임시 교체된 상태일 수 있으므로
+  // beginChain 시점의 발동자 역할(startRole)을 즉시 로컬 변수에 스냅샷으로 저장한다.
+  // priority 계산에는 전역 myRole 대신 이 스냅샷을 사용하여
+  // 신엔진(CONTROLLERS.ME/OPPONENT 기준)과의 귀속 불일치를 방지한다.
+  const startRole = myRole;
   const chainState = {
     chainId: nextChainId(),
     active: true,
-    startedBy: myRole,
+    startedBy: startRole,
     // 마지막 발동자의 상대에게 우선권
-    priority: getOpponentRole(myRole),
+    priority: getOpponentRole(startRole),
     passCount: 0,
-    links: [{ ...effect, by: myRole }],
+    links: [{ ...effect, by: startRole }],
   };
   activeChainState = chainState;
-  if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
+  if (effect.type === 'keyFetch') usedKeyFetchInChain[startRole] = true;
   log(`체인 1: ${effect.label} 발동`, 'mine');
 
   if (!roomRef) {
@@ -402,6 +407,24 @@ function openChainResponse() {
 function passChainPriority() {
   if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
 
+  // [BUG-2 FIX] 신엔진(HB_CHAIN_ENGINE)이 활성 체인을 관리하고 있으면
+  // 신엔진의 passChainResponse에 위임하여 passCount를 단일 위치에서 관리한다.
+  // 레거시 activeChainState와 신엔진 chainState의 passCount가 따로 카운트되면
+  // 이중 해결(양쪽 모두 passCount >= 2 판정)이나 무해결이 발생할 수 있다.
+  if (window.HB_CHAIN_ENGINE && typeof window.HB_CHAIN_ENGINE.hasActiveChain === 'function'
+      && window.HB_CHAIN_ENGINE.hasActiveChain()) {
+    // 신엔진 컨트롤러(me/opponent)로 변환: myRole은 host/guest이므로 매핑 불필요
+    // passChainResponse는 controller 인자 없이 호출하면 내부 priority를 passer로 씀
+    window.HB_CHAIN_ENGINE.passChainResponse();
+    // 신엔진이 resolve까지 처리했을 수 있으므로 레거시 상태도 동기화
+    const hbState = window.HB_CHAIN_ENGINE.getChainState();
+    if (!hbState.active) {
+      activeChainState = null;
+      renderChainActions();
+    }
+    return;
+  }
+
   const next = { ...activeChainState };
   next.passCount = (next.passCount || 0) + 1;
   next.priority = getOpponentRole(myRole);
@@ -417,7 +440,7 @@ function passChainPriority() {
     return;
   }
 
-    roomRef.child('chainState').set(next);
+  roomRef.child('chainState').set(next);
   syncClockRunState(next.priority);
 }
 
@@ -432,13 +455,16 @@ function addChainLink(effect, options = {}) {
     notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
     return;
   }
+  // [BUG-3 FIX] AI 컨텍스트 스왑 중 myRole이 임시 교체될 수 있으므로
+  // 링크 귀속(by)과 priority 계산에 사용할 역할을 즉시 스냅샷으로 고정한다.
+  const actorRole = myRole;
   const next = { ...activeChainState };
-  next.links = [...(next.links || []), { ...effect, by: myRole }];
+  next.links = [...(next.links || []), { ...effect, by: actorRole }];
   // 링크를 추가한 직후에는 상대에게 우선권
-  next.priority = getOpponentRole(myRole);
+  next.priority = getOpponentRole(actorRole);
   next.passCount = 0;
   activeChainState = next;
-  if (effect.type === 'keyFetch') usedKeyFetchInChain[myRole] = true;
+  if (effect.type === 'keyFetch') usedKeyFetchInChain[actorRole] = true;
   log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
 
   if (!roomRef) {

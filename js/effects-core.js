@@ -51,7 +51,13 @@ function endDeploy() {
     return;
   }
 
-  if (G.turn === 1 && myRole === 'host') {
+  // [BUG-5 FIX] 선공 1턴 공격 건너뜀 조건을 G.turn 단독 판별에서 보강한다.
+  // G.turn은 발신 측에서만 올라가고 수신 측은 BUG-4 수정 전까지 불일치 상태일 수 있다.
+  // 따라서 host 여부(선공 플레이어 = host 고정)와 함께 G.turn을 확인하되,
+  // G._hostFirstTurnDone 플래그로 재접속·sync 오차 시 오발동을 방지한다.
+  const isFirstHostTurn = myRole === 'host' && G.turn === 1 && !G._hostFirstTurnDone;
+  if (isFirstHostTurn) {
+    G._hostFirstTurnDone = true; // 이후 재진입 방지
     advancePhase('end');
     log('선공 1턴은 공격 단계를 건너뜁니다.', 'system');
     sendAction({ type: 'phaseEnd', phase: 'deploy_skip_attack' });
@@ -88,7 +94,8 @@ function endTurn() {
   isMyTurn = false;
   advancePhase('draw');
   log('턴 종료 — 상대 턴', 'mine');
-  sendAction({ type: 'endTurn' });
+  // [BUG-4 FIX] G.turn을 action payload에 포함해 수신 측이 동기화할 수 있게 한다.
+  sendAction({ type: 'endTurn', turn: G.turn });
   sendGameState();
   const opRole = myRole === 'host' ? 'guest' : 'host';
   if (roomRef) roomRef.child('roomPhase').set({ activePlayer: opRole, phase: 'draw' });

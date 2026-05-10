@@ -91,6 +91,8 @@ function _startNewGame() {
   const startCards = (myRole === 'host') ? 6 : 7;
   drawCards(startCards);
   isMyTurn = (myRole === 'host');
+  // [BUG-5 FIX] 게임 시작 시 선공 1턴 공격 건너뜀 플래그 초기화
+  G._hostFirstTurnDone = false;
 
   if (myRole === 'host') {
     advancePhase('deploy');
