@@ -189,6 +189,10 @@
       optional: raw.optional !== false,
       mandatory: raw.mandatory === true,
       oncePerTurn: cloneOncePerTurn(raw.oncePerTurn, id),
+      // 일반/마법/함정 카드가 패에서 "카드 발동"되는 경우 지불하는 공통 발동 코스트.
+      // 카드별 EffectDefinition이 명시적으로 true를 줄 때만 체인 엔진이 패 → 묘지를 처리한다.
+      cardActivationCost: raw.cardActivationCost === true || raw.activationCost === true
+        || !!(raw.meta && (raw.meta.cardActivationCost === true || raw.meta.activationCost === true)),
 
       condition: normalizeCallable(raw.condition, noopCondition, 'condition', id),
       canResolve: normalizeCallable(raw.canResolve || raw.canApply || raw.playable, noopCondition, 'canResolve', id),

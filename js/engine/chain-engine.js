@@ -19,6 +19,7 @@
   });
   const TIMING = rules.TIMING || Object.freeze({ NONE: 'none', EITHER_TURN: 'eitherTurn' });
   const PHASES = rules.PHASES || Object.freeze({ DRAW: 'draw', DEPLOY: 'deploy', BATTLE: 'battle', END: 'end' });
+  const ZONES = rules.ZONES || Object.freeze({ HAND: 'hand', PUBLIC_HAND: 'publicHand', GRAVE: 'grave' });
 
   const definition = global.HB_EFFECT_DEFINITION;
   if (!definition) {
@@ -58,6 +59,19 @@
     if (typeof G !== 'undefined') return G;
     if (global.G) return global.G;
     return null;
+  }
+
+  function getCardDatabase() {
+    // eslint-disable-next-line no-undef
+    if (typeof CARDS !== 'undefined' && CARDS) return CARDS;
+    return global.CARDS || null;
+  }
+
+  function getCardDef(cardOrId) {
+    if (!cardOrId) return null;
+    const id = typeof cardOrId === 'string' ? cardOrId : (cardOrId.id || cardOrId.cardId || cardOrId.name || '');
+    const cards = getCardDatabase();
+    return cards && id ? (cards[id] || null) : (typeof cardOrId === 'object' ? cardOrId : null);
   }
 
   function resolveGameState(gameState) {
@@ -265,6 +279,53 @@
     }
 
     return makeOk({ effect, ctx });
+  }
+
+  function isCardActivationCostEffect(ctx, effect) {
+    if (!effect || effect.cardActivationCost !== true) return false;
+    const sourceZone = ctx.sourceZone || (ctx.source && ctx.source.zone);
+    if (sourceZone !== ZONES.HAND && sourceZone !== ZONES.PUBLIC_HAND) return false;
+    const rawCard = (ctx && ctx.card) || null;
+    const card = rawCard && rawCard.cardType ? rawCard : getCardDef((rawCard && (rawCard.id || rawCard.cardId)) || effect.cardId);
+    return !!(card && ['normal', 'magic', 'trap'].indexOf(card.cardType) !== -1);
+  }
+
+  function payCardActivationCost(ctxOrOptions, effectOrId) {
+    let effect;
+    let ctx;
+    try {
+      effect = normalizeEffect(effectOrId || (ctxOrOptions && ctxOrOptions.effect));
+      ctx = normalizeContext(ctxOrOptions, effect);
+    } catch (err) {
+      return makeFail(err.message);
+    }
+
+    if (!isCardActivationCostEffect(ctx, effect)) {
+      return makeOk({ effect, ctx, paidCost: false, skippedCardActivationCost: true });
+    }
+
+    if (!ctx.move || typeof ctx.move.sendToGrave !== 'function') {
+      return makeFail('카드 발동 코스트를 처리할 이동 엔진이 없습니다.', { effectId: effect.id });
+    }
+
+    const sourceZone = ctx.sourceZone || (ctx.source && ctx.source.zone) || ZONES.HAND;
+    const result = ctx.move.sendToGrave({
+      gameState: ctx.gameState,
+      cardId: effect.cardId || (ctx.card && ctx.card.id),
+      controller: ctx.controller,
+      from: {
+        controller: ctx.sourceController || ctx.controller,
+        zone: sourceZone === ZONES.PUBLIC_HAND ? ZONES.PUBLIC_HAND : ZONES.HAND,
+        index: typeof ctx.sourceIndex === 'number' ? ctx.sourceIndex : null,
+      },
+      reason: 'cardActivationCost',
+      eventData: { tag: 'cardActivationCost', effectId: effect.id },
+    });
+
+    if (!resultOk(result)) {
+      return makeFail('카드 발동 코스트를 지불할 수 없습니다.', { effectId: effect.id, result });
+    }
+    return makeOk({ effect, ctx, paidCost: result, cardActivationCost: true });
   }
 
   function payCost(ctxOrOptions, effectOrId) {
@@ -657,6 +718,9 @@
     const can = canActivateEffect(ctx, effect);
     if (!can.ok) return can;
 
+    const cardActivationCost = payCardActivationCost(ctx, effect);
+    if (!cardActivationCost.ok) return cardActivationCost;
+
     const cost = payCost(ctx, effect);
     if (!cost.ok) return cost;
 
@@ -665,6 +729,7 @@
 
     const linkResult = createChainLink(ctx, effect, Object.assign({}, opts.activationData || {}, {
       paidCost: cost.paidCost,
+      cardActivationCost: cardActivationCost.cardActivationCost === true ? cardActivationCost.paidCost : false,
       targets: target.targets,
     }));
     if (!linkResult.ok) return linkResult;
@@ -678,10 +743,10 @@
     if (opts.autoResolve === true || opts.resolveImmediately === true) {
       // [BUG-6 FIX] 신엔진 내부 resolveChain(클로저 스코프)을 직접 호출 — 전역 함수와 혼용 금지
       const resolved = resolveChain(ctx);
-      return makeOk({ effect, ctx, chainLink: addResult.chainLink, paidCost: cost.paidCost, targets: target.targets, usage, response, resolved });
+      return makeOk({ effect, ctx, chainLink: addResult.chainLink, cardActivationCost, paidCost: cost.paidCost, targets: target.targets, usage, response, resolved });
     }
 
-    return makeOk({ effect, ctx, chainLink: addResult.chainLink, paidCost: cost.paidCost, targets: target.targets, usage, response, chain: getChainState() });
+    return makeOk({ effect, ctx, chainLink: addResult.chainLink, cardActivationCost, paidCost: cost.paidCost, targets: target.targets, usage, response, chain: getChainState() });
   }
 
   function resetUsageCounters() {
@@ -703,6 +768,7 @@
 
   const api = Object.freeze({
     canActivateEffect,
+    payCardActivationCost,
     payCost,
     selectTargets,
     createChainLink,
