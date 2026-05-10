@@ -45,6 +45,57 @@ module.exports = function runChainEngineTests() {
   assert(resolved.ok, `resolveChain failed: ${resolved.error}`);
   assertEqual(order.join(','), 'cost1,resolve2,resolve1', 'chain should resolve in LIFO order after cost payment');
 
+
+
+  const activationState = makeState({
+    myHand: [makeCard('펭귄!돌격!'), makeCard('꼬마 펭귄')],
+    myGrave: [],
+  });
+  ctx.G = activationState;
+  const activationCostEffect = ctx.HB_EFFECT_REGISTRY.registerEffect({
+    id: 'test-card-activation-cost-normal-card',
+    cardId: '펭귄!돌격!',
+    type: 'activation',
+    zone: 'hand',
+    cardActivationCost: true,
+    cost(costCtx) {
+      assert(!costCtx.gameState.myHand.some(card => card.id === '펭귄!돌격!'), 'card activation cost should be paid before additional cost');
+      return true;
+    },
+    resolve() { return true; },
+  }, { replace: true });
+  const activatedByCardCost = ctx.HB_CHAIN_ENGINE.activateEffect({
+    gameState: activationState,
+    controller: 'me',
+    sourceZone: 'hand',
+    sourceIndex: 0,
+    card: activationState.myHand[0],
+    effect: activationCostEffect,
+  }, activationCostEffect);
+  assert(activatedByCardCost.ok, `card activation cost failed: ${activatedByCardCost.error}`);
+  assert(!activationState.myHand.some(card => card.id === '펭귄!돌격!'), 'activated normal card should leave hand');
+  assert(activationState.myGrave.some(card => card.id === '펭귄!돌격!'), 'activated normal card should be sent to grave as cost');
+
+  const noActivationCostState = makeState({ myHand: [makeCard('펭귄 마을')], myGrave: [] });
+  ctx.G = noActivationCostState;
+  const revealEffect = ctx.HB_EFFECT_REGISTRY.registerEffect({
+    id: 'test-no-card-activation-cost-reveal',
+    cardId: '펭귄 마을',
+    type: 'activation',
+    zone: 'hand',
+    resolve() { return true; },
+  }, { replace: true });
+  const revealActivated = ctx.HB_CHAIN_ENGINE.activateEffect({
+    gameState: noActivationCostState,
+    controller: 'me',
+    sourceZone: 'hand',
+    sourceIndex: 0,
+    card: noActivationCostState.myHand[0],
+    effect: revealEffect,
+  }, revealEffect);
+  assert(revealActivated.ok, `no activation cost effect failed: ${revealActivated.error}`);
+  assert(noActivationCostState.myHand.some(card => card.id === '펭귄 마을'), 'effect without cardActivationCost should remain in hand');
+
   const procedure = ctx.HB_EFFECT_REGISTRY.registerEffect({
     id: 'test-chain-procedure',
     cardId: '꼬마 펭귄',
