@@ -1,11 +1,14 @@
 const tests = [
   ['card-move', require('./card-move.test')],
   ['chain-engine', require('./chain-engine.test')],
+  ['chain-network-safety', require('./chain-network-safety.test')],
+  ['ai-engine-actions', require('./ai-engine-actions.test')],
   ['trigger-queue', require('./trigger-queue.test')],
   ['field-zone', require('./field-zone.test')],
   ['effect-registry', require('./effect-registry.test')],
   ['legacy-cleanup', require('./legacy-cleanup.test')],
   ['final-gate', require('./final-gate.test')],
+  ['final-audit', require('./final-audit.test')],
 ];
 
 let failed = 0;
