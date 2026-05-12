@@ -15,6 +15,23 @@ function getOpponentRole(role) {
 function _onLocalChainStateChanged(data) {
   const wasActive = !!(activeChainState && activeChainState.active);
 
+  if (_isHbEngineChainState(data)) {
+    _importHbEngineChainState(data);
+    if (!data.active) {
+      activeChainState = null;
+      renderChainActions();
+      if (wasActive && pendingTriggerEffects.length > 0) setTimeout(flushTriggeredEffects, 0);
+      return;
+    }
+    activeChainState = data;
+    renderChainActions();
+    renderAll();
+    if (data.priority === myRole) {
+      notify(`체인 우선권: ${data.links?.length || 0}체인. 응답 또는 패스를 선택하세요.`);
+    }
+    return;
+  }
+
   if (!data || !data.active) {
     if (activeChainState && activeChainState.active) {
       activeChainState = null;
@@ -306,10 +323,21 @@ function collectChainOptions(aiCtx) {
       });
     }
 
-    // 2) 패의 카드 — 레지스트리 기반 (플레이어/AI 공용)
+    // 2) 신엔진 퀵 효과 — 플레이어는 이 경로로 수집한다.
+    // AI는 js/ai.js의 _collectAIEngineActions('chain')에서 opponent 컨트롤러로 별도 수집한다.
+    // 여기서 aiCtx 스왑 상태의 entry를 저장하면 복원 후 controller/source가 플레이어 쪽으로 틀어질 수 있다.
     const hand = aiCtx ? aiCtx.hand : G.myHand;
+    if (!aiCtx) {
+      _collectNewEngineChainOptionsForZone(options, hand, 'hand', aiCtx);
+      _collectNewEngineChainOptionsForZone(options, G.myField, 'field', aiCtx);
+      _collectNewEngineChainOptionsForZone(options, G.myGrave, 'grave', aiCtx);
+      _collectNewEngineChainOptionsForZone(options, G.myExile, 'exile', aiCtx);
+      _collectNewEngineFieldZoneChainOptions(options);
+    }
+
+    // 3) 패의 카드 — 레지스트리 기반 (플레이어/AI 공용)
     hand.forEach((handCard, handIdx) => {
-      // 16단계: EffectDefinition으로 이식된 카드는 레거시 체인 응답을 다시 띄우지 않는다.
+      // EffectDefinition으로 이식된 카드는 위 신엔진 공통 수집만 사용한다.
       if (window.HB_LEGACY_BRIDGE && typeof window.HB_LEGACY_BRIDGE.isNewEngineCard === 'function' && window.HB_LEGACY_BRIDGE.isNewEngineCard(handCard)) return;
       const entries = window.CHAIN_HAND_RESPONSES[handCard.id];
       if (!entries) return;
@@ -378,6 +406,85 @@ function registerChainFieldResponse(cardId, entries) {
   window.CHAIN_FIELD_RESPONSES[cardId] = entries;
 }
 
+function _isHbEngineChainState(data) {
+  return !!(data && data.hbEngine === true);
+}
+
+function _importHbEngineChainState(data) {
+  if (!_isHbEngineChainState(data)) return false;
+  if (window.HB_CHAIN_ENGINE && typeof window.HB_CHAIN_ENGINE.importChainState === 'function') {
+    window.HB_CHAIN_ENGINE.importChainState(data);
+  }
+  return true;
+}
+
+function _activateNewEngineChainEntry(entry, opts) {
+  const options = opts || {};
+  if (!entry || !window.HB_EFFECT_UI || typeof window.HB_EFFECT_UI.activateAvailableEffect !== 'function') return;
+  const result = window.HB_EFFECT_UI.activateAvailableEffect(entry, Object.assign({}, options, { autoResolve: false }));
+  if (result && result.ok === false) notify(result.error || '효과를 발동할 수 없습니다.');
+}
+
+function _collectNewEngineChainOptionsForZone(options, cards, zone, aiCtx) {
+  if (!window.HB_EFFECT_UI || typeof window.HB_EFFECT_UI.getAvailableEffects !== 'function') return;
+  const list = Array.isArray(cards) ? cards : [];
+  list.forEach((card, index) => {
+    if (!card || !card.id) return;
+    if (!window.HB_LEGACY_BRIDGE || typeof window.HB_LEGACY_BRIDGE.isNewEngineCard !== 'function' || !window.HB_LEGACY_BRIDGE.isNewEngineCard(card)) return;
+
+    const entries = window.HB_EFFECT_UI.getAvailableEffects({
+      gameState: G,
+      controller: 'me',
+      player: 'me',
+      card,
+      cardId: card.id,
+      zone,
+      sourceZone: zone,
+      sourceIndex: index,
+      skipChainCheck: !!aiCtx,
+    }).filter(entry => entry && entry.effect && entry.effect.type === 'quick');
+
+    entries.forEach(entry => {
+      options.push({
+        label: `[신엔진] ${card.name || card.id} ${entry.label || entry.effect.label || entry.effect.effectNo || ''}`,
+        cardId: card.id,
+        handIdx: zone === 'hand' ? index : -4,
+        fieldIdx: zone === 'field' ? index : -1,
+        zone,
+        hbEntry: entry,
+        activate: () => _activateNewEngineChainEntry(entry, { controller: 'me', player: 'me', ignorePriority: !!aiCtx }),
+      });
+    });
+  });
+}
+
+function _collectNewEngineFieldZoneChainOptions(options) {
+  if (!G.myFieldCard || !window.HB_EFFECT_UI || typeof window.HB_EFFECT_UI.getAvailableEffects !== 'function') return;
+  if (!window.HB_LEGACY_BRIDGE || typeof window.HB_LEGACY_BRIDGE.isNewEngineCard !== 'function' || !window.HB_LEGACY_BRIDGE.isNewEngineCard(G.myFieldCard)) return;
+  const entries = window.HB_EFFECT_UI.getAvailableEffects({
+    gameState: G,
+    controller: 'me',
+    player: 'me',
+    card: G.myFieldCard,
+    cardId: G.myFieldCard.id,
+    zone: 'fieldZone',
+    sourceZone: 'fieldZone',
+    sourceIndex: null,
+  }).filter(entry => entry && entry.effect && entry.effect.type === 'quick');
+
+  entries.forEach(entry => {
+    options.push({
+      label: `[신엔진/필드존] ${G.myFieldCard.name || G.myFieldCard.id} ${entry.label || ''}`,
+      cardId: G.myFieldCard.id,
+      handIdx: -5,
+      fieldIdx: -1,
+      zone: 'fieldZone',
+      hbEntry: entry,
+      activate: () => _activateNewEngineChainEntry(entry, { controller: 'me', player: 'me', ignorePriority: false }),
+    });
+  });
+}
+
 function openChainResponse() {
   if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
 
@@ -413,10 +520,11 @@ function passChainPriority() {
   // 이중 해결(양쪽 모두 passCount >= 2 판정)이나 무해결이 발생할 수 있다.
   if (window.HB_CHAIN_ENGINE && typeof window.HB_CHAIN_ENGINE.hasActiveChain === 'function'
       && window.HB_CHAIN_ENGINE.hasActiveChain()) {
-    // 신엔진 컨트롤러(me/opponent)로 변환: myRole은 host/guest이므로 매핑 불필요
-    // passChainResponse는 controller 인자 없이 호출하면 내부 priority를 passer로 씀
-    window.HB_CHAIN_ENGINE.passChainResponse();
-    // 신엔진이 resolve까지 처리했을 수 있으므로 레거시 상태도 동기화
+    const controller = (typeof window.HB_CHAIN_ENGINE.roleToController === 'function')
+      ? window.HB_CHAIN_ENGINE.roleToController(myRole)
+      : 'me';
+    const result = window.HB_CHAIN_ENGINE.passChainResponse(controller);
+    if (result && result.ok === false) notify(result.error || '체인 패스에 실패했습니다.');
     const hbState = window.HB_CHAIN_ENGINE.getChainState();
     if (!hbState.active) {
       activeChainState = null;

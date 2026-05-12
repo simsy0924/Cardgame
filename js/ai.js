@@ -16,6 +16,7 @@ window.AI = {
   role:      'guest',
   opDeck:    [],
   deckTheme: '',
+  keyDeck:   [],
   turnToken: 0,
   chain:     { handling: false },
   pendingChainTimers: [],
@@ -40,6 +41,7 @@ function _resetAI() {
   window.AI.turnToken = 0;
   window.AI.chain     = { handling: false };
   window.AI.usedFx    = {};
+  window.AI.keyDeck   = [];
   window.AI.gameLog   = [];
   (window.AI.pendingChainTimers || []).forEach(clearTimeout);
   window.AI.pendingChainTimers = [];
@@ -68,11 +70,13 @@ function _buildAIDeck() {
   }
 
   var base = [];
+  var keyBase = [];
   if (source) {
     if (source.main) base = base.concat(source.main);
-    if (source.key)  base = base.concat(source.key);
+    if (source.key)  keyBase = keyBase.concat(source.key);
   }
-  base = base.filter(function(id) { return !!CARDS[id]; });
+  base = base.filter(function(id) { return !!CARDS[id] && !CARDS[id].isKeyCard; });
+  keyBase = keyBase.filter(function(id) { return !!CARDS[id] && CARDS[id].isKeyCard; });
 
   if (!base.length) {
     base = Object.keys(CARDS).filter(function(id) {
@@ -83,7 +87,8 @@ function _buildAIDeck() {
   }
 
   window.AI.deckTheme = pickedTheme;
-  var pads = ['구사일생','눈에는 눈','출입통제'].filter(function(id) { return !!CARDS[id]; });
+  window.AI.keyDeck = keyBase.map(function(id) { return { id: id, name: CARDS[id].name }; });
+  var pads = ['구사일생','눈에는 눈','출입통제'].filter(function(id) { return !!CARDS[id] && !CARDS[id].isKeyCard; });
   var i = 0;
   while (base.length < 40 && base.length && i < 120) { base.push(base[i++ % base.length]); }
   while (base.length < 40 && pads.length) { base.push(pads[i++ % pads.length]); }
@@ -155,7 +160,7 @@ function _discardOppHand(n, reason) {
   if (!window.AI.gameOver && G.opHand.length === 0) {
     window.AI.gameOver = true;
     log('🤖 AI 손패 0장!', 'system');
-    setTimeout(function() { showGameOver(false); }, 200);
+    setTimeout(function() { showGameOver(true); }, 200);
   }
 }
 
@@ -215,6 +220,7 @@ function _buildGameContext() {
       grave:      G.opGrave.map(function(c) { return { id: c.id, name: c.name }; }),
       exile:      G.opExile.map(function(c) { return { id: c.id, name: c.name }; }),
       fieldCard:  G.opFieldCard ? { id: G.opFieldCard.id, name: G.opFieldCard.name } : null,
+      keyDeck:    (G.opKeyDeck || []).map(function(c) { return { id: c.id, name: c.name }; }),
       deckCount:  window.AI.opDeck.length,
       fieldSlots: 5 + (G.opExtraSlots || 0),
     },
@@ -258,12 +264,26 @@ function _buildGameContext() {
 // 로컬에서 유효한 행동 목록을 먼저 계산 → Groq는 그 중에서만 고른다.
 
 /** 소환 가능한 몬스터 목록 (슬롯·cardType 조건 로컬 검증) */
+function _isNewEngineCardId(cardId) {
+  try {
+    if (window.HB_LEGACY_BRIDGE && typeof window.HB_LEGACY_BRIDGE.isNewEngineCard === 'function') {
+      return !!window.HB_LEGACY_BRIDGE.isNewEngineCard(cardId);
+    }
+    if (window.HB_EFFECT_UI && typeof window.HB_EFFECT_UI.hasRegisteredEffects === 'function') {
+      return !!window.HB_EFFECT_UI.hasRegisteredEffects(cardId);
+    }
+  } catch (_) {}
+  return false;
+}
+
 function _validSummons() {
   var slotsLeft = (5 + (G.opExtraSlots || 0)) - G.opField.length;
   if (slotsLeft <= 0) return [];
   return G.opHand
     .map(function(c, i) { return { idx: i, id: c.id, cd: CARDS[c.id] || {} }; })
-    .filter(function(x) { return x.cd.cardType === 'monster'; })
+    // 신엔진 등록 카드의 소환/발동은 EffectDefinition으로만 판단한다.
+    // 여기서는 아직 이식되지 않은 레거시 일반 몬스터만 최후 폴백으로 직접 소환한다.
+    .filter(function(x) { return x.cd.cardType === 'monster' && !_isNewEngineCardId(x.id); })
     .slice(0, slotsLeft) // 슬롯 초과 소환 방지
     .map(function(x) { return { action: 'summonFromHand', cardId: x.id, atk: x.cd.atk || 0 }; });
 }
@@ -290,6 +310,184 @@ function _validAttacks() {
 /** Groq 없이 로컬 로직만으로 소환 계획 (ATK 높은 순) */
 function _bestDeployPlan() {
   return _validSummons().sort(function(a,b){ return b.atk - a.atk; });
+}
+
+
+// ─── EffectDefinition 기반 AI 행동 계산 ─────────────────────
+// AI도 플레이어와 같은 신엔진을 사용한다. 직접 G.opField.push로 "막 소환"하지 않고,
+// getAvailableEffects → activateEffect → 체인/절차/유발 처리 경로를 탄다.
+
+function _engineReady() {
+  return !!(window.HB_EFFECT_UI && typeof window.HB_EFFECT_UI.getAvailableEffects === 'function'
+    && window.HB_CHAIN_ENGINE && typeof window.HB_CHAIN_ENGINE.activateEffect === 'function'
+    && window.HB_ZONE_ACCESS);
+}
+
+function _aiController() { return 'opponent'; }
+function _playerController() { return 'me'; }
+
+function _aiZoneArray(zone) {
+  if (window.HB_ZONE_ACCESS && typeof window.HB_ZONE_ACCESS.getZoneArray === 'function') {
+    try { return window.HB_ZONE_ACCESS.getZoneArray(G, _aiController(), zone); } catch (_) {}
+  }
+  if (zone === 'hand') return G.opHand || [];
+  if (zone === 'field') return G.opField || [];
+  if (zone === 'grave') return G.opGrave || [];
+  if (zone === 'exile') return G.opExile || [];
+  if (zone === 'keyDeck') return G.opKeyDeck || [];
+  if (zone === 'fieldZone') return G.opFieldCard ? [G.opFieldCard] : [];
+  return [];
+}
+
+function _lastOpponentChainLinkForAI() {
+  try {
+    var links = window.HB_CHAIN_ENGINE && window.HB_CHAIN_ENGINE.getChainLinks
+      ? window.HB_CHAIN_ENGINE.getChainLinks()
+      : [];
+    for (var i = links.length - 1; i >= 0; i--) {
+      if (links[i] && links[i].controller !== _aiController()) return links[i];
+    }
+  } catch (_) {}
+  if (activeChainState && activeChainState.links) {
+    for (var j = activeChainState.links.length - 1; j >= 0; j--) {
+      var l = activeChainState.links[j];
+      if (l && l.by !== window.AI.role) return l;
+    }
+  }
+  return null;
+}
+
+function _effectType(effect) { return effect && String(effect.type || ''); }
+function _effectTags(effect) { return (effect && Array.isArray(effect.tags)) ? effect.tags : []; }
+function _hasTag(effect, tag) { return _effectTags(effect).indexOf(tag) !== -1; }
+function _hasAnyTag(effect, list) { return list.some(function(t) { return _hasTag(effect, t); }); }
+
+function _scoreAIEngineEntry(entry, mode) {
+  var effect = entry.effect || {};
+  var score = 10;
+  var tags = _effectTags(effect);
+  var text = String(effect.text || '');
+
+  if (mode === 'chain') {
+    if (_hasTag(effect, 'negateEffect') || /무효/.test(text)) score += 120;
+    if (/변형|바꾼다|적용한다/.test(text)) score += 95;
+    if (_hasAnyTag(effect, ['keyDeckSummon', 'deckSummon', 'handSummon', 'graveSummon', 'exileSummon'])) score += 70;
+  } else {
+    if (effect.summonProcedure || (effect.meta && effect.meta.summonProcedure)) score += 85;
+    if (_hasAnyTag(effect, ['keyDeckSummon', 'deckSummon', 'graveSummon', 'exileSummon'])) score += 80;
+    if (_hasTag(effect, 'handSummon')) score += 65;
+    if (_hasTag(effect, 'deckSearch')) score += 60;
+    if (_hasTag(effect, 'draw') || /드로우/.test(text)) score += 55;
+  }
+
+  if (/상대.*묘지|상대.*제외|상대.*무효|상대 필드/.test(text)) score += 45;
+  if (/패를.*버린다/.test(text) && !/상대/.test(text)) score -= 12;
+  if (tags.indexOf('costDiscard') !== -1 || tags.indexOf('costBanish') !== -1) score -= 8;
+
+  // 필드 슬롯이 부족하면 소환 계열 우선도를 낮춘다.
+  if ((G.opField || []).length >= (5 + (G.opExtraSlots || 0))
+      && _hasAnyTag(effect, ['keyDeckSummon', 'deckSummon', 'handSummon', 'graveSummon', 'exileSummon'])) {
+    score -= 120;
+  }
+  return score;
+}
+
+function _collectAIEngineActions(mode) {
+  if (!_engineReady()) return [];
+  var actions = [];
+  var zones = ['hand', 'field', 'grave', 'exile', 'keyDeck', 'fieldZone'];
+  var chainLink = mode === 'chain' ? _lastOpponentChainLinkForAI() : null;
+
+  zones.forEach(function(zone) {
+    var cards = _aiZoneArray(zone);
+    cards.forEach(function(card, index) {
+      if (!card || !card.id || !_isNewEngineCardId(card.id)) return;
+      var query = {
+        gameState: G,
+        player: _aiController(),
+        controller: _aiController(),
+        card: CARDS[card.id] || card,
+        cardId: card.id,
+        zone: zone,
+        sourceZone: zone,
+        sourceIndex: zone === 'fieldZone' ? null : index,
+        chainLink: chainLink,
+        activationData: { source: 'ai-engine' },
+      };
+      var entries = [];
+      try { entries = window.HB_EFFECT_UI.getAvailableEffects(query) || []; }
+      catch (err) { console.warn('[AI] 신엔진 효과 후보 수집 실패:', card.id, err); }
+
+      entries.forEach(function(entry) {
+        if (!entry || !entry.effect) return;
+        var t = _effectType(entry.effect);
+        if (mode === 'chain' && t !== 'quick') return;
+        if (mode !== 'chain' && activeChainState && activeChainState.active) return;
+        var score = _scoreAIEngineEntry(entry, mode);
+        if (score <= 0) return;
+        actions.push({
+          entry: entry,
+          cardId: card.id,
+          cardName: card.name || (CARDS[card.id] && CARDS[card.id].name) || card.id,
+          zone: zone,
+          sourceIndex: query.sourceIndex,
+          score: score,
+          label: entry.label || (entry.effect && entry.effect.text) || card.id,
+        });
+      });
+    });
+  });
+
+  actions.sort(function(a, b) { return b.score - a.score; });
+  return actions;
+}
+
+function _activateAIEngineAction(action) {
+  if (!action || !action.entry || !window.HB_EFFECT_UI) return false;
+  var opts = {
+    gameState: G,
+    player: _aiController(),
+    controller: _aiController(),
+    card: action.entry.card || CARDS[action.cardId] || { id: action.cardId, name: action.cardName },
+    cardId: action.cardId,
+    zone: action.zone,
+    sourceZone: action.zone,
+    sourceIndex: action.sourceIndex,
+    chainLink: _lastOpponentChainLinkForAI(),
+    activationData: { source: 'ai-engine', ai: true },
+    autoResolve: false,
+    resolveImmediately: false,
+  };
+
+  try {
+    var result = window.HB_EFFECT_UI.activateAvailableEffect(action.entry, opts);
+    if (result && result.ok === false) {
+      console.warn('[AI] 효과 발동 실패:', action.cardId, result.error || result);
+      return false;
+    }
+    log('🤖 효과 발동: ' + action.cardName + ' — ' + String(action.label).replace(/\s+/g, ' ').slice(0, 50), 'opponent');
+    _logAction('ai', 'effect', action.cardId + ':' + (action.entry.effect && action.entry.effect.effectNo));
+    return true;
+  } catch (err) {
+    console.warn('[AI] 효과 발동 오류:', action.cardId, err);
+    return false;
+  }
+}
+
+function _activeHbChain() {
+  return !!(window.HB_CHAIN_ENGINE && window.HB_CHAIN_ENGINE.hasActiveChain && window.HB_CHAIN_ENGINE.hasActiveChain());
+}
+
+async function _waitForChainToFinish(token, maxMs) {
+  var start = Date.now();
+  while (window.AI.active && token === window.AI.turnToken && activeChainState && activeChainState.active) {
+    if (Date.now() - start > (maxMs || 30000)) {
+      notify('AI 체인 응답 대기 중입니다. 패스 버튼을 눌러 진행할 수 있습니다.');
+      return false;
+    }
+    await _sleep(150);
+  }
+  return true;
 }
 
 // 공통 시스템 프롬프트
@@ -444,6 +642,11 @@ function _bestAttackPlan() {
 // ─── AI 체인 응답 ────────────────────────────────────────────
 
 function _aiPassChain() {
+  if (activeChainState && activeChainState.hbEngine && window.HB_CHAIN_ENGINE
+      && typeof window.HB_CHAIN_ENGINE.passChainResponse === 'function') {
+    window.HB_CHAIN_ENGINE.passChainResponse(_aiController());
+    return;
+  }
   var prev = myRole;
   myRole = window.AI.role;
   try { if (typeof passChainPriority === 'function') passChainPriority(); }
@@ -461,12 +664,15 @@ async function _runAIChainWindow() {
     await _sleep(300);
     if (!activeChainState || !activeChainState.active || activeChainState.priority !== window.AI.role) return;
 
+    var engineOptions = _collectAIEngineActions('chain');
+    var legacyOptions = [];
     var aiCtx = {
       role: window.AI.role, hand: G.opHand, field: G.opField,
       grave: G.opGrave, exile: G.opExile, keyDeck: G.opKeyDeck||[],
       usedFx: window.AI.usedFx, isMyTurn: false,
     };
-    var options = typeof collectChainOptions === 'function' ? collectChainOptions(aiCtx) : [];
+    if (typeof collectChainOptions === 'function') legacyOptions = collectChainOptions(aiCtx) || [];
+    var options = engineOptions.concat(legacyOptions);
 
     if (!options.length) { _aiPassChain(); return; }
 
@@ -475,6 +681,7 @@ async function _runAIChainWindow() {
 
     if (decision.action === 'activate') {
       var pick = options[decision.index];
+      if (pick && pick.entry) { if (_activateAIEngineAction(pick)) return; }
       if (pick && typeof pick.activate === 'function') { pick.activate(); return; }
     }
     _aiPassChain();
@@ -515,47 +722,47 @@ async function _runAITurn() {
     _emit({ type: 'phaseChange', phase: 'deploy' });
     await _sleep(300);
 
-    // ── Deploy: 소환 1장마다 Groq에 재질문 ──
+    // ── Deploy: EffectDefinition 효과를 우선 사용 ──
     var deployedCount = 0;
-    var MAX_SUMMONS = 5; // 무한루프 방지
-    while (deployedCount < MAX_SUMMONS) {
+    var effectActionCount = 0;
+    var MAX_ACTIONS = 6; // 무한루프 방지
+    while (effectActionCount < MAX_ACTIONS) {
       if (token !== window.AI.turnToken) return;
-      var summonOptions = _validSummons();
-      if (!summonOptions.length) break; // 소환 가능한 카드 없음
+      if (activeChainState && activeChainState.active) {
+        await _waitForChainToFinish(token, 30000);
+        if (activeChainState && activeChainState.active) return;
+      }
 
-      // Groq에 다음 소환 1장 결정 요청
-      var summonDecision = await _groqNextSummon(summonOptions);
-      if (summonDecision.action === 'stop') break; // Groq가 그만하라고 판단
+      var engineActions = _collectAIEngineActions('deploy');
+      if (!engineActions.length) break;
 
-      var chosen = summonOptions[summonDecision.index];
-      if (!chosen) break;
+      var pickedAction = engineActions[0];
+      if (!_activateAIEngineAction(pickedAction)) break;
+      effectActionCount++;
+      if (_hasAnyTag(pickedAction.entry.effect, ['handSummon','deckSummon','keyDeckSummon','graveSummon','exileSummon'])
+          || pickedAction.entry.effect.summonProcedure) deployedCount++;
 
-      _summonFromOppHand(chosen.cardId);
-      _logAction('ai', 'summon', chosen.cardId);
-      deployedCount++;
-
-      // ── 버그 1 수정: 소환 유발 효과 트리거 ──────────────────
-      // handleOpponentAction({type:'summon'})이 onSummonOpponent()를 호출하는데,
-      // onSummonOpponent 내부에서 THEME_EFFECT_HANDLERS[theme].onSummoned()를 실행한다.
-      // _summonFromOppHand가 이미 _emit({type:'summon'})을 통해 이 경로를 실행하므로
-      // 추가 호출 불필요. 단, AI의 덱 효과(소환 시 덱에서 카드 꺼내기 등)는
-      // usedFx를 AI 컨텍스트로 교체해야 한다.
-      var _prevMarkFx = window.markEffectUsed;
-      window.markEffectUsed = function(id, n) {
-        window.AI.usedFx[id + '_' + n] = 1;
-      };
-      window.markEffectUsed = _prevMarkFx; // 즉시 복원 (체인 내에서만 교체)
-
+      if (activeChainState && activeChainState.active) {
+        await _waitForChainToFinish(token, 30000);
+        if (activeChainState && activeChainState.active) return;
+      }
       await _sleep(300);
     }
-    // 폴백: Groq가 아무것도 안 소환했고 소환 가능한 카드가 있으면 ATK 높은 것 소환
-    if (deployedCount === 0) {
-      var fallbackDeploy = _bestDeployPlan();
-      for (var fd = 0; fd < fallbackDeploy.length; fd++) {
+
+    // 폴백: 신엔진에 아직 이식되지 않은 레거시 몬스터만 직접 소환
+    if (deployedCount === 0 && effectActionCount === 0) {
+      var summonOptions = _validSummons();
+      while (summonOptions.length && deployedCount < 5) {
         if (token !== window.AI.turnToken) return;
-        _summonFromOppHand(fallbackDeploy[fd].cardId);
-        _logAction('ai', 'summon', fallbackDeploy[fd].cardId);
+        var summonDecision = await _groqNextSummon(summonOptions);
+        if (summonDecision.action === 'stop') break;
+        var chosen = summonOptions[summonDecision.index];
+        if (!chosen) break;
+        _summonFromOppHand(chosen.cardId);
+        _logAction('ai', 'summon', chosen.cardId);
+        deployedCount++;
         await _sleep(300);
+        summonOptions = _validSummons();
       }
     }
 
@@ -710,7 +917,7 @@ window.startAIMode = function() {
       _resetAI();
       window.AI.opDeck = _buildAIDeck();
       G.opHand = []; G.opField = []; G.opGrave = []; G.opExile = [];
-      G.opFieldCard = null; G.opKeyDeck = [];
+      G.opFieldCard = null; G.opKeyDeck = (window.AI.keyDeck || []).map(function(c) { return { id: c.id, name: c.name }; });
       G.opDeckCount = window.AI.opDeck.length;
 
       // 선공(host)은 6장, 후공(guest)은 7장
@@ -766,6 +973,18 @@ window.startAIMode = function() {
     };
   }
 
+  // 신엔진 체인에서 플레이어가 패스해 AI에게 우선권이 넘어오면 자동 응답/패스한다.
+  var origPassChainPriority = window.passChainPriority;
+  if (typeof origPassChainPriority === 'function') {
+    window.passChainPriority = function() {
+      var result = origPassChainPriority.apply(this, arguments);
+      if (window.AI.active && activeChainState && activeChainState.active && activeChainState.priority === window.AI.role) {
+        setTimeout(_runAIChainWindow, 150);
+      }
+      return result;
+    };
+  }
+
   // ── 버그 3 수정: AI 패배 감지 ──────────────────────────────
   // 전투/직접공격으로 AI 손패가 0이 되면 showGameOver를 호출한다.
   // handleOpponentAction이 전투 결과로 G.opHand를 줄인 후
@@ -779,12 +998,12 @@ window.startAIMode = function() {
       if (G.opHand && G.opHand.length === 0 && (G.opField.length > 0 || window.AI.opDeck.length > 0)) {
         // AI 손패 0장 → 플레이어 승리
         window.AI.gameOver = true;
-        setTimeout(function() { showGameOver(false); }, 100); // false = 플레이어 승리
+        setTimeout(function() { showGameOver(true); }, 100); // true = 플레이어 승리
       }
       if (G.myHand && G.myHand.length === 0 && !window.AI.gameOver) {
         // 플레이어 손패 0장 → AI 승리
         window.AI.gameOver = true;
-        setTimeout(function() { showGameOver(true); }, 100); // true = 상대(AI) 승리
+        setTimeout(function() { showGameOver(false); }, 100); // false = 플레이어 패배(AI 승리)
       }
     };
   }
