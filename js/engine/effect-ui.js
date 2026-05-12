@@ -243,7 +243,7 @@
 
     let effects;
     if (zone === ZONES.FIELD_ZONE && global.HB_FIELD_ZONE && typeof global.HB_FIELD_ZONE.getFieldZoneEffects === 'function') {
-      effects = controller === CONTROLLERS.ME ? global.HB_FIELD_ZONE.getFieldZoneEffects(controller, state) : [];
+      effects = global.HB_FIELD_ZONE.getFieldZoneEffects(controller, state);
     } else {
       effects = registry.getEffectsByCardAndZone(cardId, zone);
     }
@@ -289,6 +289,9 @@
     }
 
     if (!chain || typeof chain.activateEffect !== 'function') return makeFail('HB_CHAIN_ENGINE.activateEffect를 사용할 수 없습니다.');
+    // 현재 신엔진 체인은 레거시 activeChainState/Firebase 체인 UI와 완전히 연결되어 있지 않다.
+    // 버튼 발동이 체인에만 올라가고 해결되지 않으면 턴제약만 소모되고 실제 효과가 적용되지 않는다.
+    // UI에서 직접 누른 효과는 기본적으로 즉시 해결하고, 이후 체인 UI 통합 단계에서 opts.autoResolve=false로 되돌릴 수 있게 한다.
     return chain.activateEffect({
       gameState: ctx.gameState,
       controller: ctx.controller,
@@ -299,6 +302,9 @@
       sourceIndex: ctx.sourceIndex,
       effect,
       activationData: Object.assign({}, opts.activationData || {}, { source: 'effect-ui' }),
+      ignorePriority: opts.ignorePriority === true,
+      autoResolve: opts.autoResolve === true,
+      resolveImmediately: opts.resolveImmediately === true,
     });
   }
 
