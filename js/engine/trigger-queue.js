@@ -472,6 +472,53 @@
     return Object.freeze({ index, trigger: optionalQueue[index] });
   }
 
+  function removeOptionalTrigger(selection, reason) {
+    const found = findQueuedOptional(selection);
+    if (!found) return makeFail('제거할 optional trigger를 찾지 못했습니다.', { selection });
+    optionalQueue.splice(found.index, 1);
+    remember(found.trigger, reason || 'removeOptional');
+    return makeOk({ trigger: found.trigger, reason: reason || 'removeOptional' });
+  }
+
+  function processNonLocalOptionalTriggers(gameState, options) {
+    const opts = options || {};
+    if (opts.showOpponentOptional === true || opts.keepRemoteOptional === true) {
+      return makeOk({ skipped: [], activated: [], kept: true });
+    }
+
+    const remote = optionalQueue.filter(trigger => trigger && trigger.controller !== CONTROLLERS.ME);
+    const skipped = [];
+    const activated = [];
+    let activatedOne = false;
+
+    remote.forEach(trigger => {
+      let shouldActivate = false;
+      if (!activatedOne && global.AI && global.AI.active && trigger.controller === CONTROLLERS.OPPONENT) {
+        if (typeof global._aiShouldUseOptionalTrigger === 'function') {
+          try { shouldActivate = !!global._aiShouldUseOptionalTrigger(triggerSummary(trigger), trigger, gameState); }
+          catch (_) { shouldActivate = false; }
+        }
+      }
+
+      if (shouldActivate) {
+        removeOptionalTrigger(trigger, 'aiSelectOptional');
+        const activation = activateTriggerEntry(trigger, Object.assign({}, opts, {
+          activationData: Object.assign({}, opts.activationData || {}, { source: 'ai-optional-trigger' }),
+          autoResolve: false,
+          resolveImmediately: false,
+        }));
+        activated.push(activation);
+        activatedOne = true;
+        return;
+      }
+
+      const removed = removeOptionalTrigger(trigger, 'skipRemoteOptional');
+      skipped.push(removed.ok ? removed.trigger : trigger);
+    });
+
+    return makeOk({ skipped: Object.freeze(skipped), activated: Object.freeze(activated), count: remote.length });
+  }
+
   function activateTriggerEntry(trigger, options) {
     if (!trigger) return makeFail('trigger가 없습니다.');
     const chain = global.HB_CHAIN_ENGINE || (global.HB_ENGINE && global.HB_ENGINE.chain);
@@ -490,6 +537,8 @@
         mandatory: trigger.mandatory,
         optional: trigger.optional,
       }),
+      // 유발 효과 선택 버튼도 기본 즉시 해결.
+      // false를 명시한 테스트/후속 체인 통합 코드만 체인에 남기도록 한다.
       autoResolve: opts.autoResolve === true,
       resolveImmediately: opts.resolveImmediately === true,
     });
@@ -526,19 +575,22 @@
       else mandatoryFailed.push(activation);
     }
 
-    const players = [CONTROLLERS.ME, CONTROLLERS.OPPONENT];
+    const nonLocalOptionalResult = processNonLocalOptionalTriggers(state, opts);
+
+    const players = opts.showOpponentOptional === true ? [CONTROLLERS.ME, CONTROLLERS.OPPONENT] : [CONTROLLERS.ME];
     const optionalChoices = players
       .map(player => showOptionalTriggerChoices(player, optionalQueue))
       .filter(result => result.count > 0);
 
     if (opts.autoShowAllOptional === true && optionalChoices.length === 0 && optionalQueue.length > 0) {
-      optionalChoices.push(showOptionalTriggerChoices(null, optionalQueue));
+      optionalChoices.push(showOptionalTriggerChoices(CONTROLLERS.ME, optionalQueue));
     }
 
     return makeOk({
       gameState: state,
       mandatoryActivated: Object.freeze(mandatoryActivated),
       mandatoryFailed: Object.freeze(mandatoryFailed),
+      nonLocalOptionalResult,
       optionalChoices: Object.freeze(optionalChoices),
       pendingOptional: optionalQueue.slice(),
       mandatoryCount: mandatoryActivated.length,
@@ -602,6 +654,7 @@
     enqueueOptionalTriggers,
     showOptionalTriggerChoices,
     activateSelectedTrigger,
+    removeOptionalTrigger,
     processTriggerQueue,
 
     // event-bus.js가 자동 전달할 때 사용하는 이름.

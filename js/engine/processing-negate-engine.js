@@ -23,6 +23,22 @@
     throw new Error('[processing-negate-engine] HB_EFFECT_CONTEXT가 필요합니다. effect-context.js를 먼저 로드하세요.');
   }
 
+  const zoneAccess = global.HB_ZONE_ACCESS;
+  if (!zoneAccess) {
+    throw new Error('[processing-negate-engine] HB_ZONE_ACCESS가 필요합니다. zone-access.js를 먼저 로드하세요.');
+  }
+
+  const CONTROLLERS = (zoneAccess && zoneAccess.CONTROLLERS) || Object.freeze({ ME: 'me', OPPONENT: 'opponent' });
+  const ZONES = (global.HB_RULES && global.HB_RULES.ZONES) || Object.freeze({
+    HAND: 'hand',
+    PUBLIC_HAND: 'publicHand',
+    FIELD: 'field',
+    FIELD_ZONE: 'fieldZone',
+    GRAVE: 'grave',
+    EXILE: 'exile',
+    KEY_DECK: 'keyDeck',
+  });
+
   const REQUIRED_NEGATABLE_TAGS = Object.freeze([
     'deckSearch',
     'monsterSummon',
@@ -58,6 +74,92 @@
       result.push(text);
     });
     return result;
+  }
+
+  function getCardId(cardOrId) {
+    if (!cardOrId) return '';
+    if (typeof cardOrId === 'string') return cardOrId;
+    return cardOrId.id || cardOrId.cardId || cardOrId.name || '';
+  }
+
+  function candidateZones(candidate) {
+    const zones = uniqueStrings(candidate && (candidate.zones && candidate.zones.length ? candidate.zones : candidate.zone));
+    return zones.length ? zones : [ZONES.FIELD, ZONES.FIELD_ZONE];
+  }
+
+  function cardMatchesCandidate(card, candidate) {
+    if (!card || !candidate || !candidate.cardId) return false;
+    const want = String(candidate.cardId);
+    return [card.id, card.cardId, card.name, card.originalId]
+      .filter(value => value != null && value !== '')
+      .map(String)
+      .indexOf(want) !== -1;
+  }
+
+  function makeCandidateLocation(controller, zone, index, card) {
+    return Object.freeze({
+      controller,
+      zone,
+      index: typeof index === 'number' ? index : null,
+      card,
+    });
+  }
+
+  function attachCandidateLocation(candidate, location) {
+    return Object.assign({}, candidate, {
+      controller: location.controller,
+      sourceController: location.controller,
+      sourceZone: location.zone,
+      sourceIndex: location.index,
+      source: location,
+      card: location.card,
+    });
+  }
+
+  function findCandidateSourceLocations(candidate, gameState) {
+    const state = gameState || getDefaultGameState();
+    const locations = [];
+    const seen = new Set();
+    const zones = candidateZones(candidate);
+    const controllers = [CONTROLLERS.ME, CONTROLLERS.OPPONENT];
+
+    controllers.forEach(controller => {
+      zones.forEach(rawZone => {
+        let zone;
+        try { zone = zoneAccess.normalizeZone(rawZone); }
+        catch (_) { return; }
+
+        if (zone === ZONES.FIELD_ZONE) {
+          let card = null;
+          try { card = zoneAccess.getFieldZoneCard(state, controller); }
+          catch (_) { card = null; }
+          if (!cardMatchesCandidate(card, candidate)) return;
+          const key = `${controller}:${zone}:fieldZone:${getCardId(card)}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          locations.push(makeCandidateLocation(controller, zone, null, card));
+          return;
+        }
+
+        let arr;
+        try { arr = zoneAccess.getZoneArray(state, controller, zone); }
+        catch (_) { return; }
+        arr.forEach((card, index) => {
+          if (!cardMatchesCandidate(card, candidate)) return;
+          const key = `${controller}:${zone}:${index}:${getCardId(card)}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          locations.push(makeCandidateLocation(controller, zone, index, card));
+        });
+      });
+    });
+
+    return locations;
+  }
+
+  function isLocalController(controller) {
+    try { return zoneAccess.normalizeController(controller || CONTROLLERS.ME) === CONTROLLERS.ME; }
+    catch (_) { return false; }
   }
 
   function intersects(a, b) {
@@ -118,13 +220,23 @@
 
   function createCandidateContext(candidate, chainLink, baseCtx, gameState) {
     const controller = (candidate && candidate.controller)
+      || (candidate && candidate.sourceController)
       || (baseCtx && baseCtx.controller)
       || (chainLink && chainLink.controller)
-      || 'me';
+      || CONTROLLERS.ME;
+
+    const source = (candidate && candidate.source) || {
+      controller: candidate && (candidate.sourceController || candidate.controller || controller),
+      zone: candidate && (candidate.sourceZone || candidate.zone || (candidate.zones && candidate.zones[0]) || null),
+      index: candidate && typeof candidate.sourceIndex === 'number' ? candidate.sourceIndex : null,
+      card: candidate && candidate.card,
+    };
 
     const options = {
       gameState: gameState || (baseCtx && baseCtx.gameState) || getDefaultGameState(),
       controller,
+      card: candidate && candidate.card,
+      cardId: candidate && candidate.cardId,
       effect: candidate,
       chainLink,
       event: {
@@ -133,11 +245,10 @@
         chainLink,
         tags: chainLink && chainLink.tags,
       },
-      source: {
-        controller: candidate && (candidate.sourceController || candidate.controller || controller),
-        zone: candidate && (candidate.sourceZone || candidate.zone || (candidate.zones && candidate.zones[0]) || null),
-        index: candidate && typeof candidate.sourceIndex === 'number' ? candidate.sourceIndex : null,
-      },
+      source,
+      sourceZone: source && source.zone,
+      sourceController: source && source.controller,
+      sourceIndex: source && typeof source.index === 'number' ? source.index : null,
       targets: [chainLink],
       authority: baseCtx && typeof baseCtx.authority === 'boolean' ? baseCtx.authority : undefined,
       askPlayer: baseCtx && baseCtx.askPlayer,
@@ -170,6 +281,10 @@
     if (!candidate || !chainLink) return makeFail('candidate와 chainLink가 필요합니다.');
     if (!isProcessingNegateEffect(candidate)) {
       return makeFail('processingNegate 타입 효과가 아닙니다.', { candidate });
+    }
+
+    if (!candidate.sourceController || !candidate.sourceZone || !candidate.card) {
+      return makeFail('processingNegate 효과의 실제 소스 카드가 필드/지정 존에 없습니다.', { candidateId: candidate.id, cardId: candidate.cardId });
     }
 
     if (candidate.id && chainLink.effectId && candidate.id === chainLink.effectId) {
@@ -210,6 +325,21 @@
 
   function askProcessingNegateActivation(candidate, chainLink, ctx) {
     const candidateCtx = createCandidateContext(candidate, chainLink, ctx, ctx && ctx.gameState);
+
+    if (!isLocalController(candidateCtx.controller)) {
+      const aiCanDecide = !!(global.AI && global.AI.active && candidateCtx.controller === CONTROLLERS.OPPONENT);
+      if (aiCanDecide) {
+        let useByAI = false;
+        if (typeof global._aiShouldUseProcessingNegate === 'function') {
+          try { useByAI = !!global._aiShouldUseProcessingNegate(candidate, chainLink, candidateCtx); }
+          catch (_) { useByAI = false; }
+        } else {
+          useByAI = !!(chainLink && chainLink.controller !== candidateCtx.controller);
+        }
+        return makeOk({ activate: useByAI, autoAI: true, candidate, ctx: candidateCtx, reason: useByAI ? 'aiAccepted' : 'aiDeclined' });
+      }
+      return makeOk({ activate: false, skipped: true, candidate, ctx: candidateCtx, reason: 'remoteController' });
+    }
 
     if (candidate.mandatory === true || candidate.optional === false) {
       return makeOk({ activate: true, mandatory: true, candidate, ctx: candidateCtx });
@@ -286,7 +416,15 @@
       event: { type: 'chainLinkResolving', chainLinkId: chainLink.id, chainLink, tags: chainLink.tags },
     });
 
-    return getProcessingNegateEffects().filter(candidate => canApplyProcessingNegate(candidate, chainLink, baseCtx).ok);
+    const located = [];
+    getProcessingNegateEffects().forEach(candidate => {
+      const locations = findCandidateSourceLocations(candidate, gameState || (baseCtx && baseCtx.gameState));
+      locations.forEach(location => {
+        const withLocation = attachCandidateLocation(candidate, location);
+        if (canApplyProcessingNegate(withLocation, chainLink, baseCtx).ok) located.push(withLocation);
+      });
+    });
+    return located;
   }
 
   function applyProcessingNegate(candidate, chainLink, ctx) {
