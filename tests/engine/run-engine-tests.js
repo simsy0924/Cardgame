@@ -1,6 +1,7 @@
 const tests = [
   ['card-move', require('./card-move.test')],
   ['chain-engine', require('./chain-engine.test')],
+  ['full-chain-migration', require('./full-chain-migration.test')],
   ['chain-network-safety', require('./chain-network-safety.test')],
   ['ai-engine-actions', require('./ai-engine-actions.test')],
   ['trigger-queue', require('./trigger-queue.test')],
