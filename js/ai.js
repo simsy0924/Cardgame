@@ -56,16 +56,27 @@ function _logAction(actor, action, detail) {
 
 // ─── AI 덱 ──────────────────────────────────────────────────
 
+function _normalizeAIThemeName(theme) {
+  if (theme === '크툴루' || theme === '올드 원') return '올드원';
+  return theme || '올드원';
+}
+
 function _buildAIDeck() {
   var presets = Array.isArray(window.STARTER_THEME_PRESETS)
     ? window.STARTER_THEME_PRESETS.slice()
     : ['펭귄','올드원','라이온','타이거','라이거','지배자','마피아','불가사의','엘리멘츠'];
 
-  var source = null, pickedTheme = '올드원';
+  var preferredTheme = _normalizeAIThemeName(window.AI.requestedTheme || window.AI.deckTheme || '올드원');
+  var candidates = [preferredTheme].concat(presets.filter(function(theme) { return _normalizeAIThemeName(theme) !== preferredTheme; }));
+  if (window.AI.randomTheme === true) candidates = shuffle(presets.slice());
+
+  var source = null, pickedTheme = preferredTheme;
   if (typeof window.createStarterDeckFromTheme === 'function') {
-    shuffle(presets.slice()).some(function(theme) {
-      var c = window.createStarterDeckFromTheme(theme);
-      if (c && Array.isArray(c.main) && c.main.length) { source = c; pickedTheme = theme; return true; }
+    candidates.some(function(theme) {
+      var normalized = _normalizeAIThemeName(theme);
+      var c = window.createStarterDeckFromTheme(normalized);
+      if (c && Array.isArray(c.main) && c.main.length) { source = c; pickedTheme = normalized; return true; }
+      return false;
     });
   }
 
@@ -489,6 +500,35 @@ async function _waitForChainToFinish(token, maxMs) {
   }
   return true;
 }
+
+function _aiEffectLooksUseful(effect, summaryText) {
+  var tags = _effectTags(effect || {});
+  var text = String(summaryText || (effect && effect.text) || '');
+  if (tags.indexOf('negateEffect') !== -1 || /무효/.test(text)) return true;
+  if (['deckSummon','handSummon','graveSummon','exileSummon','keyDeckSummon','deckSearch','draw'].some(function(tag) { return tags.indexOf(tag) !== -1; })) return true;
+  if (/소환|패에 넣|드로우|상대.*버|상대.*제외|상대.*묘지/.test(text)) return true;
+  return false;
+}
+
+window._aiShouldUseOptionalTrigger = function(summary, trigger) {
+  if (!window.AI || !window.AI.active) return false;
+  if (!trigger || trigger.controller !== _aiController()) return false;
+  return _aiEffectLooksUseful(trigger.effect, summary && summary.text);
+};
+
+window._aiShouldUseProcessingNegate = function(candidate, chainLink, ctx) {
+  if (!window.AI || !window.AI.active) return false;
+  if (!ctx || ctx.controller !== _aiController()) return false;
+  // AI 자신의 유리한 효과를 스스로 무효화하지 않는다.
+  if (chainLink && chainLink.controller === ctx.controller) return false;
+  return _aiEffectLooksUseful(candidate, candidate && candidate.text);
+};
+
+window.setAITheme = function(theme) {
+  window.AI.requestedTheme = _normalizeAIThemeName(theme);
+  window.AI.deckTheme = window.AI.requestedTheme;
+  notify('AI 테마: ' + window.AI.deckTheme);
+};
 
 // 공통 시스템 프롬프트
 var _SYSTEM_PROMPT = [
