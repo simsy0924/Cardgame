@@ -17,6 +17,8 @@ function enterGame() {
   document.getElementById('opNameLabel').textContent = opName;
 
   timeoutHandled = false;
+  _gameOverDeclared = false;
+  _gameOverShown = false;
   lastSyncedClockRunner = null;
   lastHandledActionTs = 0;
   lastLogTs = 0;

@@ -102,6 +102,7 @@ function _buildAIDeck() {
   var pads = ['구사일생','눈에는 눈','출입통제'].filter(function(id) { return !!CARDS[id] && !CARDS[id].isKeyCard; });
   var i = 0;
   while (base.length < 40 && base.length && i < 120) { base.push(base[i++ % base.length]); }
+  i = 0;
   while (base.length < 40 && pads.length) { base.push(pads[i++ % pads.length]); }
   return shuffle(base.map(function(id) { return { id: id, name: CARDS[id].name }; }));
 }
