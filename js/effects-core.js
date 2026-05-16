@@ -275,14 +275,21 @@ function forceDiscard(n) {
 // ─────────────────────────────────────────────
 // WIN CONDITION
 // ─────────────────────────────────────────────
+let _gameOverDeclared = false;
+
 function checkWinCondition() {
-  if (G.myHand.length === 0) {
+  if (G.myHand.length === 0 && !_gameOverDeclared) {
+    _gameOverDeclared = true;
     showGameOver(false);
     sendAction({ type: 'gameOver', winner: myRole === 'host' ? 'guest' : 'host' });
   }
 }
 
+let _gameOverShown = false;
+
 function showGameOver(win) {
+  if (_gameOverShown) return;
+  _gameOverShown = true;
   const el = document.getElementById('gameover');
   const title = document.getElementById('gameoverTitle');
   const msg = document.getElementById('gameoverMsg');

@@ -258,18 +258,21 @@ function _classifyLog(msg, explicitType) {
 }
 
 // 카드명을 <span class="log-card">으로 감싸기
+// 단일 정규식 alternation으로 처리 → 긴 이름이 먼저 매칭되어 부분 이름 이중래핑 방지
+let _highlightRegex = null;
+function _buildHighlightRegex() {
+  if (_highlightRegex) return _highlightRegex;
+  const names = Object.keys(CARDS || {}).sort((a, b) => b.length - a.length);
+  if (!names.length) return null;
+  const escaped = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  _highlightRegex = new RegExp(`(${escaped.join('|')})`, 'g');
+  return _highlightRegex;
+}
 function _highlightCardNames(msg) {
-  // 따옴표 없는 카드명은 CARDS 키 기준으로 강조
-  let result = msg;
-  // 특수문자 포함 카드명은 순서대로 처리 (긴 것 먼저)
-  const cardNames = Object.keys(CARDS || {}).sort((a, b) => b.length - a.length);
-  for (const name of cardNames) {
-    if (result.includes(name)) {
-      result = result.replaceAll(name, `<span class="log-card">${name}</span>`);
-      break; // 첫 번째 매칭만 (성능)
-    }
-  }
-  return result;
+  const pattern = _buildHighlightRegex();
+  if (!pattern) return msg;
+  pattern.lastIndex = 0;
+  return msg.replace(pattern, '<span class="log-card">$1</span>');
 }
 
 function log(msg, type = '') {
@@ -378,7 +381,9 @@ function summonFromDeck(cardId) {
 }
 function summonFromHand(handIdx) {
   if (G.myField.length >= maxFieldSlots()) { notify('몬스터 존이 가득 찼습니다.'); return false; }
-  const c = G.myHand[handIdx]; const card = CARDS[c.id];
+  const c = G.myHand[handIdx];
+  if (!c) return false;
+  const card = CARDS[c.id];
   if (!card || card.cardType !== 'monster') return false;
   G.myHand.splice(handIdx, 1);
   G.myField.push({ id: c.id, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'hand' });

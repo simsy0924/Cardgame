@@ -182,8 +182,20 @@ function renderCardBack(cardData) {
 // ─────────────────────────────────────────────
 function renderAll() {
   if (window.HB_CONTINUOUS_ENGINE && typeof window.HB_CONTINUOUS_ENGINE.applyContinuousEffects === 'function') {
+    const _snap = {
+      myField: G.myField.map(c => ({ ...c })),
+      opField: G.opField.map(c => ({ ...c })),
+      myExtraSlots: G.myExtraSlots,
+      opExtraSlots: G.opExtraSlots,
+    };
     try { window.HB_CONTINUOUS_ENGINE.applyContinuousEffects(G); }
-    catch (err) { console.warn('[ui] 지속 효과 적용 실패:', err); }
+    catch (err) {
+      console.warn('[ui] 지속 효과 적용 실패, 이전 상태로 복원:', err);
+      G.myField = _snap.myField;
+      G.opField = _snap.opField;
+      G.myExtraSlots = _snap.myExtraSlots;
+      G.opExtraSlots = _snap.opExtraSlots;
+    }
   }
   renderMyHand();
   renderOpHand();
