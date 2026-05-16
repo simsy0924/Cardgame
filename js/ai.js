@@ -706,12 +706,14 @@ async function _runAIChainWindow() {
 
     var engineOptions = _collectAIEngineActions('chain');
     var legacyOptions = [];
-    var aiCtx = {
-      role: window.AI.role, hand: G.opHand, field: G.opField,
-      grave: G.opGrave, exile: G.opExile, keyDeck: G.opKeyDeck||[],
-      usedFx: window.AI.usedFx, isMyTurn: false,
-    };
-    if (typeof collectChainOptions === 'function') legacyOptions = collectChainOptions(aiCtx) || [];
+    if (!(activeChainState && activeChainState.hbEngine === true)) {
+      var aiCtx = {
+        role: window.AI.role, hand: G.opHand, field: G.opField,
+        grave: G.opGrave, exile: G.opExile, keyDeck: G.opKeyDeck||[],
+        usedFx: window.AI.usedFx, isMyTurn: false,
+      };
+      if (typeof collectChainOptions === 'function') legacyOptions = collectChainOptions(aiCtx) || [];
+    }
     var options = engineOptions.concat(legacyOptions);
 
     if (!options.length) { _aiPassChain(); return; }

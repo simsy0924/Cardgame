@@ -95,33 +95,14 @@ function beginChain(effect) {
     window.AI.pendingChainTimers.forEach(function(id) { clearTimeout(id); });
     window.AI.pendingChainTimers = [];
   }
-  // myRole 로그 (notify 대신 log로 — 화면에 겹치지 않게)
 
-  // [BUG-3 FIX] AI 컨텍스트 스왑 중 myRole이 임시 교체된 상태일 수 있으므로
-  // beginChain 시점의 발동자 역할(startRole)을 즉시 로컬 변수에 스냅샷으로 저장한다.
-  // priority 계산에는 전역 myRole 대신 이 스냅샷을 사용하여
-  // 신엔진(CONTROLLERS.ME/OPPONENT 기준)과의 귀속 불일치를 방지한다.
-  const startRole = myRole;
-  const chainState = {
-    chainId: nextChainId(),
-    active: true,
-    startedBy: startRole,
-    // 마지막 발동자의 상대에게 우선권
-    priority: getOpponentRole(startRole),
-    passCount: 0,
-    links: [{ ...effect, by: startRole }],
-  };
-  activeChainState = chainState;
-  if (effect.type === 'keyFetch') usedKeyFetchInChain[startRole] = true;
-  log(`체인 1: ${effect.label} 발동`, 'mine');
-
-  if (!roomRef) {
-    _onLocalChainStateChanged(chainState);
+  const actorRole = myRole;
+  const result = _activateLegacyLinkInHbChain(effect, { role: actorRole });
+  if (result && result.ok === false) {
+    notify(result.error || '체인을 시작할 수 없습니다.');
     return;
   }
-
-  roomRef.child('chainState').set(chainState);
-  syncClockRunState(chainState.priority);
+  log(`체인 1: ${(effect && effect.label) || (effect && effect.type) || '효과'} 발동`, actorRole === myRole ? 'mine' : 'opponent');
 }
 
 // 상대가 체인을 열었을 때 사원소 ③ 자동 트리거
@@ -254,9 +235,31 @@ function _buildChainActivate(entry, idx, aiCtx) {
   };
 }
 
+function collectHbEngineChainOptions(aiCtx) {
+  const options = [];
+  if (!activeChainState || !activeChainState.active || activeChainState.hbEngine !== true) return options;
+
+  // HB_CHAIN_ENGINE 체인은 레거시 addChainLink와 섞이면 내부 chainState와
+  // 화면 mirror/Firebase chainState가 서로 다른 링크 목록을 갖게 된다.
+  // 따라서 신엔진 체인에서는 신엔진 QUICK/TRIGGER 응답만 수집한다.
+  // AI 응답은 ai.js의 _collectAIEngineActions('chain')가 opponent 컨트롤러로 별도 수집한다.
+  if (aiCtx) return options;
+
+  _collectNewEngineChainOptionsForZone(options, G.myHand, 'hand', null);
+  _collectNewEngineChainOptionsForZone(options, G.myField, 'field', null);
+  _collectNewEngineChainOptionsForZone(options, G.myGrave, 'grave', null);
+  _collectNewEngineChainOptionsForZone(options, G.myExile, 'exile', null);
+  _collectNewEngineFieldZoneChainOptions(options);
+  return options;
+}
+
 function collectChainOptions(aiCtx) {
   const options = [];
   if (!activeChainState || !activeChainState.active) return options;
+
+  if (activeChainState.hbEngine === true) {
+    return collectHbEngineChainOptions(aiCtx);
+  }
 
   // ── AI 컨텍스트 스왑 ──
   // condition/activate 내부가 참조하는 전역 변수를 AI 데이터로 임시 교체.
@@ -406,6 +409,111 @@ function registerChainFieldResponse(cardId, entries) {
   window.CHAIN_FIELD_RESPONSES[cardId] = entries;
 }
 
+
+// ─────────────────────────────────────────────────────────────
+// Legacy Chain → HB_CHAIN_ENGINE adapter
+// ─────────────────────────────────────────────────────────────
+// 완전 이식 원칙:
+//   beginChain/addChainLink/flushTriggeredEffects가 만드는 구형 링크도
+//   더 이상 별도 activeChainState에서 해결하지 않는다.
+//   레거시 링크를 EffectDefinition 래퍼로 감싸 HB_CHAIN_ENGINE의 단일
+//   chainState, 우선권, passCount, 역순 resolve, 네트워크 publish를 탄다.
+function _legacyChainEngineAvailable() {
+  return !!(window.HB_CHAIN_ENGINE && window.HB_EFFECT_REGISTRY && window.HB_EFFECT_DEFINITION);
+}
+
+function _sanitizeLegacyEffectType(type) {
+  return String(type || 'unknown')
+    .replace(/\s+/g, '_')
+    .replace(/[^0-9A-Za-z_\-가-힣]/g, '');
+}
+
+function _legacyChainEffectId(link) {
+  return `legacy-chain-${_sanitizeLegacyEffectType(link && link.type)}`;
+}
+
+function _cloneLegacyLinkForEngine(effect, actorRole) {
+  const link = Object.assign({}, effect || {});
+  link.type = link.type || 'legacyUnknown';
+  link.label = link.label || link.type;
+  link.by = actorRole || link.by || myRole;
+  link.legacyChain = true;
+  return link;
+}
+
+function _ensureLegacyChainEffect(link) {
+  if (!_legacyChainEngineAvailable()) return null;
+  const id = _legacyChainEffectId(link);
+  const existing = window.HB_EFFECT_REGISTRY.getEffectById(id);
+  if (existing) return existing;
+
+  const EFFECT_TYPES = (window.HB_RULES && window.HB_RULES.EFFECT_TYPES) || { QUICK: 'quick' };
+  const TIMING = (window.HB_RULES && window.HB_RULES.TIMING) || { EITHER_TURN: 'eitherTurn' };
+  return window.HB_EFFECT_REGISTRY.registerEffect({
+    id,
+    cardId: '__legacy_chain__',
+    effectNo: null,
+    text: `레거시 체인 링크: ${link.type}`,
+    type: EFFECT_TYPES.QUICK || 'quick',
+    timing: TIMING.EITHER_TURN || 'eitherTurn',
+    zones: [],
+    tags: ['legacyChain'],
+    condition: () => true,
+    canResolve: () => true,
+    cost: () => ({ ok: true }),
+    target: () => ({ ok: true }),
+    resolve(ctx) {
+      const legacyLink = ctx && ctx.chainLink && ctx.chainLink.activationData && ctx.chainLink.activationData.legacyLink;
+      if (!legacyLink) return { ok: false, error: '레거시 체인 링크 정보가 없습니다.' };
+      if (!window.HB_LEGACY_CHAIN_ADAPTER || typeof window.HB_LEGACY_CHAIN_ADAPTER.resolveLegacyLink !== 'function') {
+        return { ok: false, error: 'HB_LEGACY_CHAIN_ADAPTER가 없습니다.' };
+      }
+      return window.HB_LEGACY_CHAIN_ADAPTER.resolveLegacyLink(legacyLink, ctx);
+    },
+  }, { replace: true });
+}
+
+function _activateLegacyLinkInHbChain(effect, options) {
+  const opts = options || {};
+  if (!_legacyChainEngineAvailable()) return { ok: false, error: 'HB_CHAIN_ENGINE을 사용할 수 없습니다.' };
+
+  const actorRole = opts.role || (effect && effect.by) || myRole;
+  const link = _cloneLegacyLinkForEngine(effect, actorRole);
+  const wrappedEffect = _ensureLegacyChainEffect(link);
+  if (!wrappedEffect) return { ok: false, error: '레거시 체인 래퍼 효과를 등록할 수 없습니다.' };
+
+  const controller = typeof window.HB_CHAIN_ENGINE.roleToController === 'function'
+    ? window.HB_CHAIN_ENGINE.roleToController(actorRole)
+    : (actorRole === myRole ? 'me' : 'opponent');
+
+  const sourceCardId = link.cardId || '__legacy_chain__';
+  const sourceCardName = link.cardName || link.label || link.type;
+  const result = window.HB_CHAIN_ENGINE.activateEffect({
+    gameState: G,
+    controller,
+    player: controller,
+    card: { id: sourceCardId, name: sourceCardName },
+    cardId: sourceCardId,
+    source: { controller, zone: 'hand', index: null },
+    sourceZone: 'hand',
+    sourceIndex: null,
+    effect: wrappedEffect,
+    activationData: {
+      legacy: true,
+      legacyLink: link,
+      source: 'legacy-chain-adapter',
+    },
+    autoResolve: false,
+    resolveImmediately: false,
+    authority: true,
+    ignorePriority: opts.force === true,
+  });
+
+  if (result && result.ok === false) return result;
+  if (link.type === 'keyFetch') usedKeyFetchInChain[actorRole] = true;
+  return result || { ok: true };
+}
+
 function _isHbEngineChainState(data) {
   return !!(data && data.hbEngine === true);
 }
@@ -514,42 +622,23 @@ function openChainResponse() {
 function passChainPriority() {
   if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
 
-  // [BUG-2 FIX] 신엔진(HB_CHAIN_ENGINE)이 활성 체인을 관리하고 있으면
-  // 신엔진의 passChainResponse에 위임하여 passCount를 단일 위치에서 관리한다.
-  // 레거시 activeChainState와 신엔진 chainState의 passCount가 따로 카운트되면
-  // 이중 해결(양쪽 모두 passCount >= 2 판정)이나 무해결이 발생할 수 있다.
-  if (window.HB_CHAIN_ENGINE && typeof window.HB_CHAIN_ENGINE.hasActiveChain === 'function'
-      && window.HB_CHAIN_ENGINE.hasActiveChain()) {
-    const controller = (typeof window.HB_CHAIN_ENGINE.roleToController === 'function')
-      ? window.HB_CHAIN_ENGINE.roleToController(myRole)
-      : 'me';
-    const result = window.HB_CHAIN_ENGINE.passChainResponse(controller);
-    if (result && result.ok === false) notify(result.error || '체인 패스에 실패했습니다.');
-    const hbState = window.HB_CHAIN_ENGINE.getChainState();
-    if (!hbState.active) {
-      activeChainState = null;
-      renderChainActions();
-    }
+  if (!window.HB_CHAIN_ENGINE || typeof window.HB_CHAIN_ENGINE.passChainResponse !== 'function') {
+    notify('체인 엔진을 사용할 수 없습니다.');
     return;
   }
 
-  const next = { ...activeChainState };
-  next.passCount = (next.passCount || 0) + 1;
-  next.priority = getOpponentRole(myRole);
-  log('체인 패스', 'system');
+  const controller = (typeof window.HB_CHAIN_ENGINE.roleToController === 'function')
+    ? window.HB_CHAIN_ENGINE.roleToController(myRole)
+    : 'me';
+  const result = window.HB_CHAIN_ENGINE.passChainResponse(controller);
+  if (result && result.ok === false) notify(result.error || '체인 패스에 실패했습니다.');
 
-  if (next.passCount >= 2) {
-    resolveChain(next);
-    return;
+  const hbState = window.HB_CHAIN_ENGINE.getChainState && window.HB_CHAIN_ENGINE.getChainState();
+  if (hbState && !hbState.active) {
+    activeChainState = null;
+    usedKeyFetchInChain = {};
+    renderChainActions();
   }
-
-  if (!roomRef) {
-    _onLocalChainStateChanged(next);
-    return;
-  }
-
-  roomRef.child('chainState').set(next);
-  syncClockRunState(next.priority);
 }
 
 function addChainLink(effect, options = {}) {
@@ -559,28 +648,18 @@ function addChainLink(effect, options = {}) {
     notify('현재 체인 우선권은 상대에게 있습니다.');
     return;
   }
-  if (effect.type === 'keyFetch' && usedKeyFetchInChain[myRole]) {
+  if (effect && effect.type === 'keyFetch' && usedKeyFetchInChain[myRole]) {
     notify('동일 체인에서는 키 카드 덱 가져오기를 1번만 사용할 수 있습니다.');
     return;
   }
-  // [BUG-3 FIX] AI 컨텍스트 스왑 중 myRole이 임시 교체될 수 있으므로
-  // 링크 귀속(by)과 priority 계산에 사용할 역할을 즉시 스냅샷으로 고정한다.
-  const actorRole = myRole;
-  const next = { ...activeChainState };
-  next.links = [...(next.links || []), { ...effect, by: actorRole }];
-  // 링크를 추가한 직후에는 상대에게 우선권
-  next.priority = getOpponentRole(actorRole);
-  next.passCount = 0;
-  activeChainState = next;
-  if (effect.type === 'keyFetch') usedKeyFetchInChain[actorRole] = true;
-  log(`체인 ${next.links.length}: ${effect.label}`, 'mine');
 
-  if (!roomRef) {
-    _onLocalChainStateChanged(next);
+  const actorRole = options.role || (effect && effect.by) || myRole;
+  const result = _activateLegacyLinkInHbChain(effect, { role: actorRole, force });
+  if (result && result.ok === false) {
+    notify(result.error || '체인 링크를 추가할 수 없습니다.');
     return;
   }
-  roomRef.child('chainState').set(next);
-  syncClockRunState(next.priority);
+  log(`체인 추가: ${(effect && effect.label) || (effect && effect.type) || '효과'}`, actorRole === myRole ? 'mine' : 'opponent');
 }
 
 function enqueueTriggeredEffect(effect) {
@@ -682,22 +761,28 @@ function findCardIndexByInstanceId(zone, instanceId) {
 }
 
 function resolveChain(chainState) {
-  const links = [...(chainState.links || [])];
-  usedKeyFetchInChain = {};
-  activeChainState = null; // ★ 즉시 초기화 → 버튼 정상화
-  renderChainActions();
-
-  if (window.HB_NETWORK_SYNC && typeof window.HB_NETWORK_SYNC.resolveLegacyChain === 'function') {
-    window.HB_NETWORK_SYNC.resolveLegacyChain(chainState, { execute: executeChainLocally });
-    return;
+  if (chainState && chainState.hbEngine !== true) {
+    // 완전 이식 후 구형 activeChainState를 직접 해결하지 않는다.
+    // 혹시 오래된 세션의 레거시 상태가 들어오면 같은 순서로 HB_CHAIN_ENGINE에 재주입한다.
+    const links = Array.isArray(chainState.links) ? chainState.links.slice() : [];
+    activeChainState = null;
+    links.forEach((link, index) => {
+      _activateLegacyLinkInHbChain(link, { role: link.by || myRole, force: index > 0 });
+    });
   }
 
-  const resolvedAt = Date.now();
-  if (roomRef) {
-    roomRef.child('chainState').set({ active: false, links: [], priority: null, passCount: 0, resolvedLinks: links, resolvedAt, resolvedBy: myRole });
-  } else {
-    executeChainLocally([...links].reverse());
+  if (window.HB_CHAIN_ENGINE && typeof window.HB_CHAIN_ENGINE.resolveChain === 'function') {
+    const controller = (typeof window.HB_CHAIN_ENGINE.roleToController === 'function')
+      ? window.HB_CHAIN_ENGINE.roleToController(myRole)
+      : 'me';
+    const result = window.HB_CHAIN_ENGINE.resolveChain({ controller });
+    if (result && result.ok === false) notify(result.error || '체인 해결에 실패했습니다.');
+    usedKeyFetchInChain = {};
+    return result;
   }
+
+  notify('체인 엔진을 사용할 수 없습니다.');
+  return { ok: false, error: 'HB_CHAIN_ENGINE unavailable' };
 }
 
 // ─────────────────────────────────────────────
@@ -860,7 +945,48 @@ const CHAIN_RESOLVERS = {
       });
     });
   },
+
 };
+
+function resolveLegacyChainLink(link, ctx) {
+  if (!link || !link.type) return { ok: false, error: '레거시 링크 타입이 없습니다.' };
+
+  window._chainResolving = true;
+  try {
+    if (window.consumeMafiaChainReplacement && window.consumeMafiaChainReplacement(link)) {
+      return { ok: true, skipped: true, reason: 'mafiaReplacement' };
+    }
+    if (link.by === myRole && window.tryResolveMafiaChainTransform && window.tryResolveMafiaChainTransform(link)) {
+      return { ok: true, transformed: true, reason: 'mafiaTransform' };
+    }
+
+    const resolver = CHAIN_RESOLVERS[link.type];
+    if (resolver) {
+      resolver(link);
+      return { ok: true, legacy: true, type: link.type };
+    }
+    if (window.AI && window.AI.active) {
+      _executeAIChainLink(link);
+      return { ok: true, legacy: true, fallback: 'ai', type: link.type };
+    }
+    console.warn('[Legacy Chain Adapter] 알 수 없는 링크 타입:', link.type, link);
+    return { ok: false, error: `알 수 없는 레거시 링크 타입: ${link.type}` };
+  } finally {
+    window._chainResolving = false;
+  }
+}
+
+window.HB_LEGACY_CHAIN_ADAPTER = Object.freeze({
+  resolveLegacyLink: resolveLegacyChainLink,
+});
+
+
+if (window.addEventListener) {
+  window.addEventListener('hb:chain-resolved', function onHbChainResolved() {
+    usedKeyFetchInChain = {};
+    if (pendingTriggerEffects.length > 0) setTimeout(flushTriggeredEffects, 0);
+  });
+}
 
 // 체인 링크를 역순으로 실행
 // links는 이미 역순(resolvedLinks.reverse())으로 넘어온 상태이므로
