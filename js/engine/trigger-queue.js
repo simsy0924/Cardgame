@@ -440,9 +440,16 @@
   }
 
   function showOptionalTriggerChoices(player, triggers) {
-    const choices = getOptionalTriggersForPlayer(player, triggers).map(triggerSummary);
-    const controller = player ? zoneAccess.normalizeController(player) : null;
-    const detail = Object.freeze({ controller, choices, count: choices.length });
+    const controller = player ? zoneAccess.normalizeController(player) : CONTROLLERS.ME;
+
+    // 로컬 UI는 항상 내 optional trigger만 물어본다.
+    // 상대/AI optional trigger는 processNonLocalOptionalTriggers에서 자동 처리/스킵한다.
+    if (controller !== CONTROLLERS.ME && global.HB_DEBUG_SHOW_REMOTE_OPTIONAL !== true) {
+      return makeOk({ controller, choices: Object.freeze([]), count: 0, suppressedRemote: true });
+    }
+
+    const choices = getOptionalTriggersForPlayer(CONTROLLERS.ME, triggers).map(triggerSummary);
+    const detail = Object.freeze({ controller: CONTROLLERS.ME, choices, count: choices.length });
 
     if (choices.length > 0 && typeof global.dispatchEvent === 'function' && typeof global.CustomEvent === 'function') {
       try {
@@ -550,6 +557,14 @@
   function activateSelectedTrigger(selection, options) {
     const found = findQueuedOptional(selection);
     if (!found) return makeFail('선택한 임의 유발 효과를 optionalQueue에서 찾지 못했습니다.', { selection });
+
+    const opts = options || {};
+    if (found.trigger.controller !== CONTROLLERS.ME && opts.allowRemote !== true) {
+      return makeFail('상대/AI의 임의 유발 효과는 로컬 플레이어가 선택할 수 없습니다.', {
+        selection,
+        trigger: triggerSummary(found.trigger),
+      });
+    }
 
     optionalQueue.splice(found.index, 1);
     const trigger = found.trigger;

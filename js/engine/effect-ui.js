@@ -410,10 +410,26 @@
     return overlay;
   }
 
+  function isLocalOptionalTriggerChoice(choice) {
+    if (!choice || typeof choice !== 'object') return false;
+    const rawController = choice.controller || choice.sourceController || 'me';
+    let controller = rawController;
+    try { controller = normalizeController(rawController); }
+    catch (_) { controller = rawController; }
+    return controller === CONTROLLERS.ME || controller === 'me';
+  }
+
   function renderTriggerChoiceDialog(triggersOrDetail) {
     const detail = triggersOrDetail && triggersOrDetail.detail ? triggersOrDetail.detail : (triggersOrDetail || {});
-    const choices = asArray(detail.choices || detail.triggers || triggersOrDetail);
-    if (!choices.length) return makeOk({ count: 0 });
+    const rawChoices = asArray(detail.choices || detail.triggers || triggersOrDetail);
+    const choices = rawChoices.filter(isLocalOptionalTriggerChoice);
+
+    // 안전장치: UI 레이어는 절대 상대/AI/원격 optional trigger를 표시하지 않는다.
+    // trigger-queue 쪽 필터가 깨지거나 이전 큐가 남아도 여기서 마지막으로 차단한다.
+    if (!choices.length) {
+      closeModalIfAvailable('optionalTriggerModal');
+      return makeOk({ count: 0, suppressed: rawChoices.length });
+    }
 
     const overlay = ensureDialog('optionalTriggerModal', '임의 유발 효과 선택');
     if (!overlay) return makeFail('DOM이 없습니다.');

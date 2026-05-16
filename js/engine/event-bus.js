@@ -145,11 +145,16 @@
       ['HB_AI_EVENT_OBSERVER', 'receiveEvent'],
     ];
 
+    const called = typeof WeakSet === 'function' ? new WeakSet() : null;
     forwarders.forEach(([namespace, method]) => {
       const target = global[namespace];
       if (!target || typeof target[method] !== 'function') return;
+      const fn = target[method];
+      // receiveEvent/enqueueEvent처럼 같은 함수를 별칭으로 노출하는 엔진은 한 이벤트당 한 번만 전달한다.
+      if (called && called.has(fn)) return;
+      if (called) called.add(fn);
       try {
-        target[method](event, gameState);
+        fn.call(target, event, gameState);
       } catch (err) {
         errors.push(err);
         console.error(`[event-bus] ${namespace}.${method} 전달 중 오류:`, err);
