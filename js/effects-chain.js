@@ -619,6 +619,18 @@ function openChainResponse() {
   });
 }
 
+// 신엔진 체인 상태(priority: 'me'|'opponent')를 레거시 UI 포맷(priority: role 문자열)으로 변환
+function _hbChainStateToLegacyFormat(chain) {
+  if (!chain) return null;
+  const opRole = myRole === 'host' ? 'guest' : 'host';
+  return Object.assign({}, chain, {
+    hbEngine: true,
+    priority: chain.priority === 'me' ? myRole
+            : chain.priority === 'opponent' ? opRole
+            : chain.priority,
+  });
+}
+
 function passChainPriority() {
   if (!activeChainState || !activeChainState.active || activeChainState.priority !== myRole) return;
 
@@ -634,10 +646,13 @@ function passChainPriority() {
   if (result && result.ok === false) notify(result.error || '체인 패스에 실패했습니다.');
 
   const hbState = window.HB_CHAIN_ENGINE.getChainState && window.HB_CHAIN_ENGINE.getChainState();
-  if (hbState && !hbState.active) {
+  if (!hbState || !hbState.active) {
     activeChainState = null;
     usedKeyFetchInChain = {};
     renderChainActions();
+  } else {
+    // 패스 후 우선권이 상대로 이동 — UI 갱신 및 상대(AI/데모) 응답 처리 트리거
+    _onLocalChainStateChanged(_hbChainStateToLegacyFormat(hbState));
   }
 }
 
@@ -985,6 +1000,14 @@ if (window.addEventListener) {
   window.addEventListener('hb:chain-resolved', function onHbChainResolved() {
     usedKeyFetchInChain = {};
     if (pendingTriggerEffects.length > 0) setTimeout(flushTriggeredEffects, 0);
+  });
+
+  // 신엔진 체인 상태를 레거시 UI가 이해할 수 있는 형태로 변환
+  // 우선권을 'me'/'opponent' → 실제 role 문자열로 변환하고 hbEngine 플래그를 붙인다
+  window.addEventListener('hb:chain-response-window', function(evt) {
+    const chain = evt.detail && evt.detail.chain;
+    if (!chain) return;
+    _onLocalChainStateChanged(_hbChainStateToLegacyFormat(chain));
   });
 }
 
