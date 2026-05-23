@@ -100,4 +100,18 @@ module.exports = function runCardMoveTests() {
   assert(indexedMove.ok, `indexed addToHand failed: ${indexedMove.error}`);
   assertEqual(duplicateState.myDeck.length, 1, 'indexed move should remove exactly one duplicate');
   assertEqual(duplicateState.myDeck[0].name, 'first copy', 'indexed move should remove the requested duplicate copy');
+
+  const discardState = makeState({
+    myHand: [makeCard('same', { name: 'first hand copy' }), makeCard('same', { name: 'second hand copy' })],
+  });
+  const indexedDiscard = ctx.HB_CARD_MOVE.discardCard({
+    gameState: discardState,
+    controller: 'me',
+    cardId: 'same',
+    from: { controller: 'me', zone: 'hand', index: 1 },
+  });
+  assert(indexedDiscard.ok, `indexed discard failed: ${indexedDiscard.error}`);
+  assertEqual(discardState.myHand.length, 1, 'indexed discard should remove one selected duplicate');
+  assertEqual(discardState.myHand[0].name, 'first hand copy', 'indexed discard should keep the unselected duplicate');
+  assertEqual(discardState.myGrave[0].name, 'second hand copy', 'indexed discard should move the selected duplicate to grave');
 };

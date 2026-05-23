@@ -18,6 +18,7 @@
     'opGraveMassExile',
     'opAtkChange',
     'opDeckTopExile',
+    'opDiscard',
     'opDiscardRandom',
     'opDraw',
     'forceReturnHand',

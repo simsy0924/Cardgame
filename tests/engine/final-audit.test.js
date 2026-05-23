@@ -15,6 +15,24 @@ module.exports = function testFinalAudit() {
   assert(bulgasauiSource.includes('function handAfterActivationCost(ctx)'),
     'additional hand discard costs must account for card activation cost first');
 
+  const themeDir = path.join(root, 'js/effects/theme');
+  const themeSource = fs.readdirSync(themeDir)
+    .filter(name => name.endsWith('.js'))
+    .map(name => fs.readFileSync(path.join(themeDir, name), 'utf8'))
+    .join('\n');
+  [
+    /hand\(ctx[^)]*\)\.push\([^)]*\.shift\(/,
+    /grave\(ctx[^)]*\)\.push\(/,
+    /exile\(ctx[^)]*\)\.push\(/,
+    /publicHand\(ctx[^)]*\)\.push\(/,
+    /keyDeck\(ctx[^)]*\)\.push\(/,
+    /zoneAccess\.insertCardToZone\(ctx\.gameState/,
+    /sendAction\(\{type:'opDiscard'/,
+    /sendAction\(\{ type: 'opDiscard'/,
+  ].forEach(pattern => {
+    assert(!pattern.test(themeSource), `theme effects must route zone mutation/network discard through engine helpers: ${pattern}`);
+  });
+
   const ctx = createContext();
   loadAllEffects(ctx);
   ctx.currentPhase = 'deploy';
