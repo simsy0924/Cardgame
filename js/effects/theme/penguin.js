@@ -854,6 +854,9 @@
       zone: ZONES.HAND,
       tags: [TAGS.DECK_SUMMON],
       condition(ctx) { return findDeckCards(ctx, c => isPenguinMonster(c.id)).length > 0 && hasFieldSpace(ctx); },
+      collectChoices(ctx) {
+        return { candidates: findDeckCards(ctx, c => isPenguinMonster(c.id)), title: '덱에서 소환할 펭귄 몬스터 선택', count: 1, emptyMessage: '덱에 펭귄 몬스터가 없습니다.' };
+      },
       resolve(ctx) {
         const target = firstOrSelected(ctx, findDeckCards(ctx, c => isPenguinMonster(c.id)), { byId: true });
         return target ? summonFromDeck(ctx, target.id, 'penguinCharge1') : { ok: false, error: '덱에 펭귄 몬스터가 없습니다.' };
@@ -869,6 +872,9 @@
       tags: [TAGS.COST_BANISH, TAGS.HAND_SUMMON],
       condition(ctx) { return findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)).length > 0 && hasFieldSpace(ctx); },
       cost(ctx) { return ctx.move.banishCard({ cardId: '펭귄!돌격!', controller: ctx.controller, from: { controller: ctx.controller, zone: ZONES.GRAVE }, reason: 'penguinCharge2Cost' }); },
+      collectChoices(ctx) {
+        return { candidates: findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)), title: '패에서 소환할 펭귄 몬스터 선택', count: 1, emptyMessage: '패에 펭귄 몬스터가 없습니다.' };
+      },
       resolve(ctx) {
         const target = firstOrSelected(ctx, findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)), { byId: true });
         return target ? summonFromHandById(ctx, target.id, 'penguinCharge2') : { ok: false, error: '패에 펭귄 몬스터가 없습니다.' };
