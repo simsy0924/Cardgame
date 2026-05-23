@@ -534,6 +534,13 @@
     }
 
     const opts = options || {};
+    // 체인 응답 중이 아니면 유발 효과 선택은 기본 즉시 해결한다.
+    // 명시적으로 false를 준 경우(연속 체인 합류 등)만 체인에 머무른다.
+    const explicitImmediate = opts.resolveImmediately === true || opts.autoResolve === true;
+    const explicitDefer = opts.resolveImmediately === false || opts.autoResolve === false;
+    const chainActive = typeof chain.hasActiveChain === 'function' ? !!chain.hasActiveChain() : false;
+    const resolveImmediately = explicitImmediate || (!explicitDefer && !chainActive);
+
     const activation = chain.activateEffect({
       effect: trigger.effect,
       ctx: trigger.ctx,
@@ -544,10 +551,8 @@
         mandatory: trigger.mandatory,
         optional: trigger.optional,
       }),
-      // 유발 효과 선택 버튼도 기본 즉시 해결.
-      // false를 명시한 테스트/후속 체인 통합 코드만 체인에 남기도록 한다.
-      autoResolve: opts.autoResolve === true,
-      resolveImmediately: opts.resolveImmediately === true,
+      autoResolve: resolveImmediately,
+      resolveImmediately,
     });
 
     remember(trigger, activation.ok ? 'activate' : 'activateFailed', activation);
