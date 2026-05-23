@@ -534,8 +534,6 @@ function sendToExile(card, from = 'field') {
     if (idx >= 0) source.splice(idx, 1);
     G.myExile.push(cardObj);
   }
-  // 크툴루 제외 트리거
-  if (!isHandledByNewEngine(cardObj.id) && typeof window._onCthulhuExiled === 'function') window._onCthulhuExiled(cardObj.id);
 }
 function onSummon(cardId, from) {
   // 15단계: 신엔진 카드/신엔진 유발 후보가 있으면 레거시 onSummon switch를 타지 않는다.

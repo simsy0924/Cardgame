@@ -1075,7 +1075,7 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
               // 지배자/지배룡 카드는 ①효과 자체가 이 카드를 버리는 코스트이므로
               // 별도 "패에서 버리기" 버튼은 필요하지 않음
             }
-          } else if (['크툴루', '올드 원', '올드원', '라이온', '타이거', '라이거', '마피아', '불가사의', '엘리멘츠'].includes(card.theme)) {
+          } else if (['크툴루', '올드 원', '올드원', '라이온', '엘리멘츠'].includes(card.theme)) {
             // [BUG FIX] 엘리멘츠 테마 추가 — activateCard 경유 대신 직접 핸들러 호출
             const effectText = card.effects || '';
             if (effectText.includes('①')) addBtn('① 효과 발동', 'btn-primary', () => activateCard(handIdx));
@@ -1474,7 +1474,19 @@ function getOwnedCardSet() {
   return owned;
 }
 
+// 신엔진으로 이식되지 않아 사용이 차단된 테마.
+// 이 테마의 카드는 덱 풀/검색/저장된 덱에서 자동 제외된다.
+const UNSUPPORTED_THEMES = new Set(['타이거','라이거','마피아','불가사의']);
+
+function isCardSupported(cardId) {
+  const card = CARDS && CARDS[cardId];
+  if (!card) return false;
+  if (UNSUPPORTED_THEMES.has(card.theme)) return false;
+  return true;
+}
+
 function canUseCard(cardId) {
+  if (!isCardSupported(cardId)) return false;
   const owned = getOwnedCardSet();
   if (!owned) return true;
   return owned.has(cardId);
@@ -1672,19 +1684,6 @@ function loadPreset(theme) {
       '사원소의 기적':1, '일격필살':1, '단 한번의 기회':1, '카드의 흑기사':1, '풀려난 항아리의 마귀':1, '카드 세계의 영웅':1,
     };
     notify('지배자/지배룡 기본 덱 로드!');
-  } else if (theme === '마피아') {
-    builderMainDeck = {
-      '대도시의 거물 마피아':4, '마피아의 최측근':4,
-      '마피아의 제안':4, '마피아의 군림':4, '마피아의 대가':4,
-      '마피아의 협상':4, '마피아의 명령':4, '마피아의 배신자 숙청':4,
-      '마피아의 위용':4, '마피아의 위기':4,
-      '눈에는 눈':2, '출입통제':2,
-    };
-    builderKeyDeck = {
-      '마피아 집결':1, '마피아의 도시':1,
-      '일격필살':1, '단 한번의 기회':1, '유혹의 황금사과':1, '카드의 흑기사':1, '풀려난 항아리의 마귀':1, '카드 세계의 영웅':1,
-    };
-    notify('마피아 기본 덱 로드!');
   } else if (theme === '엘리멘츠') {
     builderMainDeck = {
       '엘리멘츠의 불꽃정령':4, '엘리멘츠의 물정령':4,
@@ -1719,24 +1718,6 @@ function loadPreset(theme) {
     };
     builderKeyDeck = { '라이온 킹':1,'일격필살':1,'단 한번의 기회':1,'카드의 흑기사':1,'풀려난 항아리의 마귀':1,'카드 세계의 영웅':1 };
     notify('라이온 기본 덱 로드! (메인 42장)');
-  } else if (theme === '타이거') {
-    builderMainDeck = {
-      '베이비 타이거':4,'젊은 타이거':4,'에이스 타이거':4,
-      '호랑이의 포효':4,'호랑이의 사냥':4,'호랑이의 발톱':4,
-      '호랑이의 일격':4,'진정한 호랑이':4,'고고한 호랑이':4,
-      '구사일생':2,'눈에는 눈':2,'출입통제':2,
-    };
-    builderKeyDeck = { '타이거 킹':1,'일격필살':1,'단 한번의 기회':1,'카드의 흑기사':1,'풀려난 항아리의 마귀':1,'카드 세계의 영웅':1 };
-    notify('타이거 기본 덱 로드! (메인 42장)');
-  } else if (theme === '라이거') {
-    builderMainDeck = {
-      '화합의 시대의 라이거':4,'베이비 라이거':4,'젊은 라이거':4,'에이스 라이거':4,
-      '모두의 자연':4,'베이비 라이온':2,'젊은 라이온':2,
-      '베이비 타이거':2,'젊은 타이거':2,'사자의 일격':2,'호랑이의 일격':2,
-      '눈에는 눈':2,'구사일생':2,'출입통제':2,
-    };
-    builderKeyDeck = { '라이거 킹':1,'라이온 킹':1,'타이거 킹':1,'일격필살':1,'단 한번의 기회':1,'카드의 흑기사':1,'풀려난 항아리의 마귀':1,'카드 세계의 영웅':1 };
-    notify('라이거 기본 덱 로드! (메인 40장)');
   } else if (theme === '크툴루' || theme === '올드원') {
     builderMainDeck = {
       '그레이트 올드 원-크툴루':4,'그레이트 올드 원-크투가':4,
@@ -1749,18 +1730,6 @@ function loadPreset(theme) {
       '일격필살':1,'단 한번의 기회':1,'카드의 흑기사':1,'풀려난 항아리의 마귀':1,'카드 세계의 영웅':1,
     };
     notify('크툴루/올드원 기본 덱 로드! (메인 40장)');
-  } else if (theme === '불가사의') {
-    builderMainDeck = {
-      '불가사의한 귀신 헬리콥터':4,'불가사의한 망태 할아버지':4,'불가사의한 빨간 마스크':4,
-      '불가사의한 장산범':4,'불가사의한 밤의 대도시':4,'불가사의한 화폐 속 암호':4,
-      '불가사의한 분신사바':4,'불가사의한 숨바꼭질 인형':4,'불가사의한 일루미나티':4,
-      '구사일생':2,'눈에는 눈':2,'출입통제':2,
-    };
-    builderKeyDeck = {
-      '불가사의한 13일의 금요일':1,'불가사의한 적월':1,'불가사의한 지배':1,
-      '불가사의한 원흉':1,'일격필살':1,'카드의 흑기사':1,'풀려난 항아리의 마귀':1,'카드 세계의 영웅':1,
-    };
-    notify('불가사의 기본 덱 로드! (메인 42장)');
   }
   renderBuilderDeck();
   filterDeckPool(currentPoolFilter);

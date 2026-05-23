@@ -55,19 +55,29 @@ module.exports = function testLegacyCleanup() {
   }
 
   const ui = read('js/ui.js');
+  // 신엔진 이식이 완료된 테마만 덱 프리셋이 남는다.
+  // 미이식 테마(타이거/라이거/마피아/불가사의)는 차단 정책에 따라 프리셋이 제거되어야 한다.
   for (const marker of [
     '서커스메어 기본 덱 로드',
     '라이온 기본 덱 로드',
-    '타이거 기본 덱 로드',
-    '라이거 기본 덱 로드',
     '크툴루/올드원 기본 덱 로드',
-    '불가사의 기본 덱 로드',
   ]) {
     assert(ui.includes(marker), `deck preset marker missing in ui.js: ${marker}`);
+  }
+  for (const removedMarker of [
+    '타이거 기본 덱 로드',
+    '라이거 기본 덱 로드',
+    '마피아 기본 덱 로드',
+    '불가사의 기본 덱 로드',
+  ]) {
+    assert(!ui.includes(removedMarker), `unported theme preset must be removed from ui.js: ${removedMarker}`);
   }
 
   const progression = read('js/progression.js');
   assert(progression.includes("'서커스메어'"), 'STARTER_THEME_PRESETS must include 서커스메어 without circusmare.js patch');
+  for (const blocked of ['타이거','라이거','마피아','불가사의']) {
+    assert(!progression.includes(`'${blocked}'`), `STARTER_THEME_PRESETS must not include unported theme: ${blocked}`);
+  }
 
   const ctx = createContext();
   loadAllEffects(ctx);

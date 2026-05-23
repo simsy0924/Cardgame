@@ -572,6 +572,12 @@
       return makeFail('HB_CHAIN_ENGINE.activateEffect를 사용할 수 없습니다.', { effectId: effect.id });
     }
 
+    // 체인 응답 중이 아니면 필드 존 효과도 기본 즉시 해결한다.
+    const explicitImmediate = opts.resolveImmediately === true || opts.autoResolve === true;
+    const explicitDefer = opts.resolveImmediately === false || opts.autoResolve === false;
+    const chainActive = typeof chain.hasActiveChain === 'function' ? !!chain.hasActiveChain() : false;
+    const resolveImmediately = explicitImmediate || (!explicitDefer && !chainActive);
+
     return chain.activateEffect({
       gameState: check.ctx.gameState,
       controller: check.ctx.controller,
@@ -581,6 +587,9 @@
       sourceZone: ZONES.FIELD_ZONE,
       effect,
       reason: 'fieldZoneEffect',
+      activationData: Object.assign({}, opts.activationData || {}, { source: 'fieldZoneEffect' }),
+      autoResolve: resolveImmediately,
+      resolveImmediately,
     });
   }
 
