@@ -307,3 +307,280 @@ async function claimMissionReward(missionId) {
     notify('미션 보상 수령 완료');
   } catch(e) { notify('보상 수령 실패: ' + e.message); }
 }
+
+// ─────────────────────────────────────────────
+// P0 HOTFIX — 신규 효과 엔진/레거시 UI 연결 안정화
+// ─────────────────────────────────────────────
+// 1) EffectDefinition UI/트리거/필드존 효과가 체인에 올라가기만 하고 해결되지 않는 문제 완화
+// 2) HB_CHAIN_ENGINE 내부 chainState를 기존 activeChainState UI/Firebase 체인 상태와 미러링
+// 3) 레거시 sendToExile의 카드 복제 버그를 중앙 이동 엔진 경유로 우회
+(function initP0EngineHotfix(global) {
+  'use strict';
+  if (global.__HB_P0_ENGINE_HOTFIX__) return;
+  global.__HB_P0_ENGINE_HOTFIX__ = true;
+
+  function safeCall(fn) {
+    try { return typeof fn === 'function' ? fn() : undefined; }
+    catch (err) { console.warn('[P0 hotfix] safeCall failed:', err); return undefined; }
+  }
+
+  function getLocalRole() {
+    // eslint-disable-next-line no-undef
+    if (typeof myRole !== 'undefined' && myRole) return myRole;
+    return global.myRole || 'host';
+  }
+
+  function otherRole(role) {
+    return role === 'host' ? 'guest' : 'host';
+  }
+
+  function roleToController(role) {
+    const local = getLocalRole();
+    if (!role || role === local || role === 'me') return 'me';
+    if (role === 'opponent') return 'opponent';
+    return 'opponent';
+  }
+
+  function controllerToRole(controller) {
+    const local = getLocalRole();
+    if (!controller || controller === 'me') return local;
+    if (controller === local || controller === 'host' || controller === 'guest') return controller;
+    return otherRole(local);
+  }
+
+  function currentLegacyChainIsActive() {
+    // eslint-disable-next-line no-undef
+    return !!(typeof activeChainState !== 'undefined' && activeChainState && activeChainState.active);
+  }
+
+  function currentHbChainIsActive(chainApi) {
+    if (!chainApi || typeof chainApi.getChainState !== 'function') return false;
+    const state = chainApi.getChainState();
+    return !!(state && state.active && state.links && state.links.length > 0);
+  }
+
+  function mapHbLinkToLegacyLink(link, order) {
+    const activationData = link && link.activationData ? link.activationData : {};
+    const legacyLink = activationData.legacyLink || null;
+    const controller = link && link.controller;
+    const by = legacyLink && legacyLink.by ? legacyLink.by : controllerToRole(controller);
+    const label = (legacyLink && legacyLink.label)
+      || (link && (link.cardName || link.effectId || link.cardId))
+      || '신규 효과';
+    const type = (legacyLink && legacyLink.type)
+      || (link && (link.type || link.effectId))
+      || 'hbEffect';
+
+    return {
+      id: link && link.id,
+      hbEngine: true,
+      by,
+      controller: controller || roleToController(by),
+      type,
+      label,
+      cardId: (legacyLink && legacyLink.cardId) || (link && link.cardId) || null,
+      effectId: link && link.effectId,
+      sourceZone: link && link.sourceZone,
+      sourceIndex: typeof (link && link.sourceIndex) === 'number' ? link.sourceIndex : null,
+      order: order + 1,
+      legacy: !!legacyLink,
+    };
+  }
+
+  function buildLegacyMirrorFromHbState(hbState) {
+    const links = (hbState && hbState.links ? hbState.links : []).map(mapHbLinkToLegacyLink);
+    return {
+      hbEngine: true,
+      active: !!(hbState && hbState.active && links.length > 0),
+      links,
+      priority: controllerToRole(hbState && hbState.priority),
+      passCount: (hbState && hbState.passCount) || 0,
+      startedBy: links[0] ? links[0].by : null,
+      chainId: hbState && hbState.id,
+      createdAt: (hbState && hbState.createdAt) || Date.now(),
+    };
+  }
+
+  function publishChainMirror(mirror, options) {
+    const opts = options || {};
+    if (!mirror) return;
+
+    safeCall(() => {
+      // eslint-disable-next-line no-undef
+      if (typeof activeChainState !== 'undefined') activeChainState = mirror.active ? mirror : null;
+    });
+    safeCall(() => { if (typeof renderChainActions === 'function') renderChainActions(); });
+
+    if (opts.publish === false) return;
+    safeCall(() => {
+      // eslint-disable-next-line no-undef
+      if (typeof roomRef !== 'undefined' && roomRef) roomRef.child('chainState').set(mirror);
+    });
+  }
+
+  function publishHbChainState(chainApi, options) {
+    if (!chainApi || typeof chainApi.getChainState !== 'function') return;
+    const state = chainApi.getChainState();
+    const mirror = buildLegacyMirrorFromHbState(state);
+    publishChainMirror(mirror, options);
+  }
+
+  function publishResolvedHbChain(detail) {
+    const chainBeforeClear = detail && detail.chain;
+    const mirror = buildLegacyMirrorFromHbState(chainBeforeClear || { active: false, links: [] });
+    const payload = Object.assign({}, mirror, {
+      active: false,
+      priority: null,
+      passCount: 0,
+      resolvedLinks: mirror.links || [],
+      resolvedAt: Date.now(),
+      resolvedBy: getLocalRole(),
+      authorityMode: 'snapshot',
+    });
+
+    const authoritativeState = safeCall(() => global.HB_NETWORK_SYNC && global.HB_NETWORK_SYNC.createAuthoritativeState
+      ? global.HB_NETWORK_SYNC.createAuthoritativeState({ authorityRole: getLocalRole() })
+      : null);
+    if (authoritativeState) payload.authoritativeState = authoritativeState;
+
+    publishChainMirror(payload);
+  }
+
+  function shouldResolveImmediatelyByDefault(options, chainApi) {
+    const opts = options || {};
+    if (opts.resolveImmediately === true || opts.autoResolve === true) return true;
+
+    const activationData = opts.activationData || {};
+    const source = activationData.source || opts.sourceTag || opts.reason || '';
+    const isEffectUi = source === 'effect-ui';
+    const isTrigger = !!activationData.triggerId || source === 'trigger-queue' || source === 'ai-optional-trigger';
+    const isFieldZone = opts.reason === 'fieldZoneEffect' || source === 'fieldZoneEffect';
+
+    if (!isEffectUi && !isTrigger && !isFieldZone) return false;
+    if (currentLegacyChainIsActive() || currentHbChainIsActive(chainApi)) return false;
+    return true;
+  }
+
+  function patchChainEngine() {
+    const chain = global.HB_CHAIN_ENGINE;
+    if (!chain || chain.__p0Hotfixed) return;
+
+    const original = {
+      activateEffect: chain.activateEffect && chain.activateEffect.bind(chain),
+      addChainLink: chain.addChainLink && chain.addChainLink.bind(chain),
+      passChainResponse: chain.passChainResponse && chain.passChainResponse.bind(chain),
+      resolveChain: chain.resolveChain && chain.resolveChain.bind(chain),
+      clearChain: chain.clearChain && chain.clearChain.bind(chain),
+      getChainState: chain.getChainState && chain.getChainState.bind(chain),
+    };
+
+    const patched = Object.freeze(Object.assign({}, chain, {
+      __p0Hotfixed: true,
+      roleToController,
+      controllerToRole,
+      importChainState(data) {
+        if (!data || data.hbEngine !== true) return false;
+        // 기존 UI mirror만 동기화한다. 실제 HB 내부 chainState는 로컬 권위 실행 결과를 따른다.
+        publishChainMirror(data, { publish: false });
+        return true;
+      },
+      activateEffect(options) {
+        const opts = Object.assign({}, options || {});
+        if (shouldResolveImmediatelyByDefault(opts, patched)) {
+          opts.resolveImmediately = true;
+          opts.autoResolve = true;
+        }
+        const result = original.activateEffect ? original.activateEffect(opts) : { ok: false, error: 'activateEffect 원본 없음' };
+        publishHbChainState(patched);
+        return result;
+      },
+      addChainLink(chainLink) {
+        const result = original.addChainLink ? original.addChainLink(chainLink) : { ok: false, error: 'addChainLink 원본 없음' };
+        publishHbChainState(patched);
+        return result;
+      },
+      passChainResponse(controller) {
+        const result = original.passChainResponse ? original.passChainResponse(controller) : { ok: false, error: 'passChainResponse 원본 없음' };
+        publishHbChainState(patched);
+        return result;
+      },
+      resolveChain(ctx) {
+        const result = original.resolveChain ? original.resolveChain(ctx) : { ok: false, error: 'resolveChain 원본 없음' };
+        publishHbChainState(patched);
+        return result;
+      },
+      clearChain() {
+        const result = original.clearChain ? original.clearChain() : null;
+        publishHbChainState(patched);
+        return result;
+      },
+    }));
+
+    global.HB_CHAIN_ENGINE = patched;
+    global.HB_ENGINE = global.HB_ENGINE || {};
+    global.HB_ENGINE.chain = patched;
+  }
+
+  function patchSendToExile() {
+    if (global.__HB_P0_SEND_TO_EXILE_PATCHED__) return;
+    global.__HB_P0_SEND_TO_EXILE_PATCHED__ = true;
+    const legacySendToExile = global.sendToExile;
+
+    global.sendToExile = function patchedSendToExile(card, from) {
+      const fromZone = from || 'field';
+      const cardId = typeof card === 'string' ? card : (card && (card.id || card.cardId));
+      if (!cardId) return;
+
+      if (global.HB_CARD_MOVE && typeof global.HB_CARD_MOVE.banishCard === 'function') {
+        const result = global.HB_CARD_MOVE.banishCard({
+          gameState: safeCall(() => G), // eslint-disable-line no-undef
+          cardId,
+          controller: 'me',
+          from: { controller: 'me', zone: fromZone },
+          reason: 'legacySendToExilePatched',
+        });
+        if (result && result.ok !== false) {
+          if (typeof global._onCthulhuExiled === 'function') global._onCthulhuExiled(cardId);
+          return result;
+        }
+        console.warn('[P0 hotfix] HB_CARD_MOVE.banishCard 실패, legacy fallback 사용:', result);
+      }
+
+      if (typeof legacySendToExile === 'function') return legacySendToExile(card, fromZone);
+      // 최후 fallback: 원래 존 제거를 시도한 뒤 제외에 넣는다.
+      safeCall(() => {
+        // eslint-disable-next-line no-undef
+        const zones = { field: G.myField, hand: G.myHand, grave: G.myGrave, deck: G.myDeck };
+        const arr = zones[fromZone];
+        let moved = typeof card === 'object' ? card : { id: cardId, name: cardId };
+        if (Array.isArray(arr)) {
+          const idx = arr.findIndex(c => c && c.id === cardId);
+          if (idx >= 0) moved = arr.splice(idx, 1)[0];
+        }
+        // eslint-disable-next-line no-undef
+        G.myExile.push(moved);
+      });
+      if (typeof global._onCthulhuExiled === 'function') global._onCthulhuExiled(cardId);
+    };
+  }
+
+  patchChainEngine();
+  patchSendToExile();
+
+  if (global.addEventListener) {
+    global.addEventListener('hb:chain-link-added', function onHbChainLinkAdded() {
+      patchChainEngine();
+      publishHbChainState(global.HB_CHAIN_ENGINE);
+    });
+    global.addEventListener('hb:chain-response-window', function onHbChainResponseWindow() {
+      patchChainEngine();
+      publishHbChainState(global.HB_CHAIN_ENGINE);
+    });
+    global.addEventListener('hb:chain-resolved', function onHbChainResolved(evt) {
+      patchChainEngine();
+      publishResolvedHbChain(evt && evt.detail);
+    });
+  }
+
+  console.info('[P0 hotfix] 신규 효과 엔진 안정화 패치 적용 완료');
+})(window);
