@@ -13,6 +13,7 @@ module.exports = function runChainNetworkSafetyTests() {
   ctx.roomRef = {};
   assert(ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'summon' }), 'network summon lastAction should be suppressed');
   assert(ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'forceDiscard' }), 'network forceDiscard lastAction should be suppressed');
+  assert(ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'opDiscard' }), 'network opDiscard lastAction should be suppressed');
   assert(ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'revealAllHand' }), 'network revealAllHand lastAction should be suppressed');
   assert(ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'exileBan' }), 'network exileBan lastAction should be suppressed');
   assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'draw' }), 'draw lastAction should remain log/public only');

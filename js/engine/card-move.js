@@ -458,10 +458,18 @@
     const cardId = normalizeCardId(opts.cardId || opts.card);
     if (!cardId) return failResult('cardId가 없습니다.');
 
+    const from = {
+      controller: owner,
+      zone: ZONES.HAND,
+      index: opts.from && typeof opts.from.index === 'number'
+        ? opts.from.index
+        : (typeof opts.index === 'number' ? opts.index : null),
+    };
+
     const result = moveCard({
       gameState: state,
       cardId,
-      from: { controller: owner, zone: ZONES.HAND },
+      from,
       to: { controller: owner, zone: ZONES.GRAVE },
       controller: owner,
       reason: opts.reason || 'discard',
@@ -479,7 +487,7 @@
       cardId,
       card: result.movedCard,
       controller: owner,
-      from: { controller: owner, zone: ZONES.HAND },
+      from,
       to: { controller: owner, zone: ZONES.GRAVE },
       reason: opts.reason || 'discard',
       eventData: Object.assign({}, opts.eventData || {}, {

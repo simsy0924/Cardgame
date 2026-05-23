@@ -1390,8 +1390,12 @@
       selectedIndices.forEach(index => {
         if (index === villageIndex) return;
         if (hand[index]) {
-          const discarded = hand.splice(index, 1)[0];
-          zoneAccess.insertCardToZone(state, controller, ZONES.GRAVE, discarded);
+          ctx.move.discardCard({
+            cardId: getCardId(hand[index]),
+            controller,
+            from: { controller, zone: ZONES.HAND, index },
+            reason: 'penguinVillageDiscardReplacementExtra',
+          });
         }
       });
 
