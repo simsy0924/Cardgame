@@ -231,6 +231,27 @@
     return !!check.ok;
   }
 
+  function hasActiveChainForManualResolution() {
+    if (chain && typeof chain.hasActiveChain === 'function') {
+      try { if (chain.hasActiveChain()) return true; }
+      catch (err) { console.warn('[effect-ui] HB chain active check 실패:', err); }
+    }
+    try {
+      // eslint-disable-next-line no-undef
+      return !!(typeof activeChainState !== 'undefined' && activeChainState && activeChainState.active);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function shouldResolveImmediatelyFromUi(opts) {
+    const options = opts || {};
+    if (options.resolveImmediately === true || options.autoResolve === true) return true;
+    if (options.resolveImmediately === false || options.autoResolve === false) return false;
+    // 카드 상세창에서 직접 누른 신엔진 효과는 체인 응답 중이 아니면 기본 즉시 해결한다.
+    return !hasActiveChainForManualResolution();
+  }
+
   function getAvailableEffects(query) {
     const q = query || {};
     const card = q.card || getCardDef(q.cardId) || { id: q.cardId };
@@ -273,7 +294,13 @@
     const ctx = entry.ctx || buildContextForEffect(opts, effect);
 
     if (ctx.sourceZone === ZONES.FIELD_ZONE && global.HB_FIELD_ZONE && typeof global.HB_FIELD_ZONE.activateSelectedFieldZoneEffect === 'function') {
-      return global.HB_FIELD_ZONE.activateSelectedFieldZoneEffect({ gameState: ctx.gameState, controller: ctx.controller, effect });
+      return global.HB_FIELD_ZONE.activateSelectedFieldZoneEffect({
+        gameState: ctx.gameState,
+        controller: ctx.controller,
+        effect,
+        autoResolve: opts.autoResolve,
+        resolveImmediately: opts.resolveImmediately,
+      });
     }
 
     if (isSummonProcedureEffect(effect)) {
@@ -289,9 +316,7 @@
     }
 
     if (!chain || typeof chain.activateEffect !== 'function') return makeFail('HB_CHAIN_ENGINE.activateEffect를 사용할 수 없습니다.');
-    // 현재 신엔진 체인은 레거시 activeChainState/Firebase 체인 UI와 완전히 연결되어 있지 않다.
-    // 버튼 발동이 체인에만 올라가고 해결되지 않으면 턴제약만 소모되고 실제 효과가 적용되지 않는다.
-    // UI에서 직접 누른 효과는 기본적으로 즉시 해결하고, 이후 체인 UI 통합 단계에서 opts.autoResolve=false로 되돌릴 수 있게 한다.
+    const resolveImmediately = shouldResolveImmediatelyFromUi(opts);
     return chain.activateEffect({
       gameState: ctx.gameState,
       controller: ctx.controller,
@@ -303,8 +328,8 @@
       effect,
       activationData: Object.assign({}, opts.activationData || {}, { source: 'effect-ui' }),
       ignorePriority: opts.ignorePriority === true,
-      autoResolve: opts.autoResolve === true,
-      resolveImmediately: opts.resolveImmediately === true,
+      autoResolve: resolveImmediately,
+      resolveImmediately,
     });
   }
 
@@ -555,7 +580,7 @@
   // 실행 계획에 적힌 이름을 그대로 전역에서도 사용할 수 있게 한다.
   global.getAvailableEffects = getAvailableEffects;
   global.renderEffectButtons = renderEffectButtons;
-  global.renderFieldZoneEffectButtons = renderFieldZoneEffectButtons;
+  global.renderFieldZoneEffectButtons = renderEffectButtons;
   global.renderTriggerChoiceDialog = renderTriggerChoiceDialog;
   global.renderCostSelectionDialog = renderCostSelectionDialog;
   global.renderTargetSelectionDialog = renderTargetSelectionDialog;
