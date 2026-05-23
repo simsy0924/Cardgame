@@ -722,6 +722,9 @@
       tags: [TAGS.DECK_SUMMON, 'penguinSummonTrigger'],
       oncePerTurn: { key: '꼬마 펭귄_2', limit: 2 },
       condition(ctx) { return cardMatchesEvent(ctx, '꼬마 펭귄') && findDeckCards(ctx, c => isPenguinMonster(c.id)).length > 0 && hasFieldSpace(ctx); },
+      collectChoices(ctx) {
+        return { candidates: findDeckCards(ctx, c => isPenguinMonster(c.id)), title: '덱에서 소환할 펭귄 몬스터 선택', count: 1, emptyMessage: '덱에 펭귄 몬스터가 없습니다.' };
+      },
       resolve(ctx) {
         const target = firstOrSelected(ctx, findDeckCards(ctx, c => isPenguinMonster(c.id)), { byId: true });
         return target ? summonFromDeck(ctx, target.id, 'kkomaPenguin2') : { ok: false, error: '덱에 펭귄 몬스터가 없습니다.' };
@@ -740,9 +743,14 @@
       tags: [TAGS.DECK_SEARCH, TAGS.DISCARD_HAND, 'penguinSummonTrigger'],
       oncePerTurn: { key: '펭귄 부부_1', limit: 1 },
       condition(ctx) { return cardMatchesEvent(ctx, '펭귄 부부') && sourceWasSummonedFrom(ctx.event, ZONES.DECK) && findDeckCards(ctx, c => isPenguinCard(c.id)).length > 0; },
+      collectChoices(ctx) {
+        const candidates = findDeckCards(ctx, c => isPenguinCard(c.id));
+        return { candidates, title: '펭귄 부부 ①: 덱에서 패에 넣을 펭귄 카드 (최대 2장)', count: Math.min(2, candidates.length), emptyMessage: '덱에 펭귄 카드가 없습니다.' };
+      },
       resolve(ctx) {
         const candidates = findDeckCards(ctx, c => isPenguinCard(c.id));
-        const chosen = chooseCards(Object.assign({}, ctx, { _hbAutoPick: true }), candidates, '펭귄 부부 ①: 펭귄 카드 최대 2장 서치', Math.min(2, candidates.length)) || [];
+        const selected = (ctx.selectedCards && ctx.selectedCards.length) ? ctx.selectedCards : candidates.slice(0, Math.min(2, candidates.length));
+        const chosen = selected.map(s => candidates.find(c => getCardId(c) === getCardId(s))).filter(Boolean);
         const results = chosen.map(card => addDeckCardToHand(ctx, card.id, true));
         const discard = discardOneFromHand(ctx, '펭귄 부부 ①: 패 1장 버리기');
         return { ok: results.every(r => r.ok) && discard.ok, searched: chosen.map(getCardId), discard };
@@ -798,6 +806,9 @@
       tags: [TAGS.DECK_SEARCH],
       oncePerTurn: { key: '현자 펭귄_2', limit: 1 },
       condition(ctx) { return isDeployPhase(ctx) && findDeckCards(ctx, c => isPenguinCard(c.id)).length > 0; },
+      collectChoices(ctx) {
+        return { candidates: findDeckCards(ctx, c => isPenguinCard(c.id)), title: '덱에서 패에 넣을 펭귄 카드 선택', count: 1, emptyMessage: '덱에 펭귄 카드가 없습니다.' };
+      },
       resolve(ctx) {
         const target = firstOrSelected(ctx, findDeckCards(ctx, c => isPenguinCard(c.id)), { byId: true });
         return target ? addDeckCardToHand(ctx, target.id, true) : { ok: false, error: '덱에 펭귄 카드가 없습니다.' };
@@ -1161,6 +1172,10 @@
           && zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).some(isMonster)
           && zoneArray(ctx, ctx.controller, ZONES.FIELD).some(isPenguinMonster);
       },
+      collectChoices(ctx) {
+        const opponentMonsters = zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).filter(isMonster);
+        return { candidates: opponentMonsters, title: '대상 상대 몬스터 선택', count: 1, emptyMessage: '상대 필드에 몬스터가 없습니다.' };
+      },
       target(ctx) {
         const opponentMonsters = zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).filter(isMonster);
         const target = firstOrSelected(ctx, opponentMonsters, { byId: true });
@@ -1226,6 +1241,9 @@
       tags: [TAGS.COST_BANISH, TAGS.HAND_SUMMON],
       condition(ctx) { return !isMyTurnFallback(ctx) && hasFieldSpace(ctx) && findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)).length > 0; },
       cost(ctx) { return ctx.move.banishCard({ cardId: '펭귄이여 영원하라', controller: ctx.controller, from: { controller: ctx.controller, zone: ZONES.GRAVE }, reason: 'penguinForever2Cost' }); },
+      collectChoices(ctx) {
+        return { candidates: findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)), title: '패에서 소환할 펭귄 몬스터 선택', count: 1, emptyMessage: '패에 펭귄 몬스터가 없습니다.' };
+      },
       resolve(ctx) {
         const target = firstOrSelected(ctx, findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)), { byId: true });
         return target ? summonFromHandById(ctx, target.id, 'penguinForever2') : { ok: false, error: '패에 펭귄 몬스터가 없습니다.' };
