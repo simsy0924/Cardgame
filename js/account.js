@@ -460,51 +460,7 @@ async function claimMissionReward(missionId) {
     }
   }
 
-  function patchSendToExile() {
-    if (global.__HB_P0_SEND_TO_EXILE_PATCHED__) return;
-    global.__HB_P0_SEND_TO_EXILE_PATCHED__ = true;
-    const legacySendToExile = global.sendToExile;
-
-    global.sendToExile = function patchedSendToExile(card, from) {
-      const fromZone = from || 'field';
-      const cardId = typeof card === 'string' ? card : (card && (card.id || card.cardId));
-      if (!cardId) return;
-
-      if (global.HB_CARD_MOVE && typeof global.HB_CARD_MOVE.banishCard === 'function') {
-        const result = global.HB_CARD_MOVE.banishCard({
-          gameState: safeCall(() => G), // eslint-disable-line no-undef
-          cardId,
-          controller: 'me',
-          from: { controller: 'me', zone: fromZone },
-          reason: 'legacySendToExilePatched',
-        });
-        if (result && result.ok !== false) {
-          if (typeof global._onCthulhuExiled === 'function') global._onCthulhuExiled(cardId);
-          return result;
-        }
-        console.warn('[P0 hotfix] HB_CARD_MOVE.banishCard 실패, legacy fallback 사용:', result);
-      }
-
-      if (typeof legacySendToExile === 'function') return legacySendToExile(card, fromZone);
-      // 최후 fallback: 원래 존 제거를 시도한 뒤 제외에 넣는다.
-      safeCall(() => {
-        // eslint-disable-next-line no-undef
-        const zones = { field: G.myField, hand: G.myHand, grave: G.myGrave, deck: G.myDeck };
-        const arr = zones[fromZone];
-        let moved = typeof card === 'object' ? card : { id: cardId, name: cardId };
-        if (Array.isArray(arr)) {
-          const idx = arr.findIndex(c => c && c.id === cardId);
-          if (idx >= 0) moved = arr.splice(idx, 1)[0];
-        }
-        // eslint-disable-next-line no-undef
-        G.myExile.push(moved);
-      });
-      if (typeof global._onCthulhuExiled === 'function') global._onCthulhuExiled(cardId);
-    };
-  }
-
   attachChainRoleHelpers();
-  patchSendToExile();
 
   if (global.addEventListener) {
     global.addEventListener('hb:chain-link-added', function onHbChainLinkAdded() {
