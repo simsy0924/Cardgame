@@ -1079,7 +1079,6 @@ function _checkVillageOnDiscard(cardId, callback) {
           sendToGrave(mon.id, 'field');
           log(`펭귄 마을 ②: ${mon.name} 대신 묘지`, 'mine');
           if (mon.id === '수문장 펭귄') triggerSummonerPenguin2();
-          _tryRecoverPenguinStrikeFromGrave();
           sendGameState(); renderAll();
         }
         callback(true);
