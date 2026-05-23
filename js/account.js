@@ -348,17 +348,6 @@ async function claimMissionReward(missionId) {
     return otherRole(local);
   }
 
-  function currentLegacyChainIsActive() {
-    // eslint-disable-next-line no-undef
-    return !!(typeof activeChainState !== 'undefined' && activeChainState && activeChainState.active);
-  }
-
-  function currentHbChainIsActive(chainApi) {
-    if (!chainApi || typeof chainApi.getChainState !== 'function') return false;
-    const state = chainApi.getChainState();
-    return !!(state && state.active && state.links && state.links.length > 0);
-  }
-
   function mapHbLinkToLegacyLink(link, order) {
     const activationData = link && link.activationData ? link.activationData : {};
     const legacyLink = activationData.legacyLink || null;
@@ -446,79 +435,29 @@ async function claimMissionReward(missionId) {
     publishChainMirror(payload);
   }
 
-  function shouldResolveImmediatelyByDefault(options, chainApi) {
-    const opts = options || {};
-    if (opts.resolveImmediately === true || opts.autoResolve === true) return true;
-
-    const activationData = opts.activationData || {};
-    const source = activationData.source || opts.sourceTag || opts.reason || '';
-    const isEffectUi = source === 'effect-ui';
-    const isTrigger = !!activationData.triggerId || source === 'trigger-queue' || source === 'ai-optional-trigger';
-    const isFieldZone = opts.reason === 'fieldZoneEffect' || source === 'fieldZoneEffect';
-
-    if (!isEffectUi && !isTrigger && !isFieldZone) return false;
-    if (currentLegacyChainIsActive() || currentHbChainIsActive(chainApi)) return false;
-    return true;
-  }
-
-  function patchChainEngine() {
+  // HB_CHAIN_ENGINE에 roleToController/controllerToRole 보조를 한 번만 부착한다.
+  // 과거 P0 래핑은 publishHbChainState를 모든 메서드에 belt-and-suspenders로 끼웠으나,
+  // chain-engine.js가 동일 시점에 hb:chain-* 이벤트를 발행하므로 그 리스너가 같은 역할을 한다.
+  function attachChainRoleHelpers() {
     const chain = global.HB_CHAIN_ENGINE;
-    if (!chain || chain.__p0Hotfixed) return;
-
-    const original = {
-      activateEffect: chain.activateEffect && chain.activateEffect.bind(chain),
-      addChainLink: chain.addChainLink && chain.addChainLink.bind(chain),
-      passChainResponse: chain.passChainResponse && chain.passChainResponse.bind(chain),
-      resolveChain: chain.resolveChain && chain.resolveChain.bind(chain),
-      clearChain: chain.clearChain && chain.clearChain.bind(chain),
-      getChainState: chain.getChainState && chain.getChainState.bind(chain),
-    };
-
-    const patched = Object.freeze(Object.assign({}, chain, {
-      __p0Hotfixed: true,
-      roleToController,
-      controllerToRole,
-      importChainState(data) {
-        if (!data || data.hbEngine !== true) return false;
-        // 기존 UI mirror만 동기화한다. 실제 HB 내부 chainState는 로컬 권위 실행 결과를 따른다.
-        publishChainMirror(data, { publish: false });
-        return true;
-      },
-      activateEffect(options) {
-        const opts = Object.assign({}, options || {});
-        if (shouldResolveImmediatelyByDefault(opts, patched)) {
-          opts.resolveImmediately = true;
-          opts.autoResolve = true;
-        }
-        const result = original.activateEffect ? original.activateEffect(opts) : { ok: false, error: 'activateEffect 원본 없음' };
-        publishHbChainState(patched);
-        return result;
-      },
-      addChainLink(chainLink) {
-        const result = original.addChainLink ? original.addChainLink(chainLink) : { ok: false, error: 'addChainLink 원본 없음' };
-        publishHbChainState(patched);
-        return result;
-      },
-      passChainResponse(controller) {
-        const result = original.passChainResponse ? original.passChainResponse(controller) : { ok: false, error: 'passChainResponse 원본 없음' };
-        publishHbChainState(patched);
-        return result;
-      },
-      resolveChain(ctx) {
-        const result = original.resolveChain ? original.resolveChain(ctx) : { ok: false, error: 'resolveChain 원본 없음' };
-        publishHbChainState(patched);
-        return result;
-      },
-      clearChain() {
-        const result = original.clearChain ? original.clearChain() : null;
-        publishHbChainState(patched);
-        return result;
-      },
-    }));
-
-    global.HB_CHAIN_ENGINE = patched;
-    global.HB_ENGINE = global.HB_ENGINE || {};
-    global.HB_ENGINE.chain = patched;
+    if (!chain || chain.__p0RoleHelpersAttached) return;
+    try {
+      const augmented = Object.assign({}, chain, {
+        __p0RoleHelpersAttached: true,
+        roleToController,
+        controllerToRole,
+        importChainState(data) {
+          if (!data || data.hbEngine !== true) return false;
+          publishChainMirror(data, { publish: false });
+          return true;
+        },
+      });
+      global.HB_CHAIN_ENGINE = Object.freeze(augmented);
+      global.HB_ENGINE = global.HB_ENGINE || {};
+      global.HB_ENGINE.chain = global.HB_CHAIN_ENGINE;
+    } catch (err) {
+      console.warn('[P0] attachChainRoleHelpers 실패:', err);
+    }
   }
 
   function patchSendToExile() {
@@ -564,23 +503,20 @@ async function claimMissionReward(missionId) {
     };
   }
 
-  patchChainEngine();
+  attachChainRoleHelpers();
   patchSendToExile();
 
   if (global.addEventListener) {
     global.addEventListener('hb:chain-link-added', function onHbChainLinkAdded() {
-      patchChainEngine();
       publishHbChainState(global.HB_CHAIN_ENGINE);
     });
     global.addEventListener('hb:chain-response-window', function onHbChainResponseWindow() {
-      patchChainEngine();
       publishHbChainState(global.HB_CHAIN_ENGINE);
     });
     global.addEventListener('hb:chain-resolved', function onHbChainResolved(evt) {
-      patchChainEngine();
       publishResolvedHbChain(evt && evt.detail);
     });
   }
 
-  console.info('[P0 hotfix] 신규 효과 엔진 안정화 패치 적용 완료');
+  console.info('[P0] 신엔진 체인 발행 구독 설치 완료');
 })(window);
