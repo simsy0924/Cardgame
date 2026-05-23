@@ -299,6 +299,11 @@
       || (opts.activationData && opts.activationData.selectedCards && opts.activationData.selectedCards.length > 0);
     if (already) return { needsPicker: false, opts };
 
+    // 픽커는 로컬 플레이어가 발동할 때만 띄운다.
+    // 상대/AI가 발동한 효과는 자동 첫 후보로 진행 (네트워크 동기화는 별도 경로로 전달됨).
+    if (ctx.controller && ctx.controller !== CONTROLLERS.ME) return { needsPicker: false, opts };
+    if (opts.isAI === true) return { needsPicker: false, opts };
+
     let choice;
     try { choice = effect.collectChoices(ctx); } catch (err) {
       console.warn('[effect-ui] collectChoices 실행 오류:', err);
