@@ -21,20 +21,20 @@
     'opDiscardRandom',
     'opDraw',
     'forceReturnHand',
+    'forceDiscard',
+    'revealAllHand',
+    'searchBan',
+    'exileBan',
     'negateField',
   ]);
 
   const PUBLIC_ACTIONS = new Set([
     'draw',
     'search',
-    'searchBan',
-    'exileBan',
     'negate',
     'endTurn',
     'phaseEnd',
     'gameOver',
-    'revealAllHand',
-    'forceDiscard',
   ]);
 
   let lastAppliedDiffId = null;

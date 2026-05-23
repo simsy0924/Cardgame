@@ -38,4 +38,66 @@ module.exports = function runCardMoveTests() {
     from: { controller: 'me', zone: 'hand' },
   });
   assert(!failed.ok, 'summon should fail when monster zone is full');
+
+  ctx.HB_TRIGGER_QUEUE.clearTriggerQueue();
+  ctx.HB_EVENTS.clearPendingEvents();
+  ctx.HB_EFFECT_REGISTRY.registerEffects([{
+    id: 'auto-dispatch-trigger',
+    cardId: 'listener',
+    type: 'trigger',
+    zones: ['field'],
+    events: ['summon'],
+    optional: true,
+    condition() { return true; },
+    canResolve() { return true; },
+    resolve() { return true; },
+  }], { replace: true });
+
+  const autoDispatchState = makeState({
+    myHand: [makeCard('summoned')],
+    myField: [makeCard('listener')],
+  });
+  const autoDispatch = ctx.HB_CARD_MOVE.summonCard({
+    gameState: autoDispatchState,
+    controller: 'me',
+    cardId: 'summoned',
+    from: { controller: 'me', zone: 'hand' },
+  });
+  assert(autoDispatch.ok, `auto dispatch summon failed: ${autoDispatch.error}`);
+  assertEqual(ctx.HB_EVENTS.getPendingEvents().length, 0, 'card moves outside a chain should dispatch pending events');
+  assertEqual(ctx.HB_TRIGGER_QUEUE.getQueueState().optional.length, 1, 'summon trigger should be queued after automatic dispatch');
+
+  ctx.HB_TRIGGER_QUEUE.clearTriggerQueue();
+  ctx.HB_EVENTS.clearPendingEvents();
+  ctx.activeChainState = { active: true };
+  const deferredState = makeState({
+    myHand: [makeCard('deferred-summoned')],
+    myField: [makeCard('listener')],
+  });
+  const deferred = ctx.HB_CARD_MOVE.summonCard({
+    gameState: deferredState,
+    controller: 'me',
+    cardId: 'deferred-summoned',
+    from: { controller: 'me', zone: 'hand' },
+  });
+  assert(deferred.ok, `deferred summon failed: ${deferred.error}`);
+  assertEqual(ctx.HB_EVENTS.getPendingEvents().length, 1, 'card moves during a chain should keep events pending');
+  assertEqual(ctx.HB_TRIGGER_QUEUE.getQueueState().optional.length, 0, 'chain-deferred move should not enqueue triggers early');
+  ctx.activeChainState = null;
+  ctx.HB_EVENTS.dispatchEvents(deferredState);
+  assertEqual(ctx.HB_TRIGGER_QUEUE.getQueueState().optional.length, 1, 'deferred move event should enqueue after explicit dispatch');
+
+  const duplicateState = makeState({
+    myDeck: [makeCard('duplicate', { name: 'first copy' }), makeCard('duplicate', { name: 'second copy' })],
+  });
+  const indexedMove = ctx.HB_CARD_MOVE.addToHand({
+    gameState: duplicateState,
+    controller: 'me',
+    cardId: 'duplicate',
+    from: { controller: 'me', zone: 'deck', index: 1 },
+    reveal: true,
+  });
+  assert(indexedMove.ok, `indexed addToHand failed: ${indexedMove.error}`);
+  assertEqual(duplicateState.myDeck.length, 1, 'indexed move should remove exactly one duplicate');
+  assertEqual(duplicateState.myDeck[0].name, 'first copy', 'indexed move should remove the requested duplicate copy');
 };

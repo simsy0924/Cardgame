@@ -197,6 +197,58 @@
     }, extra || {});
   }
 
+  let moveOperationDepth = 0;
+
+  function hasLegacyActiveChain() {
+    try {
+      // eslint-disable-next-line no-undef
+      return !!(typeof activeChainState !== 'undefined' && activeChainState && activeChainState.active);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function hasHbActiveChain() {
+    const chain = global.HB_CHAIN_ENGINE;
+    if (!chain || typeof chain.getChainState !== 'function') return false;
+    try {
+      const state = chain.getChainState();
+      return !!(state && (state.active || state.resolving));
+    } catch (err) {
+      console.warn('[card-move] chain state check failed:', err);
+      return false;
+    }
+  }
+
+  function shouldDeferEventDispatch() {
+    return !!(
+      global._chainResolving ||
+      global._hbActivatingChainEffect ||
+      hasLegacyActiveChain() ||
+      hasHbActiveChain()
+    );
+  }
+
+  function flushPendingMoveEvents(gameState, options) {
+    const opts = options || {};
+    if (opts.deferDispatch === true || opts.dispatchEvents === false) return null;
+    if (shouldDeferEventDispatch()) return null;
+    if (global.HB_EVENTS && typeof global.HB_EVENTS.dispatchEvents === 'function') {
+      return global.HB_EVENTS.dispatchEvents(gameState);
+    }
+    return null;
+  }
+
+  function runMoveOperation(gameState, options, work) {
+    moveOperationDepth += 1;
+    try {
+      return work();
+    } finally {
+      moveOperationDepth -= 1;
+      if (moveOperationDepth === 0) flushPendingMoveEvents(gameState, options);
+    }
+  }
+
   function dispatchMoveEvent(gameState, event) {
     const state = resolveGameState(gameState);
 
@@ -237,6 +289,12 @@
   function moveCard(options) {
     const opts = options || {};
     const state = resolveGameState(opts.gameState);
+    return runMoveOperation(state, opts, () => moveCardCore(Object.assign({}, opts, { gameState: state })));
+  }
+
+  function moveCardCore(options) {
+    const opts = options || {};
+    const state = resolveGameState(opts.gameState);
     const owner = normalizeController(opts.controller || CONTROLLERS.ME);
     const cardId = normalizeCardId(opts.cardId || opts.card);
     if (!cardId) return failResult('cardId가 없습니다.');
@@ -264,7 +322,7 @@
 
     let removed;
     try {
-      removed = zoneAccess.removeCardFromZone(state, from.controller, from.zone, cardId);
+      removed = zoneAccess.removeCardFromZone(state, from.controller, from.zone, cardId, from.index);
     } catch (err) {
       return failResult(err.message, { cardId, from: locationForEvent(from) });
     }
@@ -412,6 +470,7 @@
         sourceZone: ZONES.HAND,
         sourceController: owner,
       }),
+      deferDispatch: true,
     });
 
     if (!result.ok) return result;
@@ -432,6 +491,7 @@
 
     result.events = [result.event, sentEvent];
     result.diff = makeDiff('discardCard', result.event, { secondaryEventType: sentEvent.type });
+    flushPendingMoveEvents(state, opts);
     return result;
   }
 
@@ -518,11 +578,13 @@
       events.push(graveEvent);
     }
 
+    const dispatchResult = flushPendingMoveEvents(state, opts);
     return okResult({
       movedCard,
       removedCard: movedCard,
       event: leftEvent,
       events,
+      dispatchResult,
       diff: makeDiff('removeFieldCard', leftEvent),
     });
   }
@@ -551,7 +613,7 @@
 
     let removedNewCard;
     try {
-      removedNewCard = zoneAccess.removeCardFromZone(state, source.controller, source.zone, cardId);
+      removedNewCard = zoneAccess.removeCardFromZone(state, source.controller, source.zone, cardId, source.index);
     } catch (err) {
       return failResult(err.message, { cardId, source: locationForEvent(source) });
     }
@@ -567,6 +629,7 @@
         to: { controller: owner, zone: ZONES.GRAVE },
         reason: 'fieldCardReplace',
         eventData: Object.assign({}, opts.eventData || {}, { replacedBy: cardId }),
+        deferDispatch: true,
       });
       if (!replacementResult.ok) {
         try { zoneAccess.insertCardToZone(state, source.controller, source.zone, removedNewCard, source.index); } catch (_) {}
@@ -622,6 +685,7 @@
       };
     }
 
+    const dispatchResult = flushPendingMoveEvents(state, opts);
     return okResult({
       placedCard,
       replacedCard: replacedCard || null,
@@ -629,6 +693,7 @@
       event: placedEvent,
       events,
       activation,
+      dispatchResult,
       diff: makeDiff('placeFieldCard', placedEvent, {
         activate: !!opts.activate,
         replacedCardId: replacedCard ? replacedCard.id : null,

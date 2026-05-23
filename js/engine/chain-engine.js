@@ -91,6 +91,42 @@
     return state && state.turn != null ? state.turn : 0;
   }
 
+  function getLocalRole() {
+    // eslint-disable-next-line no-undef
+    if (typeof myRole !== 'undefined' && myRole) return myRole;
+    return global.myRole || null;
+  }
+
+  function getRemoteRole() {
+    // eslint-disable-next-line no-undef
+    if (typeof opRole !== 'undefined' && opRole) return opRole;
+    const localRole = getLocalRole();
+    if (localRole === 'host') return 'guest';
+    if (localRole === 'guest') return 'host';
+    return global.opRole || null;
+  }
+
+  function roleToController(role) {
+    const localRole = getLocalRole();
+    if (!role || !localRole) return role === 'opponent' ? CONTROLLERS.OPPONENT : CONTROLLERS.ME;
+    return role === localRole ? CONTROLLERS.ME : CONTROLLERS.OPPONENT;
+  }
+
+  function controllerToRole(controller) {
+    const owner = controller === CONTROLLERS.OPPONENT || controller === 'op' || controller === 'opponent'
+      ? CONTROLLERS.OPPONENT
+      : CONTROLLERS.ME;
+    if (owner === CONTROLLERS.ME) return getLocalRole() || 'host';
+    return getRemoteRole() || 'guest';
+  }
+
+  function normalizeChainController(controllerOrRole) {
+    if (controllerOrRole === CONTROLLERS.ME || controllerOrRole === CONTROLLERS.OPPONENT || controllerOrRole === 'op' || controllerOrRole === 'opponent') {
+      return controllerOrRole === 'op' ? CONTROLLERS.OPPONENT : controllerOrRole;
+    }
+    return roleToController(controllerOrRole);
+  }
+
   function normalizeEffect(effectOrId) {
     if (!effectOrId) throw new Error('[chain-engine] effect가 없습니다.');
     if (typeof effectOrId === 'string') {
@@ -448,12 +484,13 @@
     chainState.responding = true;
     chainState.passCount = 0;
     chainState.priority = normalized.controller === CONTROLLERS.ME ? CONTROLLERS.OPPONENT : CONTROLLERS.ME;
+    const legacyMirror = syncLegacyChainMirror();
 
     if (typeof global.dispatchEvent === 'function' && typeof global.CustomEvent === 'function') {
-      global.dispatchEvent(new global.CustomEvent('hb:chain-link-added', { detail: { chainLink: normalized, chain: getChainState() } }));
+      global.dispatchEvent(new global.CustomEvent('hb:chain-link-added', { detail: { chainLink: normalized, chain: getChainState(), legacyMirror } }));
     }
 
-    return makeOk({ chainLink: normalized, chain: getChainState() });
+    return makeOk({ chainLink: normalized, chain: getChainState(), legacyMirror });
   }
 
   function openChainResponseWindow(ctxOrOptions) {
@@ -464,12 +501,13 @@
 
     chainState.responding = true;
     if (!chainState.priority) chainState.priority = ctx.opponent || (ctx.controller === CONTROLLERS.ME ? CONTROLLERS.OPPONENT : CONTROLLERS.ME);
+    const legacyMirror = syncLegacyChainMirror();
 
     if (typeof global.dispatchEvent === 'function' && typeof global.CustomEvent === 'function') {
-      global.dispatchEvent(new global.CustomEvent('hb:chain-response-window', { detail: { ctx, chain: getChainState() } }));
+      global.dispatchEvent(new global.CustomEvent('hb:chain-response-window', { detail: { ctx, chain: getChainState(), legacyMirror } }));
     }
 
-    return makeOk({ open: true, priority: chainState.priority, chain: getChainState() });
+    return makeOk({ open: true, priority: chainState.priority, chain: getChainState(), legacyMirror });
   }
 
   function findProcessingNegateCandidates(ctx, chainLink, effect) {
@@ -623,6 +661,7 @@
     }
 
     chainState.resolving = true;
+    global._chainResolving = true;
     chainState.responding = false;
     chainState.priority = null;
 
@@ -640,6 +679,7 @@
     if (global.HB_EVENTS && typeof global.HB_EVENTS.dispatchEvents === 'function') {
       global.HB_EVENTS.dispatchEvents(ctx.gameState);
     }
+    global._chainResolving = false;
 
     if (networkSync && typeof networkSync.sendStateDiff === 'function' && typeof networkSync.createStateDiff === 'function' && networkSync.hasNetworkRoom && networkSync.hasNetworkRoom()) {
       const afterNetworkState = networkSync.captureLocalState ? networkSync.captureLocalState() : null;
@@ -662,8 +702,10 @@
     chainState.priority = null;
     chainState.passCount = 0;
     chainState.resolving = false;
+    global._chainResolving = false;
     chainState.resolvedAt = Date.now();
     chainState.id = null;
+    syncLegacyChainMirror();
     return previous;
   }
 
@@ -681,6 +723,53 @@
     });
   }
 
+  function setLegacyChainMirror(mirror) {
+    try {
+      // eslint-disable-next-line no-undef
+      if (typeof activeChainState !== 'undefined') activeChainState = mirror;
+    } catch (_) {}
+    global.activeChainState = mirror;
+    return mirror;
+  }
+
+  function mirrorChainLinkForLegacy(link) {
+    const legacy = link && link.activationData && link.activationData.legacyLink
+      ? Object.assign({}, link.activationData.legacyLink)
+      : {};
+    return Object.freeze(Object.assign({}, legacy, {
+      hbEngine: true,
+      hbEffectId: link.effectId,
+      hbChainLinkId: link.id,
+      chainId: link.chainId || chainState.id || null,
+      by: controllerToRole(link.controller),
+      cardId: legacy.cardId || link.cardId,
+      cardName: legacy.cardName || link.cardName,
+      sourceZone: legacy.sourceZone || link.sourceZone,
+      sourceController: legacy.sourceController || controllerToRole(link.sourceController || link.controller),
+      targets: legacy.targets || link.targets || [],
+    }));
+  }
+
+  function getLegacyChainMirrorState() {
+    const snapshot = getChainState();
+    return Object.freeze({
+      hbEngine: true,
+      id: snapshot.id,
+      active: snapshot.active,
+      links: Object.freeze(snapshot.links.map(mirrorChainLinkForLegacy)),
+      priority: snapshot.priority ? controllerToRole(snapshot.priority) : null,
+      passCount: snapshot.passCount,
+      responding: snapshot.responding,
+      resolving: snapshot.resolving,
+      createdAt: snapshot.createdAt,
+      resolvedAt: snapshot.resolvedAt,
+    });
+  }
+
+  function syncLegacyChainMirror() {
+    return setLegacyChainMirror(chainState.active ? getLegacyChainMirrorState() : null);
+  }
+
   function getChainLinks() {
     return chainState.links.slice();
   }
@@ -691,7 +780,7 @@
 
   function passChainResponse(controller) {
     if (!chainState.active) return makeFail('활성 체인이 없습니다.');
-    const passer = controller || chainState.priority;
+    const passer = normalizeChainController(controller || chainState.priority);
     chainState.passCount += 1;
     // [BUG-1 FIX] passCount >= 2 체크를 priority 전환 전에 수행한다.
     // 기존 코드는 priority를 먼저 뒤집은 뒤 resolveChain에 뒤집힌 값을 넘겨
@@ -701,7 +790,14 @@
       return resolveChain({ controller: passer });
     }
     chainState.priority = passer === CONTROLLERS.ME ? CONTROLLERS.OPPONENT : CONTROLLERS.ME;
-    return makeOk({ chain: getChainState() });
+    return makeOk({ chain: getChainState(), legacyMirror: syncLegacyChainMirror() });
+  }
+
+  function pauseMoveEventDispatchForActivation() {
+    global._hbActivatingChainEffect = Number(global._hbActivatingChainEffect || 0) + 1;
+    return function releaseMoveEventDispatchForActivation() {
+      global._hbActivatingChainEffect = Math.max(0, Number(global._hbActivatingChainEffect || 0) - 1);
+    };
   }
 
   function activateEffect(options) {
@@ -718,6 +814,8 @@
     const can = canActivateEffect(ctx, effect);
     if (!can.ok) return can;
 
+    const releaseMoveEventDispatch = pauseMoveEventDispatchForActivation();
+    try {
     const cardActivationCost = payCardActivationCost(ctx, effect);
     if (!cardActivationCost.ok) return cardActivationCost;
 
@@ -747,6 +845,9 @@
     }
 
     return makeOk({ effect, ctx, chainLink: addResult.chainLink, cardActivationCost, paidCost: cost.paidCost, targets: target.targets, usage, response, chain: getChainState() });
+    } finally {
+      releaseMoveEventDispatch();
+    }
   }
 
   function resetUsageCounters() {
@@ -784,6 +885,10 @@
     getChainState,
     getChainLinks,
     hasActiveChain,
+    roleToController,
+    controllerToRole,
+    getLegacyChainMirrorState,
+    syncLegacyChainMirror,
     getUsageSnapshot,
     resetUsageCounters,
   });

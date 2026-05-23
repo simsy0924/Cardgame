@@ -217,24 +217,35 @@
     return arr.findIndex(card => card && card.id === cardIdOrPredicate);
   }
 
-  function removeCardFromZone(gameState, controller, zone, cardIdOrPredicate) {
+  function matchesCard(card, cardIdOrPredicate) {
+    if (typeof cardIdOrPredicate === 'function') return cardIdOrPredicate(card);
+    return card && card.id === cardIdOrPredicate;
+  }
+
+  function removeCardFromZone(gameState, controller, zone, cardIdOrPredicate, indexHint) {
     const state = resolveGameState(gameState);
     const owner = normalizeController(controller);
     const normalizedZone = normalizeZone(zone);
 
     if (normalizedZone === ZONES.FIELD_ZONE) {
       const current = getFieldZoneCard(state, owner);
-      const matched = typeof cardIdOrPredicate === 'function'
-        ? cardIdOrPredicate(current)
-        : current && current.id === cardIdOrPredicate;
+      const matched = matchesCard(current, cardIdOrPredicate);
       return matched ? clearFieldZoneCard(state, owner) : null;
     }
 
     const sourceZone = normalizedZone === ZONES.PUBLIC_HAND ? ZONES.HAND : normalizedZone;
     assertWritableArrayZone(state, owner, sourceZone);
     const arr = getZoneArray(state, owner, sourceZone);
+    if (typeof indexHint === 'number' && indexHint >= 0 && indexHint < arr.length) {
+      const hintedCard = arr[indexHint];
+      const publicOk = normalizedZone !== ZONES.PUBLIC_HAND || (hintedCard && hintedCard.isPublic);
+      if (publicOk && matchesCard(hintedCard, cardIdOrPredicate)) {
+        return arr.splice(indexHint, 1)[0] || null;
+      }
+    }
+
     const idx = normalizedZone === ZONES.PUBLIC_HAND
-      ? arr.findIndex(card => card && card.isPublic && (typeof cardIdOrPredicate === 'function' ? cardIdOrPredicate(card) : card.id === cardIdOrPredicate))
+      ? arr.findIndex(card => card && card.isPublic && matchesCard(card, cardIdOrPredicate))
       : findCardIndex(arr, cardIdOrPredicate);
 
     if (idx < 0) return null;
