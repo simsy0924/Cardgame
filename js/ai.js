@@ -64,7 +64,7 @@ function _normalizeAIThemeName(theme) {
 function _buildAIDeck() {
   var presets = Array.isArray(window.STARTER_THEME_PRESETS)
     ? window.STARTER_THEME_PRESETS.slice()
-    : ['펭귄','올드원','라이온','타이거','라이거','지배자','마피아','불가사의','엘리멘츠'];
+    : ['펭귄','서커스메어','올드원','라이온','지배자','엘리멘츠'];
 
   var preferredTheme = _normalizeAIThemeName(window.AI.requestedTheme || window.AI.deckTheme || '올드원');
   var candidates = [preferredTheme].concat(presets.filter(function(theme) { return _normalizeAIThemeName(theme) !== preferredTheme; }));

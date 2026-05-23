@@ -7,7 +7,7 @@ window.SHOP_ITEMS = [
 ];
 
 window.STARTER_THEME_PRICE = 350;
-window.STARTER_THEME_PRESETS = ['펭귄','서커스메어','올드원','라이온','타이거','라이거','지배자','마피아','불가사의','엘리멘츠','범용'];
+window.STARTER_THEME_PRESETS = ['펭귄','서커스메어','올드원','라이온','지배자','엘리멘츠','범용'];
 
 window.MISSIONS = [
   { id:'first_win', name:'첫 승리', goal:1, reward:80, metric:'totalWins' },
