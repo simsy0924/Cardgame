@@ -359,7 +359,30 @@ function isPenguinCard(cardId) { return cardId.includes('펭귄'); }
 function isPenguinMonster(cardId) { const card = CARDS[cardId]; return card && card.cardType === 'monster' && isPenguinCard(cardId); }
 function findAllInDeck(predicate) { return G.myDeck.filter(predicate); }
 function removeFromDeck(cardId) { const idx = G.myDeck.findIndex(c => c.id === cardId); if (idx >= 0) { G.myDeck.splice(idx, 1); return true; } return false; }
-function searchToHand(cardId) { if (!removeFromDeck(cardId)) return false; const card = CARDS[cardId]; G.myHand.push({ id: cardId, name: card.name, isPublic: true }); log(`서치: ${card.name} → 공개패`, 'mine'); sendAction({ type: 'search', cardName: card.name }); sendGameState(); return true; }
+function isHandledByNewEngine(cardId) {
+  return !!(window.HB_LEGACY_BRIDGE && typeof window.HB_LEGACY_BRIDGE.isNewEngineCard === 'function' && window.HB_LEGACY_BRIDGE.isNewEngineCard(cardId));
+}
+function searchToHand(cardId) {
+  const card = CARDS[cardId];
+  if (!card) return false;
+  if (window.HB_CARD_MOVE && typeof window.HB_CARD_MOVE.addToHand === 'function') {
+    const idx = G.myDeck.findIndex(c => c.id === cardId);
+    if (idx < 0) return false;
+    const result = window.HB_CARD_MOVE.addToHand({
+      gameState: G,
+      controller: 'me',
+      cardId,
+      from: { controller: 'me', zone: 'deck', index: idx },
+      reveal: true,
+      reason: 'legacySearchToHand',
+    });
+    if (!result || result.ok === false) return false;
+  } else {
+    if (!removeFromDeck(cardId)) return false;
+    G.myHand.push({ id: cardId, name: card.name, isPublic: true });
+  }
+  log(`서치: ${card.name} → 공개패`, 'mine'); sendAction({ type: 'search', cardName: card.name }); sendGameState(); return true;
+}
 function maxFieldSlots(controller = 'me') {
   if (window.HB_CONTINUOUS_ENGINE && typeof window.HB_CONTINUOUS_ENGINE.getAvailableMonsterZoneCount === 'function') {
     try { return window.HB_CONTINUOUS_ENGINE.getAvailableMonsterZoneCount(controller, G); }
@@ -374,10 +397,24 @@ function summonFromDeck(cardId) {
   if (G.myField.length >= maxFieldSlots()) { notify('몬스터 존이 가득 찼습니다.'); return false; }
   const card = CARDS[cardId];
   if (!card || card.cardType !== 'monster') { notify('몬스터만 소환할 수 있습니다.'); return false; }
-  if (!removeFromDeck(cardId)) return false;
-  G.myField.push({ id: cardId, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'deck' });
+  if (window.HB_CARD_MOVE && typeof window.HB_CARD_MOVE.summonCard === 'function') {
+    const idx = G.myDeck.findIndex(c => c.id === cardId);
+    if (idx < 0) return false;
+    const result = window.HB_CARD_MOVE.summonCard({
+      gameState: G,
+      controller: 'me',
+      cardId,
+      from: { controller: 'me', zone: 'deck', index: idx },
+      reason: 'legacySummonFromDeck',
+      summonType: 'legacy',
+    });
+    if (!result || result.ok === false) { notify(result?.error || '소환할 수 없습니다.'); return false; }
+  } else {
+    if (!removeFromDeck(cardId)) return false;
+    G.myField.push({ id: cardId, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'deck' });
+  }
   log(`덱에서 소환: ${card.name}`, 'mine');
-  sendGameState(); onSummon(cardId, 'deck'); return true;
+  sendGameState(); if (!isHandledByNewEngine(cardId)) onSummon(cardId, 'deck'); return true;
 }
 function summonFromHand(handIdx) {
   if (G.myField.length >= maxFieldSlots()) { notify('몬스터 존이 가득 찼습니다.'); return false; }
@@ -385,10 +422,22 @@ function summonFromHand(handIdx) {
   if (!c) return false;
   const card = CARDS[c.id];
   if (!card || card.cardType !== 'monster') return false;
-  G.myHand.splice(handIdx, 1);
-  G.myField.push({ id: c.id, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'hand' });
+  if (window.HB_CARD_MOVE && typeof window.HB_CARD_MOVE.summonCard === 'function') {
+    const result = window.HB_CARD_MOVE.summonCard({
+      gameState: G,
+      controller: 'me',
+      cardId: c.id,
+      from: { controller: 'me', zone: 'hand', index: handIdx },
+      reason: 'legacySummonFromHand',
+      summonType: 'legacy',
+    });
+    if (!result || result.ok === false) { notify(result?.error || '소환할 수 없습니다.'); return false; }
+  } else {
+    G.myHand.splice(handIdx, 1);
+    G.myField.push({ id: c.id, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'hand' });
+  }
   log(`패에서 소환: ${card.name}`, 'mine'); selectedCardIdx = -1;
-  sendGameState(); onSummon(c.id, 'hand'); return true;
+  sendGameState(); if (!isHandledByNewEngine(c.id)) onSummon(c.id, 'hand'); return true;
 }
 function summonFromGrave(cardId) {
   if (G.myField.length >= maxFieldSlots()) { notify('몬스터 존이 가득 찼습니다.'); return false; }
@@ -396,20 +445,66 @@ function summonFromGrave(cardId) {
   if (!card || card.cardType !== 'monster') { notify('몬스터만 소환할 수 있습니다.'); return false; }
   const idx = G.myGrave.findIndex(c => c.id === cardId);
   if (idx < 0) return false;
-  const c = G.myGrave.splice(idx, 1)[0];
-  G.myField.push({ id: cardId, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'grave' });
-  log(`묘지에서 소환: ${card.name}`, 'mine'); sendGameState(); onSummon(cardId, 'grave'); return true;
+  if (window.HB_CARD_MOVE && typeof window.HB_CARD_MOVE.summonCard === 'function') {
+    const result = window.HB_CARD_MOVE.summonCard({
+      gameState: G,
+      controller: 'me',
+      cardId,
+      from: { controller: 'me', zone: 'grave', index: idx },
+      reason: 'legacySummonFromGrave',
+      summonType: 'legacy',
+    });
+    if (!result || result.ok === false) { notify(result?.error || '소환할 수 없습니다.'); return false; }
+  } else {
+    G.myGrave.splice(idx, 1);
+    G.myField.push({ id: cardId, name: card.name, atk: card.atk || 0, atkBase: card.atk || 0, summonedFrom: 'grave' });
+  }
+  log(`묘지에서 소환: ${card.name}`, 'mine'); sendGameState(); if (!isHandledByNewEngine(cardId)) onSummon(cardId, 'grave'); return true;
 }
 function drawOne() {
   if (G.myDeck.length === 0) { G.myDeck = shuffle(G.myGrave.map(c => ({...c}))); G.myGrave = []; log('덱 소진! 묘지를 덱으로 되돌렸습니다.', 'system'); }
   if (G.myDeck.length === 0) { notify('덱이 비었습니다.'); return null; }
-  const c = G.myDeck.shift(); G.myHand.push({ id: c.id, name: c.name, isPublic: false });
+  let c = G.myDeck[0];
+  if (window.HB_CARD_MOVE && typeof window.HB_CARD_MOVE.addToHand === 'function') {
+    const result = window.HB_CARD_MOVE.addToHand({
+      gameState: G,
+      controller: 'me',
+      cardId: c.id,
+      from: { controller: 'me', zone: 'deck', index: 0 },
+      reveal: false,
+      reason: 'legacyDraw',
+    });
+    if (!result || result.ok === false) { notify(result?.error || '드로우할 수 없습니다.'); return null; }
+    c = result.movedCard || c;
+  } else {
+    c = G.myDeck.shift(); G.myHand.push({ id: c.id, name: c.name, isPublic: false });
+  }
   log(`드로우: ${c.name}`, 'mine'); sendGameState(); return c;
 }
 function drawN(n) { for (let i = 0; i < n; i++) drawOne(); }
 function sendToGrave(cardId, from = 'field') {
-  if (from === 'field') { const idx = G.myField.findIndex(c => c.id === cardId); if (idx >= 0) { G.myGrave.push(G.myField.splice(idx, 1)[0]); log(`${CARDS[cardId]?.name || cardId} 묘지로`, 'mine'); onSentToGrave(cardId); } }
-  else if (from === 'hand') { const idx = G.myHand.findIndex(c => c.id === cardId); if (idx >= 0) { G.myGrave.push(G.myHand.splice(idx, 1)[0]); } }
+  const zone = from === 'grave' || from === 'deck' || from === 'hand' ? from : 'field';
+  const source = zone === 'deck' ? G.myDeck : (zone === 'grave' ? G.myGrave : (zone === 'hand' ? G.myHand : G.myField));
+  const idx = source.findIndex(c => c.id === cardId);
+  if (idx < 0) { sendGameState(); return; }
+  if (window.HB_CARD_MOVE && typeof window.HB_CARD_MOVE.sendToGrave === 'function') {
+    const result = window.HB_CARD_MOVE.sendToGrave({
+      gameState: G,
+      controller: 'me',
+      cardId,
+      from: { controller: 'me', zone, index: idx },
+      reason: 'legacySendToGrave',
+    });
+    if (!result || result.ok === false) { notify(result?.error || '묘지로 보낼 수 없습니다.'); return; }
+  } else if (zone === 'field') {
+    G.myGrave.push(G.myField.splice(idx, 1)[0]);
+  } else if (zone === 'hand') {
+    G.myGrave.push(G.myHand.splice(idx, 1)[0]);
+  } else if (zone === 'deck') {
+    G.myGrave.push(G.myDeck.splice(idx, 1)[0]);
+  }
+  if (zone === 'field') log(`${CARDS[cardId]?.name || cardId} 묘지로`, 'mine');
+  if (!isHandledByNewEngine(cardId)) onSentToGrave(cardId);
   sendGameState();
 }
 
@@ -423,9 +518,24 @@ function sendToGrave(cardId, from = 'field') {
 function sendToExile(card, from = 'field') {
   const cardObj = (typeof card === 'string') ? { id: card, name: CARDS[card]?.name || card } : card;
   if (!cardObj) return;
-  G.myExile.push(cardObj);
+  const zone = from === 'grave' || from === 'deck' || from === 'hand' ? from : 'field';
+  const source = zone === 'deck' ? G.myDeck : (zone === 'grave' ? G.myGrave : (zone === 'hand' ? G.myHand : G.myField));
+  const idx = source.findIndex(c => c.id === cardObj.id);
+  if (window.HB_CARD_MOVE && typeof window.HB_CARD_MOVE.banishCard === 'function' && idx >= 0) {
+    const result = window.HB_CARD_MOVE.banishCard({
+      gameState: G,
+      controller: 'me',
+      cardId: cardObj.id,
+      from: { controller: 'me', zone, index: idx },
+      reason: 'legacySendToExile',
+    });
+    if (!result || result.ok === false) return;
+  } else {
+    if (idx >= 0) source.splice(idx, 1);
+    G.myExile.push(cardObj);
+  }
   // 크툴루 제외 트리거
-  if (typeof window._onCthulhuExiled === 'function') window._onCthulhuExiled(cardObj.id);
+  if (!isHandledByNewEngine(cardObj.id) && typeof window._onCthulhuExiled === 'function') window._onCthulhuExiled(cardObj.id);
 }
 function onSummon(cardId, from) {
   // 15단계: 신엔진 카드/신엔진 유발 후보가 있으면 레거시 onSummon switch를 타지 않는다.

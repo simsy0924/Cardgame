@@ -84,12 +84,63 @@
     return false;
   }
 
+  function getMigrationInfo(cardOrId) {
+    const card = getCardDef(cardOrId) || (typeof cardOrId === 'object' ? cardOrId : null);
+    return (card && (card.migration || card.engineMigration || card.hbMigration)) || null;
+  }
+
+  function isFullyMigratedCard(cardOrId) {
+    const migration = getMigrationInfo(cardOrId);
+    if (migration && migration.fullyMigrated === false) return false;
+    if (migration && migration.fullyMigrated === true) return true;
+    return hasRegisteredEffects(cardOrId);
+  }
+
+  function getRegisteredEffectsForCard(cardOrId) {
+    const cardId = getCardId(cardOrId);
+    if (!cardId || !registry || typeof registry.getEffectsByCardId !== 'function') return [];
+    return registry.getEffectsByCardId(cardId);
+  }
+
+  function effectNoMatches(effect, effectNo) {
+    if (effectNo == null) return true;
+    return effect && effect.effectNo != null && String(effect.effectNo) === String(effectNo);
+  }
+
+  function migrationIncludesEffect(cardOrId, effectNo) {
+    if (effectNo == null) return null;
+    const migration = getMigrationInfo(cardOrId);
+    if (!migration || !Array.isArray(migration.migratedEffects)) return null;
+    return migration.migratedEffects.map(String).indexOf(String(effectNo)) !== -1;
+  }
+
+  function hasRegisteredEffect(cardOrId, effectNo, zone) {
+    if (effectNo == null) return hasRegisteredEffects(cardOrId);
+    const explicit = migrationIncludesEffect(cardOrId, effectNo);
+    if (explicit === false) return false;
+    const effects = getRegisteredEffectsForCard(cardOrId);
+    return effects.some(effect => {
+      if (!effectNoMatches(effect, effectNo)) return false;
+      if (!zone) return true;
+      const zones = effect.zones || (effect.zone ? [effect.zone] : []);
+      return zones.length === 0 || zones.indexOf(zone) !== -1;
+    }) || explicit === true;
+  }
+
+  function isNewEngineEffect(cardOrId, effectNo, zone) {
+    return hasRegisteredEffect(cardOrId, effectNo, zone);
+  }
+
   function isNewEngineCard(cardOrId) {
     return hasRegisteredEffects(cardOrId);
   }
 
   function shouldUseLegacyCard(cardOrId) {
-    return !isNewEngineCard(cardOrId);
+    return !isFullyMigratedCard(cardOrId);
+  }
+
+  function shouldUseLegacyEffect(cardOrId, effectNo, zone) {
+    return !isNewEngineEffect(cardOrId, effectNo, zone);
   }
 
   function inferHandIndex(ctx) {
@@ -120,7 +171,13 @@
     const opts = ctx || {};
     const card = opts.card || getCardDef(cardOrId) || (typeof cardOrId === 'object' ? cardOrId : null);
     const cardId = getCardId(card || cardOrId);
+    const zone = opts.zone || opts.sourceZone || ZONES.HAND;
+    const preferredEffectNo = opts.effectNo != null ? String(opts.effectNo) : null;
     if (!cardId) return makeFail('카드 정보가 없습니다.', { usedNewEngine: false });
+
+    if (preferredEffectNo && shouldUseLegacyEffect(card || cardId, preferredEffectNo, zone)) {
+      return makeOk({ usedNewEngine: false, useLegacy: true, cardId, effectNo: preferredEffectNo });
+    }
 
     if (!isNewEngineCard(card || cardId)) {
       return makeOk({ usedNewEngine: false, useLegacy: true, cardId });
@@ -128,7 +185,6 @@
 
     const state = resolveGameState(opts.gameState);
     const controller = normalizeController(opts.controller || opts.player || CONTROLLERS.ME);
-    const zone = opts.zone || opts.sourceZone || ZONES.HAND;
     const sourceIndex = inferSourceIndex(Object.assign({}, opts, { zone }));
 
     // 패에서 필드 카드 발동은 field-zone 엔진의 선처리 규칙을 반드시 탄다.
@@ -172,7 +228,6 @@
       return makeFail('현재 발동 가능한 신엔진 효과가 없습니다.', { usedNewEngine: true, cardId, entries });
     }
 
-    const preferredEffectNo = opts.effectNo != null ? String(opts.effectNo) : null;
     const selected = preferredEffectNo
       ? (entries.find(entry => entry.effect && String(entry.effect.effectNo) === preferredEffectNo) || entries[0])
       : entries[0];
@@ -274,8 +329,12 @@
 
   const api = Object.freeze({
     isNewEngineCard,
+    isNewEngineEffect,
+    isFullyMigratedCard,
     hasRegisteredEffects,
+    hasRegisteredEffect,
     shouldUseLegacyCard,
+    shouldUseLegacyEffect,
     routeCardActivation,
     routeSummonTrigger,
     routeSentToGraveTrigger,
@@ -289,6 +348,8 @@
 
   // 실행계획에 나온 이름을 디버그/테스트에서 바로 쓸 수 있게 노출한다.
   global.isNewEngineCard = isNewEngineCard;
+  global.isNewEngineEffect = isNewEngineEffect;
+  global.isFullyMigratedCard = isFullyMigratedCard;
   global.hasRegisteredEffects = hasRegisteredEffects;
   global.routeCardActivation = routeCardActivation;
   global.routeSummonTrigger = routeSummonTrigger;

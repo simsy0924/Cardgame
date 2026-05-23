@@ -854,10 +854,15 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
     // EffectDefinition 기준 UI만 사용한다. 아직 이식되지 않은 카드는 기존 버튼을 유지한다.
     const detailZone = handIdx >= 0 ? 'hand' : (handIdx === -2 ? 'grave' : (handIdx === -3 ? 'fieldZone' : (fieldIdx >= 0 ? 'field' : null)));
     let usingNewEffectUi = false;
-    if (!opponentCard && detailZone && window.HB_LEGACY_BRIDGE && window.HB_LEGACY_BRIDGE.isNewEngineCard(card)) {
+    const bridge = window.HB_LEGACY_BRIDGE;
+    const hasNewEngineEffects = !!(bridge && typeof bridge.isNewEngineCard === 'function' && bridge.isNewEngineCard(card));
+    const suppressLegacyButtons = !!(bridge && typeof bridge.isFullyMigratedCard === 'function'
+      ? bridge.isFullyMigratedCard(card)
+      : hasNewEngineEffects);
+    if (!opponentCard && detailZone && hasNewEngineEffects) {
       try {
         if (detailZone === 'fieldZone') {
-          window.HB_LEGACY_BRIDGE.routeFieldZoneClick(card, {
+          bridge.routeFieldZoneClick(card, {
             gameState: G,
             player: 'me',
             controller: 'me',
@@ -877,7 +882,7 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
             showNoEffectHint: true,
           });
         }
-        usingNewEffectUi = true;
+        usingNewEffectUi = suppressLegacyButtons;
       } catch (err) {
         console.error('[ui] 신엔진 효과 버튼 생성 오류:', err);
         notify('신규 효과 버튼 생성 오류: ' + err.message);
