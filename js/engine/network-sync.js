@@ -38,6 +38,28 @@
     'gameOver',
   ]);
 
+  const RECEIVER_MUTATING_ACTIONS = new Set([
+    'combat',
+    'directAttack',
+    'returnToHand',
+    'opFieldRemove',
+    'opFieldExile',
+    'opFieldCardRemove',
+    'opGraveExile',
+    'opGraveMassExile',
+    'opAtkChange',
+    'opDeckTopExile',
+    'opDiscard',
+    'opDiscardRandom',
+    'opDraw',
+    'forceReturnHand',
+    'forceDiscard',
+    'revealAllHand',
+    'searchBan',
+    'exileBan',
+    'negateField',
+  ]);
+
   let lastAppliedDiffId = null;
   let lastAppliedSnapshotId = null;
   let lastResolvedChainAt = 0;
@@ -416,6 +438,7 @@
     if (!hasNetworkRoom()) return false;
     if (action.authoritative === true || action.sync === 'authoritative') return false;
     if (PUBLIC_ACTIONS.has(action.type)) return false;
+    if (RECEIVER_MUTATING_ACTIONS.has(action.type)) return false;
     return STATE_MUTATING_ACTIONS.has(action.type);
   }
 
@@ -527,6 +550,7 @@
     listenStateDiffs,
     STATE_MUTATING_ACTIONS,
     PUBLIC_ACTIONS,
+    RECEIVER_MUTATING_ACTIONS,
   });
 
   global.HB_NETWORK_SYNC = api;

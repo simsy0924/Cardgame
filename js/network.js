@@ -389,6 +389,57 @@ function _discardOpponentHandRandomly(n, reason) {
   }
   return count;
 }
+
+function _syncAfterOpponentAction() {
+  sendGameState();
+  renderAll();
+  checkWinCondition();
+}
+
+function _discardMyHandRandomly(n, reason) {
+  const count = Math.max(0, Math.min(n || 0, G.myHand.length));
+  if (count <= 0) return 0;
+  for (let i = 0; i < count; i++) {
+    const idx = Math.floor(Math.random() * G.myHand.length);
+    const c = G.myHand.splice(idx, 1)[0];
+    if (c) G.myGrave.push(c);
+  }
+  log(`상대 효과: 패 ${count}장 랜덤 버리기${reason ? ` (${reason})` : ''}`, 'opponent');
+  _syncAfterOpponentAction();
+  return count;
+}
+
+function _discardMyHandByCardId(cardId, reason) {
+  if (!cardId) return 0;
+  const idx = G.myHand.findIndex(c => c && c.id === cardId);
+  if (idx < 0) return 0;
+  const c = G.myHand.splice(idx, 1)[0];
+  G.myGrave.push(c);
+  log(`상대 효과: ${c.name || c.id} 버리기${reason ? ` (${reason})` : ''}`, 'opponent');
+  _syncAfterOpponentAction();
+  return 1;
+}
+
+function _returnMyFieldToHand(count, reason) {
+  const actual = Math.max(0, Math.min(Number(count || 0), G.myField.length));
+  if (actual <= 0) return;
+  const finish = (indices) => {
+    const sorted = [...new Set(indices)].sort((a, b) => b - a);
+    sorted.forEach(i => {
+      if (!Number.isInteger(i) || i < 0 || i >= G.myField.length) return;
+      const c = G.myField.splice(i, 1)[0];
+      if (c) G.myHand.push({ id: c.id, name: c.name, isPublic: true });
+    });
+    log(`상대 효과: 필드 카드 ${sorted.length}장을 패로 되돌림${reason ? ` (${reason})` : ''}`, 'opponent');
+    _syncAfterOpponentAction();
+  };
+  if (actual >= G.myField.length) {
+    finish(G.myField.map((_, i) => i));
+    return;
+  }
+  openCardPicker(G.myField, `상대 효과: 패로 되돌릴 카드 ${actual}장 선택${reason ? ` (${reason})` : ''}`, actual, finish, true);
+}
+
 function sendAction(action) {
   if (!roomRef) {
     // AI 모드: forceDiscard는 AI가 직접 처리
@@ -496,16 +547,33 @@ function handleOpponentAction(action) {
         }
       }
       break;
+    case 'forceReturnHand':
+      _returnMyFieldToHand(action.count || 1, action.reason || '');
+      break;
+    case 'opDraw':
+      {
+        const cnt = Math.max(0, Number(action.count || 1));
+        for (let i = 0; i < cnt; i++) drawOne();
+        log(`상대 효과: ${cnt}장 드로우${action.reason ? ` (${action.reason})` : ''}`, 'opponent');
+        _syncAfterOpponentAction();
+      }
+      break;
+    case 'opDiscardRandom':
+      _discardMyHandRandomly(action.count || 1, action.reason || '');
+      break;
+    case 'opDiscard':
+      _discardMyHandByCardId(action.cardId, action.reason || '');
+      break;
     case 'revealAllHand':
       G.myHand.forEach(c => { c.isPublic = true; });
       log('상대 효과: 내 패 전부 공개됨!', 'opponent');
       notify('내 패가 전부 공개됐습니다!');
-      renderAll();
+      _syncAfterOpponentAction();
       break;
     case 'returnToHand':
       // 내 필드 카드가 패로 돌아옴
       { const idx = G.myField.findIndex(c => c.id === action.cardId);
-        if (idx >= 0) { const mon = G.myField.splice(idx,1)[0]; G.myHand.push({id:mon.id,name:mon.name,isPublic:true}); renderAll(); } }
+        if (idx >= 0) { const mon = G.myField.splice(idx,1)[0]; G.myHand.push({id:mon.id,name:mon.name,isPublic:true}); _syncAfterOpponentAction(); } }
       break;
     case 'opFieldRemove':
       // 내 필드 카드가 제거됨 (묘지 또는 제외)
@@ -522,7 +590,7 @@ function handleOpponentAction(action) {
           const mon = G.myField.splice(idx, 1)[0];
           if (action.to === 'grave') G.myGrave.push(mon);
           else G.myExile.push(mon);
-          renderAll();
+          _syncAfterOpponentAction();
         }
       }
       break;
@@ -540,7 +608,7 @@ function handleOpponentAction(action) {
           const mon = G.myField.splice(idx, 1)[0];
           G.myExile.push(mon);
           log(`상대 효과로 ${mon.name} 제외됨`, 'opponent');
-          renderAll();
+          _syncAfterOpponentAction();
         }
       }
       break;
@@ -566,7 +634,7 @@ function handleOpponentAction(action) {
       }
       log(`상대 효과: ${nfName} 효과 무효 (턴 종료까지)`, 'opponent');
       notify(applied ? `${nfName}의 효과가 턴 종료시까지 무효화되었습니다.` : `${nfName}의 효과가 무효됐습니다!`);
-      renderAll();
+      _syncAfterOpponentAction();
       break;
     }
     case 'opGraveExile': {
@@ -577,7 +645,7 @@ function handleOpponentAction(action) {
         G.myExile.push(c);
         log(`상대 효과: 내 묘지 ${c.name} 제외됨`, 'opponent');
       }
-      renderAll();
+      _syncAfterOpponentAction();
       break;
     }
     case 'opAtkChange': {
@@ -587,7 +655,23 @@ function handleOpponentAction(action) {
         G.myField[fi].atk = Math.max(0, (G.myField[fi].atk || 0) + (action.delta || 0));
         log(`상대 효과: 내 ${G.myField[fi].name} ATK ${action.delta > 0 ? '+' : ''}${action.delta} → ${G.myField[fi].atk}`, 'opponent');
       }
-      renderAll();
+      _syncAfterOpponentAction();
+      break;
+    }
+    case 'opGraveMassExile': {
+      const count = Math.max(0, Number(action.count || G.myGrave.length));
+      const moved = G.myGrave.splice(0, Math.min(count, G.myGrave.length));
+      moved.forEach(c => G.myExile.push(c));
+      log(`상대 효과: 묘지 ${moved.length}장 제외${action.reason ? ` (${action.reason})` : ''}`, 'opponent');
+      _syncAfterOpponentAction();
+      break;
+    }
+    case 'opDeckTopExile': {
+      const count = Math.max(0, Number(action.count || 1));
+      const moved = G.myDeck.splice(0, Math.min(count, G.myDeck.length));
+      moved.forEach(c => G.myExile.push(c));
+      log(`상대 효과: 덱 위 ${moved.length}장 제외${action.reason ? ` (${action.reason})` : ''}`, 'opponent');
+      _syncAfterOpponentAction();
       break;
     }
     case 'opFieldCardRemove': {
@@ -599,7 +683,7 @@ function handleOpponentAction(action) {
         else G.myExile.push(c);
         log(`상대 효과: 내 필드 카드 ${c.name} 제거됨`, 'opponent');
       }
-      renderAll();
+      _syncAfterOpponentAction();
       break;
     }
     case 'searchBan':
@@ -608,6 +692,7 @@ function handleOpponentAction(action) {
       break;
     case 'exileBan':
       G.exileBanActive = true;
+      _syncAfterOpponentAction();
       log('신성한 수호자: 이 턴 서로 카드 제외 불가!', 'system');
       notify('이 턴 카드를 제외할 수 없습니다!');
       break;
@@ -664,7 +749,7 @@ function handleOpponentCombat(action) {
       onSentToGrave(mon.id);
     }
     log(`내 ${defCard.name} 묘지. 패 ${diff}장 피해`, 'opponent');
-    renderAll();
+    _syncAfterOpponentAction();
     // 펭귄 마을 ②, 구사일생 포함 피해 처리
     _resolveCombatDamage(diff);
   } else if (diff < 0) {
@@ -672,7 +757,7 @@ function handleOpponentCombat(action) {
     const opIdx = G.opField.findIndex(c => c.id === atkCard.id);
     if (opIdx >= 0) G.opGrave.push(G.opField.splice(opIdx, 1)[0]);
     log(`상대 ${atkCard.name} 묘지`, 'mine');
-    renderAll();
+    _syncAfterOpponentAction();
   } else {
     if (atkCard.atk !== 0) {
       const myIdx = G.myField.findIndex(c => c.id === defCard.id);
@@ -681,7 +766,7 @@ function handleOpponentCombat(action) {
       if (opIdx >= 0) G.opGrave.push(G.opField.splice(opIdx, 1)[0]);
       log('공격력 동일 — 양쪽 묘지', 'system');
     }
-    renderAll();
+    _syncAfterOpponentAction();
   }
 }
 

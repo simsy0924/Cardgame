@@ -12,10 +12,16 @@ module.exports = function runChainNetworkSafetyTests() {
 
   ctx.roomRef = {};
   assert(ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'summon' }), 'network summon lastAction should be suppressed');
-  assert(ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'forceDiscard' }), 'network forceDiscard lastAction should be suppressed');
-  assert(ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'opDiscard' }), 'network opDiscard lastAction should be suppressed');
-  assert(ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'revealAllHand' }), 'network revealAllHand lastAction should be suppressed');
-  assert(ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'exileBan' }), 'network exileBan lastAction should be suppressed');
+  assert(ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'fieldCard' }), 'network fieldCard lastAction should be suppressed');
+  assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'combat' }), 'combat must run on the receiver to resolve local damage');
+  assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'directAttack' }), 'directAttack must run on the receiver to resolve local damage');
+  assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'forceDiscard' }), 'forceDiscard must run on the receiver so the owner discards real cards');
+  assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'forceReturnHand' }), 'forceReturnHand must run on the receiver so the owner returns real cards');
+  assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'opDiscard' }), 'opDiscard must run on the receiver');
+  assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'opDiscardRandom' }), 'opDiscardRandom must run on the receiver');
+  assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'opDraw' }), 'opDraw must run on the receiver');
+  assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'revealAllHand' }), 'revealAllHand must run on the receiver');
+  assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'exileBan' }), 'exileBan must run on the receiver');
   assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'draw' }), 'draw lastAction should remain log/public only');
   assert(!ctx.HB_NETWORK_SYNC.shouldSuppressLegacyAction({ type: 'search' }), 'search lastAction should remain log/public only');
 
