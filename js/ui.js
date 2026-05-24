@@ -909,18 +909,18 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
             switch(cardId) {
               case '펭귄 마을':
                 if (isMyTurn && currentPhase === 'deploy' && !G.myHand[handIdx]?.isPublic)
-                  addBtn('① 공개하기', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                  addBtn('① 공개하기', 'btn-primary', () => activateCard(handIdx, 1));
                 break;
 
               case '꼬마 펭귄':
                 if (isMyTurn && currentPhase === 'deploy')
-                  addBtn('① 패에서 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                  addBtn('① 패에서 소환', 'btn-primary', () => activateCard(handIdx, 1));
                 break;
 
               case '펭귄 부부':
                 // ② 보여주기: 패에서 발동 — 조건 없음 (단 1턴 1번)
                 if (canUseEffect('펭귄 부부', 2))
-                  addBtn('② 보여주기 → 드로우2 + 버리기', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
+                  addBtn('② 보여주기 → 드로우2 + 버리기', 'btn-secondary', () => activateCard(handIdx, 2));
                 break;
 
               case '현자 펭귄':
@@ -934,7 +934,7 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
 
               case '펭귄!돌격!':
                 if (isMyTurn && currentPhase === 'deploy' && hasDeckPenguin)
-                  addBtn('① 덱에서 펭귄 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                  addBtn('① 덱에서 펭귄 소환', 'btn-primary', () => activateCard(handIdx, 1));
                 else if (isMyTurn && currentPhase === 'deploy' && !hasDeckPenguin)
                   addBtn('① 덱에 펭귄 몬스터 없음', 'btn-secondary', () => notify('덱에 펭귄 몬스터가 없습니다.'));
                 break;
@@ -943,7 +943,7 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                 // ①: 자신/상대 전개 단계 + 패에 펭귄 용사 또는 펭귄의 전설(용사 취급) 필요
                 { const heroAvail = G.myHand.some(c => c.id === '펭귄 용사' || c.id === '펭귄의 전설');
                   if (currentPhase === 'deploy' && heroAvail)
-                    addBtn('① 펭귄 용사/전설 소환 + 상대 패 공개', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                    addBtn('① 펭귄 용사/전설 소환 + 상대 패 공개', 'btn-primary', () => activateCard(handIdx, 1));
                   else if (currentPhase !== 'deploy')
                     addBtn('① 전개 단계에서만 발동 가능', 'btn-secondary', () => notify('펭귄의 영광 ①은 자신/상대 전개 단계에만 발동할 수 있습니다.'));
                   else
@@ -961,7 +961,7 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                 {
                   const hasPenguinField = G.myField.some(c => isPenguinMonster(c.id));
                   if (hasPenguinField && canUseEffect('펭귄의 일격', 1))
-                    addBtn('① 패 1장 버리고 효과 무효', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                    addBtn('① 패 1장 버리고 효과 무효', 'btn-primary', () => activateCard(handIdx, 1));
                   else if (!hasPenguinField)
                     addBtn('① 필드에 펭귄 몬스터 필요', 'btn-secondary', () => notify('자신 필드에 펭귄 몬스터가 필요합니다.'));
                 }
@@ -971,7 +971,7 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                 // ①: 서로 필드 카드 1장씩 패로 — 내 필드(몬스터 또는 필드 마법)에 카드 필요
                 { const myHasAnyField = G.myField.length > 0 || G.myFieldCard != null;
                   if (canActAnytime && myHasAnyField)
-                    addBtn('① 필드 카드 교환 + 소환', 'btn-primary', () => activatePenguinCard(handIdx, 1));
+                    addBtn('① 필드 카드 교환 + 소환', 'btn-primary', () => activateCard(handIdx, 1));
                   else if (!myHasAnyField)
                     addBtn('① 발동 불가 (내 필드에 카드 없음)', 'btn-secondary', () => notify('내 필드에 카드가 있어야 합니다.'));
                 }
@@ -982,13 +982,13 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                 // 패에 있을 경우: 자신 필드에 몬스터가 있을 때만 패에 넣을 수 있으므로
                 // 이미 패에 있는 상태 → ②만 표시
                 if (!isMyTurn)
-                  addBtn('② 패로 + 묘지 소환 (상대 턴)', 'btn-secondary', () => activatePenguinCard(handIdx, 2));
+                  addBtn('② 패로 + 묘지 소환 (상대 턴)', 'btn-secondary', () => activateCard(handIdx, 2));
                 break;
 
               case '펭귄 마법사':
                 // ①: 일반 패(비공개)일 때만
                 if (!G.myHand[handIdx]?.isPublic && canUseEffect('펭귄 마법사', 1, 2) && hasDeckPenguinCard)
-                  addBtn('① 보여주기 → 서치 → 덱으로', 'btn-secondary', () => activatePenguinCard(handIdx, 1));
+                  addBtn('① 보여주기 → 서치 → 덱으로', 'btn-secondary', () => activateCard(handIdx, 1));
                 else if (G.myHand[handIdx]?.isPublic)
                   addBtn('① 공개패에서는 발동 불가', 'btn-secondary', () => notify('일반 패(비공개)에서만 발동할 수 있습니다.'));
                 else if (!hasDeckPenguinCard)
@@ -1079,8 +1079,8 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
             // [BUG FIX] 엘리멘츠 테마 추가 — activateCard 경유 대신 직접 핸들러 호출
             const effectText = card.effects || '';
             if (effectText.includes('①')) addBtn('① 효과 발동', 'btn-primary', () => activateCard(handIdx));
-            if (effectText.includes('②')) addBtn('② 효과 발동', 'btn-secondary', () => { const h = window.THEME_EFFECT_HANDLERS?.[card.theme]; h ? h.activateFromHand(handIdx, 2) : activateThemeCardEffectFromHand(handIdx, 2); });
-            if (effectText.includes('③')) addBtn('③ 효과 발동', 'btn-secondary', () => { const h = window.THEME_EFFECT_HANDLERS?.[card.theme]; h ? h.activateFromHand(handIdx, 3) : activateThemeCardEffectFromHand(handIdx, 3); });
+            if (effectText.includes('②')) addBtn('② 효과 발동', 'btn-secondary', () => activateCard(handIdx, 2));
+            if (effectText.includes('③')) addBtn('③ 효과 발동', 'btn-secondary', () => activateCard(handIdx, 3));
             addBtn('패에서 버리기', 'btn-danger', () => manualDiscard(handIdx));
           } else {
             // [BUG FIX] 몬스터 카드도 activateCard로 — "통상 소환 없음" 메시지 제거

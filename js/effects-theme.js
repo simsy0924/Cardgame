@@ -161,7 +161,7 @@ function initDecks() {
 //        activateQuickEffect를 통해 체인 블록을 형성해야 한다.
 //        코스트(패 버리기, 제외 등)는 체인 발동 직전에 처리한다.
 // ─────────────────────────────────────────────
-function activateCard(handIdx) {
+function activateCard(handIdx, effectNo) {
   const c = G.myHand[handIdx];
   if (!c) return;
   const card = CARDS[c.id];
@@ -177,6 +177,7 @@ function activateCard(handIdx) {
       handIdx,
       sourceZone: 'hand',
       zone: 'hand',
+      effectNo: effectNo != null ? effectNo : undefined,
     });
     if (routed && routed.ok === false) notify(routed.error || '신엔진 효과를 발동할 수 없습니다.');
     return;
