@@ -1148,22 +1148,28 @@ function resolveKeyFetch(cardId) {
   // 이렇게 해야 ADDED_TO_HAND 이벤트가 발행되어 공개 패 트리거 효과
   // (젊은 라이온 ①, 마피아의 제안 ② 등)가 정상 발동된다.
   const cardName = CARDS[cardId]?.name || cardId;
+  let moved = false;
   if (window.HB_CARD_MOVE && typeof window.HB_CARD_MOVE.addToHand === 'function') {
-    const result = window.HB_CARD_MOVE.addToHand({
-      gameState: G,
-      controller: 'me',
-      cardId,
-      from: { controller: 'me', zone: 'keyDeck', index: idx },
-      reveal: true, // 공개 패로
-      reason: 'keyFetch',
-    });
-    if (result && result.ok === false) {
-      notify(result.error || '키 카드 가져오기에 실패했습니다.');
-      return;
+    try {
+      const result = window.HB_CARD_MOVE.addToHand({
+        gameState: G,
+        controller: 'me',
+        cardId,
+        from: { controller: 'me', zone: 'keyDeck' },
+        reveal: true, // 공개 패로
+        reason: 'keyFetch',
+      });
+      if (result && result.ok !== false) moved = true;
+      else console.warn('[keyFetch] HB_CARD_MOVE.addToHand 실패:', result);
+    } catch (err) {
+      console.warn('[keyFetch] HB_CARD_MOVE.addToHand 예외:', err);
     }
-  } else {
-    // 폴백: HB_CARD_MOVE 미가용 시 직접 이동 (이벤트 발행 안 됨)
-    const c = G.myKeyDeck.splice(idx, 1)[0];
+  }
+  if (!moved) {
+    // 폴백: 직접 이동 (트리거는 발동 안 되지만 카드 자체는 패로 들어옴)
+    const i = G.myKeyDeck.findIndex(c => c.id === cardId);
+    if (i < 0) { notify('키 카드를 찾을 수 없습니다.'); return; }
+    const c = G.myKeyDeck.splice(i, 1)[0];
     G.myHand.push({ id: c.id, name: c.name, isPublic: true });
   }
   log(`키 카드 가져오기: ${cardName} (공개패)`, 'mine');
