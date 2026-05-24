@@ -691,6 +691,12 @@
       global.dispatchEvent(new global.CustomEvent('hb:chain-resolved', { detail: { chain: chainBeforeClear, resolved, errors } }));
     }
 
+    // 발동(권위) 측에서도 UI를 즉시 새로 그린다.
+    // 상대는 sendStateDiff → network-sync.applySnapshot이 renderAll을 호출하지만,
+    // 발동 측은 자체적으로 mutate만 했을 뿐 렌더 트리거가 없어 다음 사용자 액션(키카드 fetch 등)까지 화면이 갱신되지 않는다.
+    try { if (typeof global.sendGameState === 'function') global.sendGameState(); } catch (_) {}
+    try { if (typeof global.renderAll === 'function') global.renderAll(); } catch (_) {}
+
     return makeOk({ resolved, count: resolved.length, errors, chain: chainBeforeClear });
   }
 
