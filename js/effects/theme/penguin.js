@@ -905,6 +905,9 @@
         return isDeployPhase(ctx) && hasFieldSpace(ctx)
           && findZoneCards(ctx, ZONES.HAND, c => c.id === '펭귄 용사' || c.id === '펭귄의 전설').length > 0;
       },
+      collectChoices(ctx) {
+        return { candidates: findZoneCards(ctx, ZONES.HAND, c => c.id === '펭귄 용사' || c.id === '펭귄의 전설'), title: '소환할 카드 선택 (펭귄 용사/전설)', count: 1, emptyMessage: '패에 펭귄 용사/전설이 없습니다.' };
+      },
       resolve(ctx) {
         const candidates = findZoneCards(ctx, ZONES.HAND, c => c.id === '펭귄 용사' || c.id === '펭귄의 전설');
         const target = firstOrSelected(ctx, candidates, { byId: true });
