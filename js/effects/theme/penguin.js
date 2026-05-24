@@ -1292,6 +1292,9 @@
       tags: ['returnSelfToHand', TAGS.GRAVE_SUMMON, TAGS.EXILE_SUMMON],
       oncePerTurn: { key: '펭귄의 전설_2', limit: 1 },
       condition(ctx) { return !isMyTurnFallback(ctx) && hasFieldSpace(ctx) && findZoneCards(ctx, ZONES.GRAVE, isPenguinMonster).concat(findZoneCards(ctx, ZONES.EXILE, isPenguinMonster)).length > 0; },
+      collectChoices(ctx) {
+        return { candidates: findZoneCards(ctx, ZONES.GRAVE, isPenguinMonster).concat(findZoneCards(ctx, ZONES.EXILE, isPenguinMonster)), title: '묘지/제외의 펭귄 몬스터 1장 선택 (소환)', count: 1, emptyMessage: '묘지/제외에 펭귄 몬스터가 없습니다.' };
+      },
       resolve(ctx) {
         const returned = returnOwnFieldCardToHand(ctx, '펭귄의 전설', 'penguinLegend2Return');
         const target = firstOrSelected(ctx, findZoneCards(ctx, ZONES.GRAVE, isPenguinMonster).concat(findZoneCards(ctx, ZONES.EXILE, isPenguinMonster)), { byId: true });
@@ -1328,6 +1331,9 @@
       tags: [TAGS.DECK_SEARCH, 'returnSelfToDeck'],
       oncePerTurn: { key: '펭귄 마법사_1', limit: 2 },
       condition(ctx) { return ctx.card && ctx.card.id === '펭귄 마법사' && !ctx.card.isPublic && findDeckCards(ctx, c => isPenguinCard(c.id)).length > 0; },
+      collectChoices(ctx) {
+        return { candidates: findDeckCards(ctx, c => isPenguinCard(c.id)), title: '덱에서 패에 넣을 펭귄 카드 선택', count: 1, emptyMessage: '덱에 펭귄 카드가 없습니다.' };
+      },
       resolve(ctx) {
         const target = firstOrSelected(ctx, findDeckCards(ctx, c => isPenguinCard(c.id)), { byId: true });
         const search = target ? addDeckCardToHand(ctx, target.id, true) : { ok: false, error: '덱에 펭귄 카드가 없습니다.' };
@@ -1372,6 +1378,11 @@
         const myTargets = findZoneCards(ctx, ZONES.EXILE, isMonster, ctx.controller);
         const opTargets = findZoneCards(ctx, ZONES.EXILE, isMonster, opponentOf(ctx.controller));
         return e.reason === 'penguinVillageDiscardReplacement' && hasFieldSpace(ctx) && myTargets.concat(opTargets).length > 0;
+      },
+      collectChoices(ctx) {
+        const myTargets = findZoneCards(ctx, ZONES.EXILE, isMonster, ctx.controller).map(card => Object.assign({ _owner: ctx.controller }, card));
+        const opTargets = findZoneCards(ctx, ZONES.EXILE, isMonster, opponentOf(ctx.controller)).map(card => Object.assign({ _owner: opponentOf(ctx.controller) }, card));
+        return { candidates: myTargets.concat(opTargets), title: '제외 상태의 몬스터 1장 선택 (소환)', count: 1, emptyMessage: '제외 상태의 몬스터가 없습니다.' };
       },
       resolve(ctx) {
         const myTargets = findZoneCards(ctx, ZONES.EXILE, isMonster, ctx.controller).map(card => Object.assign({ _owner: ctx.controller }, card));
