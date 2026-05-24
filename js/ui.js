@@ -1292,19 +1292,55 @@ function openModal(modalId) {
 
 // 외부에서 호출하는 함수
 function openCardPicker(cards, title, maxPick, callback, forced = false) {
+  if (window.HB_DEBUG_PICKER) console.log('[picker] openCardPicker called', { title, count: maxPick, cards: (cards || []).length, pickerRunning, queueLen: pickerQueue.length });
   if (!cards || cards.length === 0) { callback([]); return; }
   pickerQueue.push({ cards: [...cards], title, maxPick: Math.min(maxPick, cards.length), callback, forced });
   if (!pickerRunning) runNextPicker();
+  else if (window.HB_DEBUG_PICKER) console.warn('[picker] queue was already running. New picker queued and will wait. Run window._resetPickerQueue() to unjam.');
 }
 
+// 큐가 잠긴 상태에서 새 picker가 표시되지 않을 때 수동 복구용.
+// pickerRunning이 true인데 모달이 보이지 않으면 호출해서 큐를 리셋한다.
+window._resetPickerQueue = function() {
+  pickerQueue.length = 0;
+  pickerRunning = false;
+  pickerSelected = [];
+  try { closeModal('cardPickerModal'); } catch (_) {}
+  console.log('[picker] queue reset.');
+};
+
+// index.html의 취소 버튼이 호출하는데 정의가 없어 ReferenceError가 발생하던 함수.
+// 취소 = 콜백을 빈 배열로 호출하여 효과 발동을 중단.
+function cancelPick() {
+  if (pickerQueue.length === 0) { pickerRunning = false; closeModal('cardPickerModal'); return; }
+  const { callback, forced } = pickerQueue[0];
+  if (forced) { notify('이 picker는 취소할 수 없습니다.'); return; }
+  closeModal('cardPickerModal');
+  pickerQueue.shift();
+  pickerSelected = [];
+  try { callback([]); } catch (e) { console.error('picker 취소 콜백 오류:', e); }
+  if (pickerQueue.length > 0) setTimeout(runNextPicker, 150);
+  else pickerRunning = false;
+}
+window.cancelPick = cancelPick;
+
 function runNextPicker() {
+  if (window.HB_DEBUG_PICKER) console.log('[picker] runNextPicker queueLen:', pickerQueue.length);
   if (pickerQueue.length === 0) { pickerRunning = false; return; }
   pickerRunning = true;
   const { cards, title, maxPick, forced } = pickerQueue[0];
   pickerSelected = [];
   pickerCurrentCards = cards;
 
-  document.getElementById('pickerTitle').textContent = title;
+  const modal = document.getElementById('cardPickerModal');
+  const titleEl = document.getElementById('pickerTitle');
+  if (!modal || !titleEl) {
+    console.error('[picker] cardPickerModal/pickerTitle DOM 요소가 없습니다. 큐를 리셋합니다.');
+    pickerQueue.shift();
+    pickerRunning = false;
+    return;
+  }
+  titleEl.textContent = title;
   document.getElementById('pickerDesc').textContent = forced
     ? `⚠️ 반드시 ${maxPick}장 선택 (취소 불가)`
     : maxPick === 0 ? '선택 없이 확인 가능' : `최대 ${maxPick}장 선택`;
@@ -1333,7 +1369,8 @@ function runNextPicker() {
     grid.appendChild(el);
   });
 
-  document.getElementById('cardPickerModal').classList.remove('hidden');
+  modal.classList.remove('hidden');
+  if (window.HB_DEBUG_PICKER) console.log('[picker] modal hidden class removed. classList:', modal.classList.toString(), 'inline display:', modal.style.display);
 }
 
 function confirmPick() {
