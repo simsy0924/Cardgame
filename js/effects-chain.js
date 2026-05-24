@@ -1144,9 +1144,29 @@ function resolveKeyFetch(cardId) {
     return;
   }
 
-  const c = G.myKeyDeck.splice(idx, 1)[0];
-  G.myHand.push({ id: c.id, name: c.name, isPublic: true });
-  log(`키 카드 가져오기: ${c.name} (공개패)`, 'mine');
+  // 신엔진 HB_CARD_MOVE를 경유해 키덱 → 공개 패로 이동시킨다.
+  // 이렇게 해야 ADDED_TO_HAND 이벤트가 발행되어 공개 패 트리거 효과
+  // (젊은 라이온 ①, 마피아의 제안 ② 등)가 정상 발동된다.
+  const cardName = CARDS[cardId]?.name || cardId;
+  if (window.HB_CARD_MOVE && typeof window.HB_CARD_MOVE.addToHand === 'function') {
+    const result = window.HB_CARD_MOVE.addToHand({
+      gameState: G,
+      controller: 'me',
+      cardId,
+      from: { controller: 'me', zone: 'keyDeck', index: idx },
+      reveal: true, // 공개 패로
+      reason: 'keyFetch',
+    });
+    if (result && result.ok === false) {
+      notify(result.error || '키 카드 가져오기에 실패했습니다.');
+      return;
+    }
+  } else {
+    // 폴백: HB_CARD_MOVE 미가용 시 직접 이동 (이벤트 발행 안 됨)
+    const c = G.myKeyDeck.splice(idx, 1)[0];
+    G.myHand.push({ id: c.id, name: c.name, isPublic: true });
+  }
+  log(`키 카드 가져오기: ${cardName} (공개패)`, 'mine');
   sendGameState(); renderAll();
 }
 
