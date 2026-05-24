@@ -199,6 +199,9 @@
       cost: normalizeCallable(raw.cost, noopStep, 'cost', id),
       target: normalizeCallable(raw.target, noopStep, 'target', id),
       resolve: normalizeCallable(raw.resolve, noopResolve, 'resolve', id),
+      // 코스트 지불 전에 사용자 선택을 강제하기 위한 후보 수집 훅.
+      // 정의된 경우 effect-ui.maybeRequestSelection이 picker를 띄운다.
+      collectChoices: typeof raw.collectChoices === 'function' ? raw.collectChoices : null,
 
       tags: Object.freeze(tags),
       negateTags: Object.freeze(negateTags),
