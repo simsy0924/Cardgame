@@ -606,7 +606,6 @@ function onSentToGrave(cardId) {
     if (routed && routed.usedNewEngine) return;
   }
 
-  if (cardId === '펭귄 용사') autoTriggerHeroGrave();
   if (cardId === '엘리멘츠의 바람정령' && canUseEffect('엘리멘츠의 바람정령', 3)) {
     markEffectUsed('엘리멘츠의 바람정령', 3);
     const t = findAllInDeck(c => c.id === '엘리멘츠 in rainbow forest');
@@ -710,5 +709,4 @@ function resetTurnEffects() {
   G.ligerKingImmune = false; // 라이거 킹 내성 턴 종료 시 해제
   G.myField.forEach(c => { if (c) c.effectNegatedUntilEndTurn = false; });
   if (G.myFieldCard) G.myFieldCard.effectNegatedUntilEndTurn = false;
-  resetJibaeEffects();
 }

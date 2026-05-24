@@ -287,6 +287,41 @@
     else actions.appendChild(button);
   }
 
+  // 효과가 collectChoices(ctx)를 정의하면 발동 전에 사용자 픽커를 강제로 띄운다.
+  // 후보가 count보다 많거나 forceChoice=true면 무조건 사용자가 선택해야 한다.
+  // 후보가 정확히 count이면 자동 채움. 0이면 실패 반환.
+  function maybeRequestSelection(entry, opts) {
+    const effect = entry.effect;
+    if (!effect || typeof effect.collectChoices !== 'function') return { needsPicker: false, opts };
+
+    const ctx = entry.ctx || buildContextForEffect(opts, effect);
+    const already = (opts.selectedCards && opts.selectedCards.length > 0)
+      || (opts.activationData && opts.activationData.selectedCards && opts.activationData.selectedCards.length > 0);
+    if (already) return { needsPicker: false, opts };
+
+    // 픽커는 로컬 플레이어가 발동할 때만 띄운다.
+    // 상대/AI가 발동한 효과는 자동 첫 후보로 진행 (네트워크 동기화는 별도 경로로 전달됨).
+    if (ctx.controller && ctx.controller !== CONTROLLERS.ME) return { needsPicker: false, opts };
+    if (opts.isAI === true) return { needsPicker: false, opts };
+
+    let choice;
+    try { choice = effect.collectChoices(ctx); } catch (err) {
+      console.warn('[effect-ui] collectChoices 실행 오류:', err);
+      return { needsPicker: false, opts };
+    }
+    if (!choice || !Array.isArray(choice.candidates)) return { needsPicker: false, opts };
+
+    const count = Math.max(1, choice.count || 1);
+    if (choice.candidates.length === 0) {
+      return { needsPicker: false, opts, emptyFail: choice.emptyMessage || '선택할 대상이 없습니다.' };
+    }
+    if (choice.candidates.length <= count && choice.forceChoice !== true) {
+      // 후보가 요구 수량 이하 → 자동 채움 (선택의 여지가 없음)
+      return { needsPicker: false, opts: Object.assign({}, opts, { selectedCards: choice.candidates.slice(0, count) }) };
+    }
+    return { needsPicker: true, choice, count };
+  }
+
   function activateAvailableEffect(entry, options) {
     if (!entry || !entry.effect) return makeFail('발동할 효과가 없습니다.');
     const opts = options || {};
@@ -316,7 +351,32 @@
     }
 
     if (!chain || typeof chain.activateEffect !== 'function') return makeFail('HB_CHAIN_ENGINE.activateEffect를 사용할 수 없습니다.');
-    const resolveImmediately = shouldResolveImmediatelyFromUi(opts);
+
+    // 사용자 선택이 필요한 효과면 코스트 지불 전에 픽커부터 띄운다.
+    // 픽커 콜백에서 selectedCards를 채워 본 함수를 다시 호출한다.
+    const selectionCheck = maybeRequestSelection(entry, opts);
+    if (selectionCheck.emptyFail) return makeFail(selectionCheck.emptyFail);
+    if (selectionCheck.needsPicker) {
+      const choice = selectionCheck.choice;
+      const count = selectionCheck.count;
+      const pickerCards = choice.candidates.map(c => ({
+        id: c.id || c.cardId || String(c),
+        name: c.name || c.id || String(c),
+      }));
+      if (typeof global.openCardPicker !== 'function') {
+        console.warn('[effect-ui] openCardPicker가 없어 선택을 강제할 수 없습니다. 첫 후보로 진행합니다.');
+      } else {
+        global.openCardPicker(pickerCards, choice.title || '대상을 선택하세요', count, function onPicked(selectedIndices) {
+          if (!selectedIndices || selectedIndices.length === 0) return; // 취소 → 발동 중단 (아직 코스트 미지불)
+          const picked = selectedIndices.map(i => choice.candidates[i]).filter(Boolean);
+          if (picked.length === 0) return;
+          activateAvailableEffect(entry, Object.assign({}, opts, { selectedCards: picked }));
+        }, choice.forced === true);
+        return makeOk({ deferred: true, awaitingSelection: true });
+      }
+    }
+    const finalOpts = selectionCheck.opts || opts;
+    const resolveImmediately = shouldResolveImmediatelyFromUi(finalOpts);
     return chain.activateEffect({
       gameState: ctx.gameState,
       controller: ctx.controller,
@@ -326,8 +386,12 @@
       sourceZone: ctx.sourceZone,
       sourceIndex: ctx.sourceIndex,
       effect,
-      activationData: Object.assign({}, opts.activationData || {}, { source: 'effect-ui' }),
-      ignorePriority: opts.ignorePriority === true,
+      selectedCards: finalOpts.selectedCards || [],
+      activationData: Object.assign({}, finalOpts.activationData || {}, {
+        source: 'effect-ui',
+        selectedCards: finalOpts.selectedCards || [],
+      }),
+      ignorePriority: finalOpts.ignorePriority === true,
       autoResolve: resolveImmediately,
       resolveImmediately,
     });

@@ -740,6 +740,23 @@ window._aiChainResponse = function(chainState) {
   }
 };
 
+// 신엔진 체인 이벤트에 AI를 직접 구독시킨다.
+// 레거시 _onLocalChainStateChanged 훅은 신엔진 chain-engine.js가 발행하는
+// hb:chain-link-added / hb:chain-response-window 이벤트에 자동 호출되지 않기 때문이다.
+if (typeof window.addEventListener === 'function') {
+  function _checkAIChainPriority() {
+    if (!window.AI || !window.AI.active) return;
+    if (!window.HB_CHAIN_ENGINE || typeof window.HB_CHAIN_ENGINE.getChainState !== 'function') return;
+    var state = window.HB_CHAIN_ENGINE.getChainState();
+    if (!state || !state.active) return;
+    // 신엔진 controller는 게임을 돌리는 로컬 머신의 관점이다.
+    // AI는 항상 로컬의 'opponent'이므로 priority === 'opponent'일 때 응답 차례.
+    if (state.priority === 'opponent') setTimeout(_runAIChainWindow, 120);
+  }
+  window.addEventListener('hb:chain-link-added', _checkAIChainPriority);
+  window.addEventListener('hb:chain-response-window', _checkAIChainPriority);
+}
+
 // ─── AI 턴 실행 ─────────────────────────────────────────────
 //
 // AI는 절대 advancePhase()를 직접 호출하지 않는다.
