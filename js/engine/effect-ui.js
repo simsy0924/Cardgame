@@ -292,7 +292,12 @@
   // 후보가 정확히 count이면 자동 채움. 0이면 실패 반환.
   function maybeRequestSelection(entry, opts) {
     const effect = entry.effect;
-    if (!effect || typeof effect.collectChoices !== 'function') return { needsPicker: false, opts };
+    if (!effect || typeof effect.collectChoices !== 'function') {
+      if (effect && global.console && global.HB_DEBUG_PICKER) {
+        global.console.warn('[effect-ui] collectChoices 없음 → 자동 선택:', effect.id, 'collectChoices typeof:', typeof effect.collectChoices);
+      }
+      return { needsPicker: false, opts };
+    }
 
     const ctx = entry.ctx || buildContextForEffect(opts, effect);
     const already = (opts.selectedCards && opts.selectedCards.length > 0)

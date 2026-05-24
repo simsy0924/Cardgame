@@ -17,7 +17,8 @@ function getIndexScripts() {
   const scripts = [];
   const pattern = /<script\s+src="([^"]+)"\s*><\/script>/g;
   let match;
-  while ((match = pattern.exec(index))) scripts.push(match[1]);
+  // 캐시 버스터 쿼리(?v=...)는 실파일 비교에 무관하므로 제거한다.
+  while ((match = pattern.exec(index))) scripts.push(match[1].split('?')[0]);
   return scripts;
 }
 
