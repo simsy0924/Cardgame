@@ -51,7 +51,8 @@ module.exports = function testLegacyCleanup() {
     'js/effects/theme/liger.js',
   ];
   for (const script of requiredNewThemeScripts) {
-    assert(index.includes(`src="${script}"`), `${script} must remain loaded`);
+    // 캐시 버스터(?v=...) 유무에 무관하게 src 시작 부분만 검사한다.
+    assert(index.includes(`src="${script}"`) || index.includes(`src="${script}?`), `${script} must remain loaded`);
   }
 
   const ui = read('js/ui.js');
