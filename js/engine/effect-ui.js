@@ -327,6 +327,39 @@
     return { needsPicker: true, choice, count };
   }
 
+  // 공개 헬퍼: 효과가 collectChoices를 정의하고 사용자 선택이 필요하면 picker를 열고,
+  // 그렇지 않으면 즉시 onProceed(finalOpts)를 호출한다.
+  // 트리거 큐 등 effect-ui 외부 발동 경로에서도 picker를 강제하기 위해 분리.
+  // - entry: { effect, ctx, ... }
+  // - opts: 발동 옵션 (selectedCards 등)
+  // - onProceed: (finalOpts) => any  ; 선택 완료/불필요 시 호출
+  // 반환: onProceed의 반환값 또는 { ok:true, deferred:true, awaitingSelection:true } (picker 대기)
+  function requestPickerAndProceed(entry, opts, onProceed) {
+    if (!entry || !entry.effect || typeof onProceed !== 'function') return makeFail('잘못된 인자입니다.');
+    const sel = maybeRequestSelection(entry, opts || {});
+    if (sel.emptyFail) return makeFail(sel.emptyFail);
+    if (sel.needsPicker) {
+      const choice = sel.choice;
+      const count = sel.count;
+      const pickerCards = choice.candidates.map(c => ({
+        id: c.id || c.cardId || String(c),
+        name: c.name || c.id || String(c),
+      }));
+      if (typeof global.openCardPicker !== 'function') {
+        console.warn('[effect-ui] openCardPicker가 없어 picker를 띄울 수 없습니다. 첫 후보로 진행합니다.');
+        return onProceed(Object.assign({}, opts, { selectedCards: choice.candidates.slice(0, count) }));
+      }
+      global.openCardPicker(pickerCards, choice.title || '대상을 선택하세요', count, function onPicked(selectedIndices) {
+        if (!selectedIndices || selectedIndices.length === 0) return; // 취소 → 발동 중단
+        const picked = selectedIndices.map(i => choice.candidates[i]).filter(Boolean);
+        if (picked.length === 0) return;
+        onProceed(Object.assign({}, opts || {}, { selectedCards: picked }));
+      }, choice.forced === true);
+      return makeOk({ deferred: true, awaitingSelection: true });
+    }
+    return onProceed(sel.opts || opts || {});
+  }
+
   function activateAvailableEffect(entry, options) {
     if (!entry || !entry.effect) return makeFail('발동할 효과가 없습니다.');
     const opts = options || {};
@@ -636,6 +669,7 @@
     renderCostSelectionDialog,
     renderTargetSelectionDialog,
     activateAvailableEffect,
+    requestPickerAndProceed,
     shouldUseNewEffectUI,
     hasRegisteredEffects,
     isDisplayableManualEffect,
