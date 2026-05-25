@@ -541,22 +541,35 @@
     const chainActive = typeof chain.hasActiveChain === 'function' ? !!chain.hasActiveChain() : false;
     const resolveImmediately = explicitImmediate || (!explicitDefer && !chainActive);
 
-    const activation = chain.activateEffect({
-      effect: trigger.effect,
-      ctx: trigger.ctx,
-      activationData: Object.assign({}, opts.activationData || {}, {
-        triggerId: trigger.id,
-        eventId: trigger.event && trigger.event.eventId,
-        eventType: trigger.event && trigger.event.type,
-        mandatory: trigger.mandatory,
-        optional: trigger.optional,
-      }),
-      autoResolve: resolveImmediately,
-      resolveImmediately,
-    });
+    function proceed(finalOpts) {
+      const activation = chain.activateEffect({
+        effect: trigger.effect,
+        ctx: trigger.ctx,
+        selectedCards: finalOpts.selectedCards || opts.selectedCards || [],
+        activationData: Object.assign({}, opts.activationData || {}, {
+          triggerId: trigger.id,
+          eventId: trigger.event && trigger.event.eventId,
+          eventType: trigger.event && trigger.event.type,
+          mandatory: trigger.mandatory,
+          optional: trigger.optional,
+          selectedCards: finalOpts.selectedCards || opts.selectedCards || [],
+        }),
+        autoResolve: resolveImmediately,
+        resolveImmediately,
+      });
+      remember(trigger, activation.ok ? 'activate' : 'activateFailed', activation);
+      return activation.ok ? makeOk({ trigger, activation }) : makeFail(activation.error || '유발 효과 발동에 실패했습니다.', { trigger, activation });
+    }
 
-    remember(trigger, activation.ok ? 'activate' : 'activateFailed', activation);
-    return activation.ok ? makeOk({ trigger, activation }) : makeFail(activation.error || '유발 효과 발동에 실패했습니다.', { trigger, activation });
+    // 트리거 효과가 collectChoices를 정의하면 사용자가 발동한 로컬 컨트롤러일 때만
+    // picker를 띄운다. (상대/AI는 자동 첫 후보 — 네트워크 동기화는 별도 경로)
+    const effectUi = global.HB_EFFECT_UI || (global.HB_ENGINE && global.HB_ENGINE.effectUi);
+    const ctrl = trigger.ctx && trigger.ctx.controller;
+    const isLocal = ctrl === 'me' && opts.isAI !== true;
+    if (isLocal && effectUi && typeof effectUi.requestPickerAndProceed === 'function' && trigger.effect && typeof trigger.effect.collectChoices === 'function') {
+      return effectUi.requestPickerAndProceed({ effect: trigger.effect, ctx: trigger.ctx }, opts, proceed);
+    }
+    return proceed(opts);
   }
 
   function activateSelectedTrigger(selection, options) {
