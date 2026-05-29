@@ -1137,13 +1137,13 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                 break;
               case '카드의 흑기사':
                 if (canUseEffect('카드의 흑기사',1))
-                  addBtn('① 필드 카드 1장 묘지로', 'btn-secondary', () => activateFieldEffect(fieldIdx, 1));
+                  addBtn('① 필드 카드 1장 묘지로', 'btn-secondary', () => { if (typeof activateFieldEffect === 'function') activateFieldEffect(fieldIdx, 1); else notify('이 효과는 현재 버전에서 사용할 수 없습니다.'); });
                 if (canUseEffect('카드의 흑기사',2))
                   addBtn('② 상대 효과 무효(체인)', 'btn-secondary', () => notify('카드의 흑기사 ②는 상대 효과 발동 시 체인으로 자동 선택됩니다.'));
                 break;
               case '풀려난 항아리의 마귀':
                 if (isMyTurn && currentPhase === 'attack' && canUseEffect('풀려난 항아리의 마귀',2))
-                  addBtn('② 서치 + 공격력 +1', 'btn-secondary', () => activateFieldEffect(fieldIdx, 2));
+                  addBtn('② 서치 + 공격력 +1', 'btn-secondary', () => { if (typeof activateFieldEffect === 'function') activateFieldEffect(fieldIdx, 2); else notify('이 효과는 현재 버전에서 사용할 수 없습니다.'); });
                 break;
               case '카드 세계의 영웅':
                 addBtn('② 영웅의 탄생 서치(체인)', 'btn-secondary', () => notify('상대 조건 효과 발동 시 체인으로 자동 선택됩니다.'));

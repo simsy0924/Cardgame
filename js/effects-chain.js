@@ -802,9 +802,9 @@ const CHAIN_RESOLVERS = {
   },
   // AI 효과 리졸버
   aiForceDiscard:            (link) => forceDiscard(Math.max(1, Number(link.count) || 1)),
-  aiEyeForEye:               ()     => { _aiDrawN(2); log('🤖 눈에는 눈: 드로우 2장', 'opponent'); renderAll(); },
-  aiSummonDeck:              (link) => { if (link.cardId) { _aiSummonFromDeck(link.cardId); renderAll(); } },
-  aiSearch:                  (link) => { if (link.cardId) { _aiSearch(link.cardId); renderAll(); } },
+  aiEyeForEye:               ()     => { if (typeof _aiDrawN === 'function') _aiDrawN(2); log('🤖 눈에는 눈: 드로우 2장', 'opponent'); renderAll(); },
+  aiSummonDeck:              (link) => { if (link.cardId && typeof _aiSummonFromDeck === 'function') { _aiSummonFromDeck(link.cardId); renderAll(); } },
+  aiSearch:                  (link) => { if (link.cardId && typeof _aiSearch === 'function') { _aiSearch(link.cardId); renderAll(); } },
   aiFieldCard:               (link) => {
     if (!link.cardId) return;
     var card = CARDS[link.cardId] || { name: link.cardId };
