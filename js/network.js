@@ -77,7 +77,17 @@ function listenChainState() {
         activeChainState = data; // resolved 데이터 유지 (resolvedLinks 참조용)
       }
     } else {
-      activeChainState = data;
+      // [N2] 동시 발행으로 인한 stale 덮어쓰기 방어: 같은 체인(chainId)에서 링크 수가
+      // 줄어드는 active 미러는 무시한다. 활성 체인의 링크는 해결/취소 전까지 단조 증가하므로
+      // 줄어든 미러는 거의 항상 오래된(stale) 덮어쓰기이며, 이를 적용하면 응답 링크가 사라진다.
+      // (wall-clock에 의존하지 않는 보수적 가드 — chainId가 같고 링크가 줄 때만 무시)
+      const cur = activeChainState;
+      const sameChain = !!(cur && cur.active && cur.chainId && data.chainId && cur.chainId === data.chainId);
+      const incomingLen = data.links ? data.links.length : 0;
+      const curLen = cur && cur.links ? cur.links.length : 0;
+      if (!(sameChain && incomingLen < curLen)) {
+        activeChainState = data;
+      }
     }
 
     renderChainActions();

@@ -108,7 +108,17 @@
     if (opts.resolvedBy) return opts.resolvedBy === role;
     if (opts.ownerRole) return opts.ownerRole === role;
     if (opts.chainState && opts.chainState.resolvedBy) return opts.chainState.resolvedBy === role;
-    return true;
+    // [N1] 권위가 명시되지 않은 모호한 경우의 결정론적 단일화.
+    // 과거 fallback은 무조건 return true 라서, 네트워크전에서 양쪽 클라이언트가
+    // 동시에 권위가 되어 같은 효과/체인을 두 번 실행하는 desync를 유발했다.
+    // 1) 행동의 controller가 있으면 그 소유자의 클라이언트만 권위로 본다
+    //    (자기 효과는 자기가 해결, 상대 효과는 권위 상태/diff를 기다린다).
+    if (opts.controller === 'me') return true;
+    if (opts.controller === 'opponent') return false;
+    if (opts.controller && opts.controller === role) return true;
+    if (opts.controller && opts.controller === getOpponentRole(role)) return false;
+    // 2) controller조차 없으면 host를 기본 권위로 삼아 단 한 클라이언트만 해결하게 한다.
+    return role === 'host';
   }
 
   function clone(value) {
