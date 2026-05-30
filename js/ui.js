@@ -1290,11 +1290,34 @@ function openModal(modalId) {
 // CARD PICKER — 큐 기반 (중첩 호출 안전)
 // ─────────────────────────────────────────────
 
+// picker 모달이 실제로 화면에 떠 있는지 확인한다.
+function isPickerModalVisible() {
+  const modal = document.getElementById('cardPickerModal');
+  if (!modal) return false;
+  if (modal.classList && modal.classList.contains('hidden')) return false;
+  if (modal.style && modal.style.display === 'none') return false;
+  return true;
+}
+
+// pickerRunning이 true인데 모달이 보이지 않는 "stale lock"을 감지해 복구한다.
+// 렌더 중 예외나 외부에서 모달이 닫히는 경우 등으로 락이 영구히 걸려
+// 이후 모든 picker가 표시되지 않는 잼(jam)을 자동으로 푼다.
+function recoverStalePickerLock() {
+  if (pickerRunning && !isPickerModalVisible()) {
+    if (window.HB_DEBUG_PICKER) console.warn('[picker] stale lock 감지 → 자동 복구');
+    pickerRunning = false;
+    return true;
+  }
+  return false;
+}
+
 // 외부에서 호출하는 함수
 function openCardPicker(cards, title, maxPick, callback, forced = false) {
   if (window.HB_DEBUG_PICKER) console.log('[picker] openCardPicker called', { title, count: maxPick, cards: (cards || []).length, pickerRunning, queueLen: pickerQueue.length });
   if (!cards || cards.length === 0) { callback([]); return; }
   pickerQueue.push({ cards: [...cards], title, maxPick: Math.min(maxPick, cards.length), callback, forced });
+  // 새 picker 요청 시점에 stale lock을 먼저 치유한다(잼 자동 복구).
+  recoverStalePickerLock();
   if (!pickerRunning) runNextPicker();
   else if (window.HB_DEBUG_PICKER) console.warn('[picker] queue was already running. New picker queued and will wait. Run window._resetPickerQueue() to unjam.');
 }
@@ -1308,6 +1331,18 @@ window._resetPickerQueue = function() {
   try { closeModal('cardPickerModal'); } catch (_) {}
   console.log('[picker] queue reset.');
 };
+
+// 워치독: 락이 걸렸는데 모달이 안 보이고 대기 중인 picker가 있으면 자동으로 재표시한다.
+// 네트워크전에서 내 picker가 잼나면 상대 클라이언트가 무한 대기하는 것을 막는 안전망.
+if (typeof window !== 'undefined' && !window.__pickerWatchdog) {
+  window.__pickerWatchdog = setInterval(function pickerWatchdog() {
+    if (pickerRunning && pickerQueue.length > 0 && !isPickerModalVisible()) {
+      if (window.HB_DEBUG_PICKER) console.warn('[picker] 워치독: stale lock + 대기 picker → 재표시');
+      pickerRunning = false;
+      try { runNextPicker(); } catch (e) { console.error('[picker] 워치독 복구 실패:', e); pickerRunning = false; }
+    }
+  }, 1500);
+}
 
 // index.html의 취소 버튼이 호출하는데 정의가 없어 ReferenceError가 발생하던 함수.
 // 취소 = 콜백을 빈 배열로 호출하여 효과 발동을 중단.
@@ -1332,45 +1367,54 @@ function runNextPicker() {
   pickerSelected = [];
   pickerCurrentCards = cards;
 
-  const modal = document.getElementById('cardPickerModal');
-  const titleEl = document.getElementById('pickerTitle');
-  if (!modal || !titleEl) {
-    console.error('[picker] cardPickerModal/pickerTitle DOM 요소가 없습니다. 큐를 리셋합니다.');
+  try {
+    const modal = document.getElementById('cardPickerModal');
+    const titleEl = document.getElementById('pickerTitle');
+    if (!modal || !titleEl) {
+      console.error('[picker] cardPickerModal/pickerTitle DOM 요소가 없습니다. 큐를 리셋합니다.');
+      pickerQueue.shift();
+      pickerRunning = false;
+      return;
+    }
+    titleEl.textContent = title;
+    document.getElementById('pickerDesc').textContent = forced
+      ? `⚠️ 반드시 ${maxPick}장 선택 (취소 불가)`
+      : maxPick === 0 ? '선택 없이 확인 가능' : `최대 ${maxPick}장 선택`;
+
+    // 강제 모드일 때 닫기 버튼 숨기기
+    const cancelBtn = document.querySelector('#cardPickerModal .btn-secondary');
+    if (cancelBtn) cancelBtn.style.display = forced ? 'none' : '';
+
+    const grid = document.getElementById('pickerGrid');
+    grid.innerHTML = '';
+    cards.forEach((c, i) => {
+      const el = renderCard(c);
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', () => {
+        const idx = pickerSelected.indexOf(i);
+        if (idx >= 0) {
+          pickerSelected.splice(idx, 1);
+          el.classList.remove('selected');
+        } else if (pickerSelected.length < maxPick) {
+          pickerSelected.push(i);
+          el.classList.add('selected');
+          // maxPick이 1이면 바로 확정
+          if (maxPick === 1) confirmPick();
+        }
+      });
+      grid.appendChild(el);
+    });
+
+    modal.classList.remove('hidden');
+    if (window.HB_DEBUG_PICKER) console.log('[picker] modal hidden class removed. classList:', modal.classList.toString(), 'inline display:', modal.style.display);
+  } catch (err) {
+    // 렌더 도중 예외가 나도 락을 풀어 잼을 방지한다. 문제가 된 picker는 건너뛰고 다음으로 진행.
+    console.error('[picker] runNextPicker 렌더 오류 → 해당 picker 건너뜀:', err);
+    if (typeof notify === 'function') notify('카드 선택창 표시 오류: ' + err.message);
     pickerQueue.shift();
     pickerRunning = false;
-    return;
+    if (pickerQueue.length > 0) setTimeout(runNextPicker, 150);
   }
-  titleEl.textContent = title;
-  document.getElementById('pickerDesc').textContent = forced
-    ? `⚠️ 반드시 ${maxPick}장 선택 (취소 불가)`
-    : maxPick === 0 ? '선택 없이 확인 가능' : `최대 ${maxPick}장 선택`;
-
-  // 강제 모드일 때 닫기 버튼 숨기기
-  const cancelBtn = document.querySelector('#cardPickerModal .btn-secondary');
-  if (cancelBtn) cancelBtn.style.display = forced ? 'none' : '';
-
-  const grid = document.getElementById('pickerGrid');
-  grid.innerHTML = '';
-  cards.forEach((c, i) => {
-    const el = renderCard(c);
-    el.style.cursor = 'pointer';
-    el.addEventListener('click', () => {
-      const idx = pickerSelected.indexOf(i);
-      if (idx >= 0) {
-        pickerSelected.splice(idx, 1);
-        el.classList.remove('selected');
-      } else if (pickerSelected.length < maxPick) {
-        pickerSelected.push(i);
-        el.classList.add('selected');
-        // maxPick이 1이면 바로 확정
-        if (maxPick === 1) confirmPick();
-      }
-    });
-    grid.appendChild(el);
-  });
-
-  modal.classList.remove('hidden');
-  if (window.HB_DEBUG_PICKER) console.log('[picker] modal hidden class removed. classList:', modal.classList.toString(), 'inline display:', modal.style.display);
 }
 
 function confirmPick() {
