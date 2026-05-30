@@ -903,9 +903,24 @@ const CHAIN_RESOLVERS = {
     if ((link.exileCount || 0) > 0 && G.myExile.length > 0) {
       openCardPicker(G.myExile, '수호의 빛: 제외된 카드 1장 패에 넣기 (선택)', 1, (selected) => {
         if (selected.length > 0) {
-          const ec = G.myExile.splice(selected[0], 1)[0];
-          G.myHand.push({ id: ec.id, name: ec.name, isPublic: true });
-          log(`수호의 빛: ${ec.name} 패로`, 'mine');
+          const ec = G.myExile[selected[0]];
+          if (ec) {
+            // 신엔진 HB_CARD_MOVE 경유로 제외 → 공개 패로 이동시켜 ADDED_TO_HAND 이벤트를
+            // 발행한다(공개 패 트리거가 정상 발동되도록). 실패할 때만 직접 이동 폴백.
+            let moved = false;
+            if (window.HB_CARD_MOVE && typeof window.HB_CARD_MOVE.addToHand === 'function') {
+              try {
+                const r = window.HB_CARD_MOVE.addToHand({ gameState: G, controller: 'me', cardId: ec.id, from: { controller: 'me', zone: 'exile' }, reveal: true, reason: 'sacredLight' });
+                if (r && r.ok !== false) moved = true;
+                else console.warn('[sacredLight] HB_CARD_MOVE.addToHand 실패:', r);
+              } catch (err) { console.warn('[sacredLight] HB_CARD_MOVE.addToHand 예외:', err); }
+            }
+            if (!moved) {
+              const i = G.myExile.findIndex(c => c.id === ec.id);
+              if (i >= 0) { const c = G.myExile.splice(i, 1)[0]; G.myHand.push({ id: c.id, name: c.name, isPublic: true }); }
+            }
+            log(`수호의 빛: ${ec.name} 패로`, 'mine');
+          }
         }
         sendGameState(); renderAll();
       });
