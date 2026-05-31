@@ -244,12 +244,19 @@
     }
   }
 
+  function hasOpponentForChainResponse() {
+    // 네트워크전(roomRef 존재) 또는 AI전이면 응답할 상대가 있다.
+    return !!global.roomRef || !!(global.AI && global.AI.active);
+  }
+
   function shouldResolveImmediatelyFromUi(opts) {
     const options = opts || {};
     if (options.resolveImmediately === true || options.autoResolve === true) return true;
     if (options.resolveImmediately === false || options.autoResolve === false) return false;
-    // 카드 상세창에서 직접 누른 신엔진 효과는 체인 응답 중이 아니면 기본 즉시 해결한다.
-    return !hasActiveChainForManualResolution();
+    // [체인] 발동 효과는 체인 블록을 형성하고 응답 창을 열어야 한다(OCG 규칙).
+    // 상대가 있으면(네트워크/AI전) 즉시 해결하지 않고 응답 창을 연다.
+    // 상대가 없으면(완전 로컬 — 응답할 주체가 없어 영구 대기가 됨) 즉시 해결한다.
+    return !hasOpponentForChainResponse();
   }
 
   function getAvailableEffects(query) {
@@ -415,7 +422,7 @@
     }
     const finalOpts = selectionCheck.opts || opts;
     const resolveImmediately = shouldResolveImmediatelyFromUi(finalOpts);
-    return chain.activateEffect({
+    const activation = chain.activateEffect({
       gameState: ctx.gameState,
       controller: ctx.controller,
       card: ctx.card,
@@ -433,6 +440,17 @@
       autoResolve: resolveImmediately,
       resolveImmediately,
     });
+    // [체인] 즉시 해결이 아니라 응답 창이 열린 경우, 발동자는 자기 효과에 다시 응답하지
+    // 않으므로 한 번 자동 패스한다 → 상대가 한 번만 패스(또는 무응답 워치독)하면 체인이
+    // 해결되어, 발동할 때마다 발동자가 또 패스를 눌러야 하는 이중 패스를 막는다.
+    // (상대가 응답해 새 링크를 올리면 우선권이 다시 발동자에게 돌아와 정상 응답 가능)
+    if (activation && activation.ok !== false && !resolveImmediately
+        && typeof chain.getChainState === 'function' && chain.getChainState().active
+        && typeof chain.passChainResponse === 'function') {
+      try { chain.passChainResponse(ctx.controller); }
+      catch (err) { console.warn('[effect-ui] 발동자 자동 패스 실패:', err); }
+    }
+    return activation;
   }
 
   function renderEffectButtons(card, zone, options) {

@@ -469,6 +469,9 @@ async function claimMissionReward(missionId) {
     global.addEventListener('hb:chain-response-window', function onHbChainResponseWindow() {
       publishHbChainState(global.HB_CHAIN_ENGINE);
     });
+    global.addEventListener('hb:chain-passed', function onHbChainPassed() {
+      publishHbChainState(global.HB_CHAIN_ENGINE);
+    });
     global.addEventListener('hb:chain-resolved', function onHbChainResolved(evt) {
       publishResolvedHbChain(evt && evt.detail);
     });
