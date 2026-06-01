@@ -940,8 +940,8 @@ function openCardDetail(cardId, handIdx = -1, opponentCard = false, fieldIdx = -
                 break;
 
               case '펭귄 부부':
-                // ② 보여주기: 패에서 발동 — 조건 없음 (단 1턴 1번)
-                if (canUseEffect('펭귄 부부', 2))
+                // ② 보여주기: 기동효과 → 자신 전개 단계에만 (1턴 1번)
+                if (isMyTurn && currentPhase === 'deploy' && canUseEffect('펭귄 부부', 2))
                   addBtn('② 보여주기 → 드로우2 + 버리기', 'btn-secondary', () => activateCard(handIdx, 2));
                 break;
 
