@@ -7,6 +7,7 @@ const tests = [
   ['trigger-queue', require('./trigger-queue.test')],
   ['field-zone', require('./field-zone.test')],
   ['effect-registry', require('./effect-registry.test')],
+  ['penguin-discard', require('./penguin-discard.test')],
   ['legacy-cleanup', require('./legacy-cleanup.test')],
   ['final-gate', require('./final-gate.test')],
   ['final-audit', require('./final-audit.test')],
