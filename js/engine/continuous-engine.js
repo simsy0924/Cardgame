@@ -604,6 +604,31 @@
     return null;
   }
 
+  // 면역/보호 규칙의 적용 범위 보정.
+  // - 함수형 규칙(펭귄의 전설·라이온/타이거/라이거)은 대상/행위자를 자체 판별하므로 그대로 통과.
+  // - 명시적 스코프 키(cardId/theme/ownCardsOnly/byOpponentOnly 등)를 가진 선언형은
+  //   objectRuleMatches가 이미 범위를 판정하므로 그대로 통과.
+  // - 무스코프 선언형({allEffects:true}/{opponentEffects:true}/true)은 self-guard가 없어
+  //   "필드에 있으면 모든 카드가 면역"이 되어버리므로, 대상=소스카드(자기 보호)로 제한하고
+  //   opponentEffects/againstOpponentEffects는 행위자가 상대일 때만 적용한다.
+  function immunityScopeMatches(entry, checkCtx, ruleVal) {
+    if (typeof ruleVal === 'function') return true;
+    const ruleObj = (ruleVal && typeof ruleVal === 'object') ? ruleVal : {};
+    const SCOPE_KEYS = ['cardId', 'theme', 'controller', 'targetController', 'sourceController',
+      'actorController', 'ownCardsOnly', 'sameControllerOnly', 'opponentCardsOnly',
+      'protectOtherAlliedCards', 'protectAllied', 'alliedCards', 'byOpponentOnly', 'when', 'condition'];
+    if (SCOPE_KEYS.some(k => Object.prototype.hasOwnProperty.call(ruleObj, k))) return true;
+
+    const sourceCard = entry && entry.card;
+    const target = checkCtx && (checkCtx.target || checkCtx.card);
+    if (!sourceCard || !target) return true;
+    if (getCardId(target) !== getCardId(sourceCard)) return false; // 자기 자신만 보호
+
+    const opponentOnly = !!(ruleObj.opponentEffects || ruleObj.againstOpponentEffects);
+    if (opponentOnly && normalizeController(checkCtx.actorController) === normalizeController(entry.controller)) return false;
+    return true;
+  }
+
   function findBlockingContinuousEffect(gameState, input, ruleNames, flagName) {
     const state = resolveGameState(gameState || (input && input.gameState));
     const active = getActiveContinuousEffects(state);
@@ -614,7 +639,7 @@
       const checkCtx = buildCheckContext(Object.assign({}, input || {}, { gameState: state }), entry);
       const rule = getRule(entry.effect, sourceCtx, createNoopHelpers(sourceCtx));
       const matchedKey = getRuleCheck(rule, ruleNames, checkCtx, sourceCtx);
-      if (matchedKey) {
+      if (matchedKey && immunityScopeMatches(entry, checkCtx, rule[matchedKey])) {
         return Object.freeze({ entry, matchedKey, checkCtx });
       }
     }

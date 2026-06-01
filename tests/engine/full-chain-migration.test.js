@@ -37,10 +37,17 @@ module.exports = function testFullChainMigration() {
   assertEqual(ctx.HB_CHAIN_ENGINE.getChainLinks().length, 2, 'legacy addChainLink must add to HB internal links');
   assertEqual(ctx.activeChainState.links.length, 2, 'mirror links must match HB internal links');
 
+  // [체인 응답 전파] 체인을 해결하지 않는 중간 패스는 hb:chain-passed 이벤트를 발행해야 한다.
+  // (네트워크에서 상대가 우선권 이양을 보지 못해 데드락되는 것을 막는 핵심 — account.js가 이 이벤트로 chainState 발행)
+  let chainPassedEvents = 0;
+  ctx.addEventListener('hb:chain-passed', function () { chainPassedEvents += 1; });
+
   let pass = ctx.HB_CHAIN_ENGINE.passChainResponse('guest');
   assert(pass && pass.ok !== false, 'guest pass should be accepted');
+  assertEqual(chainPassedEvents, 1, '비해결 패스는 hb:chain-passed 이벤트를 발행해야 한다(네트워크 전파)');
   pass = ctx.HB_CHAIN_ENGINE.passChainResponse('host');
   assert(pass && pass.ok !== false, 'host pass should resolve');
+  assertEqual(chainPassedEvents, 1, '해결하는 패스는 chain-passed가 아닌 chain-resolved 경로를 탄다');
 
   assertEqual(ctx.HB_CHAIN_ENGINE.hasActiveChain(), false, 'chain must resolve through HB engine');
   assertEqual(drawn, 1, 'legacy jarDraw resolver must execute once through adapter');

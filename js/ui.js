@@ -404,6 +404,28 @@ function renderChainActions() {
   renderChainStack();
 }
 
+// 체인 응답 행(hang) 방지 워치독: 내(사람) 우선권으로 체인이 열린 채 일정 시간 방치되면
+// 자동으로 패스한다. 네트워크전에서 한쪽이 자리를 비워 체인이 무한 대기하는 것을 막는다.
+// AI전은 AI가 자체 자동패스 로직을 쓰므로 제외한다.
+const CHAIN_RESPONSE_IDLE_TIMEOUT_MS = 30000;
+let _chainPriorityHeldSince = 0;
+if (typeof window !== 'undefined' && !window.__chainResponseWatchdog) {
+  window.__chainResponseWatchdog = setInterval(function chainResponseWatchdog() {
+    try {
+      const active = !!(activeChainState && activeChainState.active);
+      const myPriority = active && activeChainState.priority === myRole;
+      if (!myPriority || (window.AI && window.AI.active)) { _chainPriorityHeldSince = 0; return; }
+      const now = Date.now();
+      if (_chainPriorityHeldSince === 0) { _chainPriorityHeldSince = now; return; }
+      if (now - _chainPriorityHeldSince >= CHAIN_RESPONSE_IDLE_TIMEOUT_MS) {
+        _chainPriorityHeldSince = 0;
+        if (window.HB_DEBUG_PICKER) console.warn('[chain] 응답 타임아웃 → 자동 패스');
+        if (typeof passChainPriority === 'function') passChainPriority();
+      }
+    } catch (_) {}
+  }, 3000);
+}
+
 function renderChainStack() {
   let wrap = document.getElementById('chainStackView');
   if (!wrap) {

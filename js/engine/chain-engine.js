@@ -796,7 +796,14 @@
       return resolveChain({ controller: passer });
     }
     chainState.priority = passer === CONTROLLERS.ME ? CONTROLLERS.OPPONENT : CONTROLLERS.ME;
-    return makeOk({ chain: getChainState(), legacyMirror: syncLegacyChainMirror() });
+    const legacyMirror = syncLegacyChainMirror();
+    // [체인 응답] 체인을 해결하지 않는 중간 패스도 리스너/네트워크에 전파한다.
+    // 이게 없으면 상대 클라이언트가 우선권 이양(passCount/priority)을 보지 못해
+    // 네트워크 체인이 데드락된다(account.js가 이 이벤트로 chainState를 발행).
+    if (typeof global.dispatchEvent === 'function' && typeof global.CustomEvent === 'function') {
+      global.dispatchEvent(new global.CustomEvent('hb:chain-passed', { detail: { passer, chain: getChainState(), legacyMirror } }));
+    }
+    return makeOk({ chain: getChainState(), legacyMirror });
   }
 
   function pauseMoveEventDispatchForActivation() {

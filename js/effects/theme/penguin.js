@@ -381,17 +381,72 @@
     });
   }
 
+  // ── 엔진 버리기 단계 ──
+  // 패에서 count장을 '플레이어가 직접 골라' 버리는 단계.
+  // resolve는 동기이고 picker는 비동기(openCardPicker 콜백)이므로, 로컬 플레이어가
+  // 실제로 고를 여지가 있을 때만 picker를 띄우고 콜백에서 버린다(드로우/서치가 끝난
+  // 최종 패에 picker가 뜨므로 후보 풀이 정확하다). 비-로컬/자동/단일 후보/사전 선택이
+  // 있으면 동기적으로 처리한다. 이름취급·forceDiscard와 동일한 '콜백에서 적용' 패턴.
+  function requestHandDiscard(ctx, options, onDone) {
+    const opts = options || {};
+    const controller = normalizeController(ctx.controller);
+    const reason = opts.reason || 'penguinHandDiscard';
+    const title = opts.title || '버릴 패를 선택하세요';
+    const predicate = typeof opts.predicate === 'function' ? opts.predicate : null;
+    const buildPool = () => zoneArray(ctx, controller, ZONES.HAND).filter(card =>
+      card && (!opts.excludeCardId || card.id !== opts.excludeCardId) && (!predicate || predicate(card)));
+
+    const pool = buildPool();
+    if (pool.length === 0) {
+      const empty = { ok: false, error: '버릴 패가 없습니다.', discarded: 0 };
+      if (onDone) onDone(empty);
+      return empty;
+    }
+    const count = Math.max(1, Math.min(opts.count || 1, pool.length));
+
+    const applyDiscard = (cards) => {
+      const results = cards.filter(Boolean).map(card => ctx.move.discardCard({
+        cardId: card.id, controller, reason, eventData: { tag: TAGS.DISCARD_HAND },
+      }));
+      const ok = results.length > 0 && results.every(r => r && r.ok !== false);
+      dispatchPending(ctx);
+      renderAndSync();
+      const out = { ok, results, discarded: results.length };
+      if (onDone) onDone(out);
+      return out;
+    };
+
+    // 사전 선택(ctx.selectedCards)이 충분하면 그대로 사용
+    const preSelected = (ctx.selectedCards && ctx.selectedCards.length)
+      ? ctx.selectedCards
+        .map(sel => (typeof sel === 'number') ? pool[sel] : pool.find(c => getCardId(c) === getCardId(sel)))
+        .filter(Boolean)
+      : [];
+    if (preSelected.length >= count) return applyDiscard(preSelected.slice(0, count));
+
+    // opts.sync: 동기 while 루프(각성의 군단 등)에서 패가 즉시 줄어야 하므로 picker 금지.
+    const isLocalHuman = controller === CONTROLLERS.ME && !ctx._hbAutoPick && !ctx.isAI;
+    const canPick = !opts.sync && typeof openCardPicker === 'function' && isLocalHuman && pool.length > count;
+    if (!canPick) return applyDiscard(pool.slice(0, count)); // 선택 여지 없음/비-로컬/동기 → 첫 후보
+
+    // 로컬 플레이어 + 실제 선택지 → 비동기 picker (필수 버리기이므로 forced=true)
+    // eslint-disable-next-line no-undef
+    openCardPicker(pool, title, count, (indices) => {
+      const picked = (indices || []).map(i => pool[i]).filter(Boolean);
+      applyDiscard(picked.length ? picked.slice(0, count) : pool.slice(0, count));
+    }, true);
+    return { ok: true, deferred: true, awaitingSelection: true };
+  }
+
   function discardOneFromHand(ctx, title, options) {
     const opts = options || {};
-    const hand = zoneArray(ctx, ctx.controller, ZONES.HAND);
-    const pool = hand.filter(card => card && (!opts.excludeCardId || card.id !== opts.excludeCardId));
-    const target = firstOrSelected(ctx, pool, { byId: true });
-    if (!target) return { ok: false, error: '버릴 패가 없습니다.' };
-    return ctx.move.discardCard({
-      cardId: target.id,
-      controller: ctx.controller,
+    return requestHandDiscard(ctx, {
+      count: 1,
+      excludeCardId: opts.excludeCardId,
+      predicate: opts.predicate,
+      sync: opts.sync,
       reason: title || 'penguinDiscard',
-      eventData: { tag: TAGS.DISCARD_HAND },
+      title: title || '버릴 패 1장을 선택하세요',
     });
   }
 
@@ -1092,7 +1147,8 @@
           }
 
           guard = nextNo;
-          const discarded = discardOneFromHand(ctx, `각성의 펭귄 군단 ① 반복 ${guard}: 패 1장 버리기`);
+          // 동기 while 루프 — 패가 즉시 줄어야 정상 종료되므로 sync 강제(선택 picker는 후속 과제).
+          const discarded = discardOneFromHand(ctx, `각성의 펭귄 군단 ① 반복 ${guard}: 패 1장 버리기`, { sync: true });
           if (!discarded.ok) {
             stopReason = { code: 'discardFailed', message: discarded.error || '패를 버릴 수 없어 「각성의 펭귄 군단」 반복 처리를 종료합니다.' };
             notifySafe(stopReason.message);
@@ -1356,10 +1412,10 @@
       condition(ctx) { return cardMatchesEvent(ctx, '펭귄 마법사') && zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).some(isMonster) && zoneArray(ctx, ctx.controller, ZONES.HAND).length > 0; },
       resolve(ctx) {
         const discardCount = Math.min(3, zoneArray(ctx, ctx.controller, ZONES.HAND).length, zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).filter(isMonster).length);
-        const discards = [];
-        for (let i = 0; i < discardCount; i += 1) discards.push(discardOneFromHand(ctx, `펭귄 마법사 ②: 패 버리기 ${i + 1}`));
+        // 한 번의 picker로 버릴 N장을 모두 고른다(루프마다 picker를 여는 stale-pool 문제 회피).
+        const discard = requestHandDiscard(ctx, { count: discardCount, reason: '펭귄 마법사 ②: 패 버리기' });
         const banish = banishOpponentMonsters(ctx, discardCount);
-        return { ok: discards.every(r => r.ok) && banish.ok, discards, banish };
+        return { ok: (discard.ok !== false) && banish.ok, discard, banish };
       },
     }),
     makeEffect({
@@ -1481,5 +1537,6 @@
     hasPenguinVillageRevealed,
     handleVillageDiscardReplacement,
     dispatchPending,
+    requestHandDiscard,
   });
 })(window);
