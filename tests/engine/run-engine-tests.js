@@ -8,6 +8,7 @@ const tests = [
   ['field-zone', require('./field-zone.test')],
   ['effect-registry', require('./effect-registry.test')],
   ['penguin-discard', require('./penguin-discard.test')],
+  ['immunity-enforcement', require('./immunity-enforcement.test')],
   ['legacy-cleanup', require('./legacy-cleanup.test')],
   ['final-gate', require('./final-gate.test')],
   ['final-audit', require('./final-audit.test')],

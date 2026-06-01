@@ -227,7 +227,11 @@
     const opts = Object.assign({}, options || {});
     if (!opts.gameState) opts.gameState = ctx.gameState;
     if (!opts.controller) opts.controller = ctx.controller;
+    // 행위자(효과를 발동한 컨트롤러). opts.controller는 카드 소유자로 덮일 수 있어 별도 보존한다.
+    // card-move가 "상대 효과가 내 카드를 건드리는가"를 판별해 내성/보호를 적용하는 데 쓴다.
+    if (!opts.actorController) opts.actorController = ctx.controller;
     if (!opts.effect && ctx.effect) opts.effect = ctx.effect;
+    if (!opts.chainLink && ctx.chainLink) opts.chainLink = ctx.chainLink;
     if (!opts.event && ctx.event) opts.eventData = Object.assign({}, opts.eventData || {}, { causedByEventId: ctx.event.eventId || null });
     return opts;
   }

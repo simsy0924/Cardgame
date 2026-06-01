@@ -391,6 +391,43 @@
     });
   }
 
+  // 상대 효과가 카드를 제거하려 할 때 내성/보호(지속효과)를 조회하는 backstop.
+  // 효과 기반(ctx.move → opts.effect 주입) 제거만 검사하고, 전투/룰/레거시 직접 호출은 통과시킨다.
+  // 자기 효과(actor === owner)는 막지 않는다. 막혀야 하면 failResult를, 아니면 null을 반환한다.
+  function checkRemovalImmunity(state, card, owner, opts, action) {
+    const continuous = global.HB_CONTINUOUS_ENGINE;
+    if (!continuous || !opts.effect || !card) return null;
+    const ownerC = normalizeController(owner);
+    const actor = normalizeController(opts.actorController || (opts.effect && opts.effect.controller) || ownerC);
+    if (actor === ownerC) return null; // 자기 효과는 내성 대상 아님
+    const checkInput = {
+      gameState: state, target: card, card, monster: card,
+      targetController: ownerC, actorController: actor,
+      action, reason: opts.reason, effect: opts.effect, chainLink: opts.chainLink,
+      isTargeting: opts.isTargeting === true,
+    };
+    const name = getCardName(normalizeCardId(card), card);
+    if (typeof continuous.checkEffectImmunity === 'function') {
+      const imm = continuous.checkEffectImmunity(checkInput);
+      if (imm && imm.blocked) return failResult(`${name}는 효과를 받지 않습니다(내성).`, { blocked: true, immunity: imm, reason: imm.reason || 'effectImmunity' });
+    }
+    if (action === 'sendToGrave' && typeof continuous.checkCannotBeSentToGrave === 'function') {
+      const g = continuous.checkCannotBeSentToGrave(checkInput);
+      if (g && g.blocked) return failResult(`${name}는 묘지로 보낼 수 없습니다.`, { blocked: true, immunity: g, reason: g.reason || 'cannotBeSentToGrave' });
+    }
+    if (opts.isTargeting === true && typeof continuous.checkTargetProtection === 'function') {
+      const tp = continuous.checkTargetProtection(checkInput);
+      if (tp && tp.blocked) return failResult(`${name}는 대상으로 지정할 수 없습니다(대상 내성).`, { blocked: true, immunity: tp, reason: tp.reason || 'targetProtection' });
+    }
+    return null;
+  }
+
+  function findCardInZone(state, location, cardId) {
+    if (!location) return null;
+    return zoneAccess.getZoneArray(state, location.controller, location.zone)
+      .find(c => normalizeCardId(c) === cardId) || null;
+  }
+
   function sendToGrave(options) {
     const opts = options || {};
     const state = resolveGameState(opts.gameState);
@@ -405,6 +442,9 @@
     } catch (err) {
       return failResult(err.message);
     }
+
+    const immuneBlock = checkRemovalImmunity(state, findCardInZone(state, from, cardId), from.controller, opts, 'sendToGrave');
+    if (immuneBlock) return immuneBlock;
 
     return moveCard({
       gameState: state,
@@ -435,6 +475,9 @@
     } catch (err) {
       return failResult(err.message);
     }
+
+    const immuneBlock = checkRemovalImmunity(state, findCardInZone(state, from, cardId), from.controller, opts, 'banish');
+    if (immuneBlock) return immuneBlock;
 
     return moveCard({
       gameState: state,
