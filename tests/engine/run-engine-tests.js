@@ -9,6 +9,7 @@ const tests = [
   ['effect-registry', require('./effect-registry.test')],
   ['penguin-discard', require('./penguin-discard.test')],
   ['immunity-enforcement', require('./immunity-enforcement.test')],
+  ['penguin-bugfixes', require('./penguin-bugfixes.test')],
   ['legacy-cleanup', require('./legacy-cleanup.test')],
   ['final-gate', require('./final-gate.test')],
   ['final-audit', require('./final-audit.test')],

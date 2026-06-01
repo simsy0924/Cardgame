@@ -416,6 +416,26 @@
       return out;
     };
 
+    // 펭귄 마을 ② 교체: 버릴 카드에 '공개된 펭귄 마을'이 있으면, 마을을 버리는 대신
+    // 필드의 펭귄 몬스터를 묘지로 보낼지 묻는다(REPLACEMENT). 처리를 넘겨받으면 true.
+    const tryVillageDiscardReplacement = (cards) => {
+      const village = cards.find(c => c && c.id === '펭귄 마을' && c.isPublic);
+      if (!village) return false;
+      const hand = zoneArray(ctx, controller, ZONES.HAND);
+      const villageIndex = hand.indexOf(village);
+      if (villageIndex < 0) return false;
+      const selectedIndices = cards.map(c => hand.indexOf(c)).filter(i => i >= 0);
+      const res = handleVillageDiscardReplacement({
+        gameState: ctx.gameState,
+        controller,
+        villageIndex,
+        selectedIndices,
+        after: () => { dispatchPending(ctx); renderAndSync(); if (onDone) onDone({ ok: true, discarded: cards.length, villageReplacement: true }); },
+        onDecline: () => { applyDiscard(cards); },
+      });
+      return !!(res && (res.handled || res.pending));
+    };
+
     // 사전 선택(ctx.selectedCards)이 충분하면 그대로 사용
     const preSelected = (ctx.selectedCards && ctx.selectedCards.length)
       ? ctx.selectedCards
@@ -427,13 +447,20 @@
     // opts.sync: 동기 while 루프(각성의 군단 등)에서 패가 즉시 줄어야 하므로 picker 금지.
     const isLocalHuman = controller === CONTROLLERS.ME && !ctx._hbAutoPick && !ctx.isAI;
     const canPick = !opts.sync && typeof openCardPicker === 'function' && isLocalHuman && pool.length > count;
-    if (!canPick) return applyDiscard(pool.slice(0, count)); // 선택 여지 없음/비-로컬/동기 → 첫 후보
+    if (!canPick) {
+      // 로컬 플레이어가 (선택 여지 없이) 공개 펭귄 마을을 버려야 하는 경우에도 ② 교체를 제안한다.
+      if (isLocalHuman && !opts.sync && tryVillageDiscardReplacement(pool.slice(0, count)))
+        return { ok: true, deferred: true, awaitingSelection: true };
+      return applyDiscard(pool.slice(0, count)); // 선택 여지 없음/비-로컬/동기 → 첫 후보
+    }
 
     // 로컬 플레이어 + 실제 선택지 → 비동기 picker (필수 버리기이므로 forced=true)
     // eslint-disable-next-line no-undef
     openCardPicker(pool, title, count, (indices) => {
       const picked = (indices || []).map(i => pool[i]).filter(Boolean);
-      applyDiscard(picked.length ? picked.slice(0, count) : pool.slice(0, count));
+      const finalPick = picked.length ? picked.slice(0, count) : pool.slice(0, count);
+      if (tryVillageDiscardReplacement(finalPick)) return; // 펭귄 마을 ② 교체가 처리
+      applyDiscard(finalPick);
     }, true);
     return { ok: true, deferred: true, awaitingSelection: true };
   }
@@ -817,6 +844,7 @@
       effectNo: 2,
       text: '패의 이 카드를 보여주고 발동할 수 있다. 자신은 2장 드로우한 뒤 패를 1장 고르고 버린다. 그 후 이 카드를 덱으로 되돌린다.',
       type: EFFECT_TYPES.ACTIVATION,
+      timing: TIMING.MY_DEPLOY,
       zone: ZONES.HAND,
       tags: [TAGS.DRAW, TAGS.DISCARD_HAND, 'returnSelfToDeck'],
       oncePerTurn: { key: '펭귄 부부_2', limit: 1 },
@@ -839,6 +867,7 @@
       effectNo: 1,
       text: '펭귄 마을이 공개 상태로 존재할 경우에 발동할 수 있다. 자신은 1장 드로우한다. 그 후 패를 1장 버린다.',
       type: EFFECT_TYPES.ACTIVATION,
+      timing: TIMING.MY_DEPLOY,
       zone: ZONES.FIELD,
       tags: [TAGS.DRAW, TAGS.DISCARD_HAND],
       oncePerTurn: { key: '현자 펭귄_1', limit: 1 },
@@ -876,6 +905,7 @@
       effectNo: 1,
       text: '펭귄 마을이 공개 상태로 존재할 경우에 발동할 수 있다. 이 카드의 공격력을 1 올린다. 그 후 서로 패를 1장 버린다.',
       type: EFFECT_TYPES.ACTIVATION,
+      timing: TIMING.MY_DEPLOY,
       zone: ZONES.FIELD,
       tags: [TAGS.DISCARD_HAND, 'attackUp'],
       oncePerTurn: { key: '수문장 펭귄_1', limit: 1 },
@@ -934,6 +964,7 @@
       effectNo: 2,
       text: '묘지의 이 카드를 제외하고 발동할 수 있다. 패에서 펭귄 몬스터 1장을 소환한다.',
       type: EFFECT_TYPES.ACTIVATION,
+      timing: TIMING.MY_DEPLOY,
       zone: ZONES.GRAVE,
       tags: [TAGS.COST_BANISH, TAGS.HAND_SUMMON],
       condition(ctx) { return findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)).length > 0 && hasFieldSpace(ctx); },
@@ -1256,6 +1287,7 @@
       effectNo: 2,
       text: '묘지의 이 카드를 제외하고 발동할 수 있다. 덱에서 펭귄 마을 1장을 패에 넣는다. 그 후 패를 1장 버린다.',
       type: EFFECT_TYPES.ACTIVATION,
+      timing: TIMING.MY_DEPLOY,
       zone: ZONES.GRAVE,
       tags: [TAGS.COST_BANISH, TAGS.DECK_SEARCH, TAGS.DISCARD_HAND],
       oncePerTurn: { key: '평화의 펭귄_2', limit: 1 },
@@ -1383,6 +1415,7 @@
       effectNo: 1,
       text: '일반 패인 이 카드를 보여주고 발동할 수 있다. 덱에서 펭귄 카드 1장을 패에 넣는다. 그 후, 이 카드를 덱으로 되돌린다.',
       type: EFFECT_TYPES.ACTIVATION,
+      timing: TIMING.MY_DEPLOY,
       zone: ZONES.HAND,
       tags: [TAGS.DECK_SEARCH, 'returnSelfToDeck'],
       oncePerTurn: { key: '펭귄 마법사_1', limit: 2 },
