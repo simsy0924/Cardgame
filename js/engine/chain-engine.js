@@ -601,6 +601,13 @@
           index: typeof chainLink.sourceIndex === 'number' ? chainLink.sourceIndex : null,
         },
         targets: chainLink.targets,
+        // [BUGFIX] 체인 링크에 저장된 사용자 선택(selectedCards)을 resolve ctx로 복원한다.
+        // 응답 창이 열린 뒤 해결되는 지연 경로에서는 ctxOrOptions에 이 링크의 선택이 없어,
+        // 복원하지 않으면 firstOrSelected/chooseCards가 candidates[0]로 떨어져
+        // "고른 것과 다른 카드"가 처리된다(소환 등). targets와 동일하게 링크에서 되살린다.
+        selectedCards: (chainLink.activationData && chainLink.activationData.selectedCards)
+          || (ctxOrOptions && ctxOrOptions.selectedCards)
+          || [],
       }), effect);
     } catch (err) {
       return makeFail(err.message, { chainLink });

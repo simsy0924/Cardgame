@@ -105,4 +105,33 @@ module.exports = function runChainEngineTests() {
   }, { replace: true });
   const procResult = ctx.HB_CHAIN_ENGINE.canActivateEffect({ gameState: state, controller: 'me', sourceZone: 'hand', card: makeCard('꼬마 펭귄') }, procedure);
   assert(!procResult.ok, 'procedure should not be chainable');
+
+  // [회귀] 지연 해결(응답 창이 열린 뒤 별도 resolveChain) 경로에서, 발동 시 저장한
+  // 사용자 선택(selectedCards)이 체인 링크로부터 resolve ctx로 복원되는지 검증한다.
+  // 복원이 누락되면 firstOrSelected/chooseCards가 candidates[0]로 떨어져
+  // "고른 것과 다른 카드"가 처리되는 버그가 난다.
+  ctx.HB_CHAIN_ENGINE.resolveChain({ gameState: state, controller: 'me', authority: true }); // 잔여 링크 정리
+  const selState = makeState({ myHand: [makeCard('꼬마 펭귄')] });
+  ctx.G = selState;
+  let seenSelected = null;
+  const selEffect = ctx.HB_EFFECT_REGISTRY.registerEffect({
+    id: 'test-chain-selectedcards-restore',
+    cardId: '꼬마 펭귄',
+    type: 'activation',
+    zone: 'hand',
+    resolve(rctx) { seenSelected = (rctx.selectedCards || []).map(c => c.id); return true; },
+  }, { replace: true });
+  const selActivated = ctx.HB_CHAIN_ENGINE.activateEffect({
+    gameState: selState,
+    controller: 'me',
+    sourceZone: 'hand',
+    sourceIndex: 0,
+    card: selState.myHand[0],
+    effect: selEffect,
+    activationData: { selectedCards: [{ id: '꼬마 펭귄' }] },
+  });
+  assert(selActivated.ok, `selectedCards activation failed: ${selActivated.error}`);
+  const selResolved = ctx.HB_CHAIN_ENGINE.resolveChain({ gameState: selState, controller: 'me', authority: true });
+  assert(selResolved.ok, `resolveChain (selectedCards) failed: ${selResolved.error}`);
+  assertEqual((seenSelected || []).join(','), '꼬마 펭귄', 'resolve must receive selectedCards restored from chain link (deferred path)');
 };
