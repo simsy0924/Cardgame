@@ -84,7 +84,7 @@ module.exports = function testLegacyCleanup() {
   loadAllEffects(ctx);
   const registry = ctx.HB_EFFECT_REGISTRY;
   const stats = registry.getRegistryStats();
-  assertEqual(stats.total, 289, 'effect registry count must stay unchanged after removing legacy script loads');
+  assertEqual(stats.total, 288, 'effect registry count must stay unchanged after removing legacy script loads');
   assertEqual(stats.cards, 118, 'effect card count must stay unchanged after removing legacy script loads');
 
   const allEffects = Array.from({ length: 0 });

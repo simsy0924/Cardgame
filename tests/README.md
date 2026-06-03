@@ -53,7 +53,7 @@ node tests/engine/run-engine-tests.js
 - `index.html`의 모든 script 파일 존재 여부
 - 핵심 스크립트 로딩 순서
 - 레거시 테마/패치 파일 부재
-- 등록 효과 수 289개 유지
+- 등록 효과 수 288개 유지
 - 등록 효과 카드 수 118장 유지
 - 효과 타입별 개수 유지
 - 처리 시 무효의 `negateTags` 보유
