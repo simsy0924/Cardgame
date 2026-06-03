@@ -105,8 +105,8 @@ module.exports = function runFinalGateTests() {
     return acc;
   }, {});
   const expectedByType = {
-    activation: 83,
-    quick: 63,
+    activation: 81,
+    quick: 65,
     trigger: 80,
     continuous: 30,
     procedure: 24,
