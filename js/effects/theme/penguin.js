@@ -1012,28 +1012,11 @@
       timing: TIMING.MY_DEPLOY,
       zone: ZONES.GRAVE,
       tags: [TAGS.COST_BANISH, TAGS.DRAW],
-      condition(ctx) { return zoneArray(ctx, ctx.controller, ZONES.GRAVE).some(c => c && (c.id === '펭귄의 영광' || c.id === '펭귄이여 영원하라')); },
+      condition(ctx) { return zoneArray(ctx, ctx.controller, ZONES.GRAVE).some(c => c && c.id === '펭귄의 영광'); },
       canResolve(ctx) { return canDraw(ctx, 1); },
       cost(ctx) {
-        const cardId = zoneArray(ctx, ctx.controller, ZONES.GRAVE).some(c => c && c.id === '펭귄의 영광') ? '펭귄의 영광' : '펭귄이여 영원하라';
-        return ctx.move.banishCard({ cardId, controller: ctx.controller, from: { controller: ctx.controller, zone: ZONES.GRAVE }, reason: 'penguinGlory2Cost' });
+        return ctx.move.banishCard({ cardId: '펭귄의 영광', controller: ctx.controller, from: { controller: ctx.controller, zone: ZONES.GRAVE }, reason: 'penguinGlory2Cost' });
       },
-      resolve(ctx) { return drawOne(ctx); },
-    }),
-
-    makeEffect({
-      id: 'penguin-forever-as-glory-2-grave-banish-draw',
-      cardId: '펭귄이여 영원하라',
-      effectNo: 'glory-2',
-      text: '묘지/제외 상태에서 펭귄의 영광으로 취급한다. 자신 전개 단계에 묘지의 이 카드를 제외하고 1장 드로우할 수 있다.',
-      type: EFFECT_TYPES.ACTIVATION,
-      timing: TIMING.MY_DEPLOY,
-      zone: ZONES.GRAVE,
-      tags: [TAGS.COST_BANISH, TAGS.DRAW, 'treatedAsPenguinGlory'],
-      oncePerTurn: { key: '펭귄의 영광_2', limit: 1 },
-      condition(ctx) { return zoneArray(ctx, ctx.controller, ZONES.GRAVE).some(c => c && c.id === '펭귄이여 영원하라'); },
-      canResolve(ctx) { return canDraw(ctx, 1); },
-      cost(ctx) { return ctx.move.banishCard({ cardId: '펭귄이여 영원하라', controller: ctx.controller, from: { controller: ctx.controller, zone: ZONES.GRAVE }, reason: 'penguinForeverAsGlory2Cost' }); },
       resolve(ctx) { return drawOne(ctx); },
     }),
 

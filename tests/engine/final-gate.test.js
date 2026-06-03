@@ -94,7 +94,7 @@ module.exports = function runFinalGateTests() {
   const effects = registry.listEffects();
   const stats = registry.getRegistryStats();
 
-  assertEqual(stats.total, 289, 'final registered effect count');
+  assertEqual(stats.total, 288, 'final registered effect count');
   assertEqual(stats.cards, 118, 'final registered effect card count');
   assertEqual(stats.types, 7, 'final effect type count');
   assertEqual(stats.continuous, 30, 'final continuous effect count');
@@ -105,7 +105,7 @@ module.exports = function runFinalGateTests() {
     return acc;
   }, {});
   const expectedByType = {
-    activation: 81,
+    activation: 80,
     quick: 65,
     trigger: 80,
     continuous: 30,
