@@ -134,4 +134,42 @@ module.exports = function runChainEngineTests() {
   const selResolved = ctx.HB_CHAIN_ENGINE.resolveChain({ gameState: selState, controller: 'me', authority: true });
   assert(selResolved.ok, `resolveChain (selectedCards) failed: ${selResolved.error}`);
   assertEqual((seenSelected || []).join(','), '꼬마 펭귄', 'resolve must receive selectedCards restored from chain link (deferred path)');
+
+  // [회귀] 우선권 사이클: 발동자는 발동 직후 자동 패스되지 않는다. 상대가 패스하면
+  // 우선권이 발동자에게 복귀하고, 양쪽이 패스해야(passCount>=2) 최종 처리된다.
+  // (이전엔 effect-ui가 발동자를 선패스시켜, 상대의 단일 패스만으로 즉시 해결돼
+  //  발동자에게 우선권이 돌아오지 않았다.)
+  ctx.HB_CHAIN_ENGINE.resolveChain({ gameState: selState, controller: 'me', authority: true }); // 잔여 정리
+  ctx.AI = { active: true }; // 상대 존재 → 즉시 해결이 아니라 응답창을 연다
+  const prState = makeState({ myHand: [makeCard('꼬마 펭귄')] });
+  ctx.G = prState;
+  let prResolved = 0;
+  const prEffect = ctx.HB_EFFECT_REGISTRY.registerEffect({
+    id: 'test-priority-no-autopass',
+    cardId: '꼬마 펭귄',
+    type: 'activation',
+    zone: 'hand',
+    resolve() { prResolved += 1; return true; },
+  }, { replace: true });
+  const prCtx = ctx.HB_EFFECT_CONTEXT.createEffectContext({
+    gameState: prState, controller: 'me', sourceZone: 'hand', sourceIndex: 0,
+    card: prState.myHand[0], cardId: '꼬마 펭귄', effect: prEffect,
+  });
+  ctx.HB_EFFECT_UI.activateAvailableEffect({ effect: prEffect, ctx: prCtx }, { gameState: prState, controller: 'me', player: 'me' });
+
+  let pcs = ctx.HB_CHAIN_ENGINE.getChainState();
+  assert(pcs.active, 'priority: chain must stay open after activation when opponent present');
+  assertEqual(pcs.passCount, 0, 'priority: activator must NOT be auto-passed (passCount stays 0)');
+  assertEqual(pcs.priority, 'opponent', 'priority: priority goes to opponent after activation');
+  assertEqual(prResolved, 0, 'priority: must not resolve before both players pass');
+
+  ctx.HB_CHAIN_ENGINE.passChainResponse('opponent');
+  pcs = ctx.HB_CHAIN_ENGINE.getChainState();
+  assert(pcs.active, 'priority: chain still open after opponent single pass');
+  assertEqual(pcs.priority, 'me', 'priority: returns to activator after opponent passes');
+  assertEqual(prResolved, 0, 'priority: still not resolved after one pass');
+
+  ctx.HB_CHAIN_ENGINE.passChainResponse('me');
+  assertEqual(prResolved, 1, 'priority: resolves only after both players pass (passCount>=2)');
+  delete ctx.AI;
 };

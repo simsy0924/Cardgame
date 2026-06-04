@@ -440,16 +440,11 @@
       autoResolve: resolveImmediately,
       resolveImmediately,
     });
-    // [체인] 즉시 해결이 아니라 응답 창이 열린 경우, 발동자는 자기 효과에 다시 응답하지
-    // 않으므로 한 번 자동 패스한다 → 상대가 한 번만 패스(또는 무응답 워치독)하면 체인이
-    // 해결되어, 발동할 때마다 발동자가 또 패스를 눌러야 하는 이중 패스를 막는다.
-    // (상대가 응답해 새 링크를 올리면 우선권이 다시 발동자에게 돌아와 정상 응답 가능)
-    if (activation && activation.ok !== false && !resolveImmediately
-        && typeof chain.getChainState === 'function' && chain.getChainState().active
-        && typeof chain.passChainResponse === 'function') {
-      try { chain.passChainResponse(ctx.controller); }
-      catch (err) { console.warn('[effect-ui] 발동자 자동 패스 실패:', err); }
-    }
+    // [체인/우선권] 발동 직후 우선권은 addChainLink가 이미 상대에게 넘긴다(priority=상대).
+    // 발동자를 여기서 자동 패스시키지 않는다 — 상대가 패스하면 우선권이 발동자에게 복귀해
+    // "한 번 더 확인"(응답 또는 패스)을 거친 뒤에야 passCount>=2로 최종 처리된다.
+    // (이전 구현은 발동자를 선패스시켜, 상대의 단일 패스만으로 즉시 해결돼
+    //  발동자에게 우선권이 돌아오지 않는 버그가 있었다.)
     return activation;
   }
 
