@@ -117,6 +117,7 @@ const CORE_FILES = [
   'js/engine/event-bus.js',
   'js/engine/card-move.js',
   'js/engine/effect-context.js',
+  'js/engine/explicit-match.js',
   'js/engine/processing-negate-engine.js',
   'js/engine/chain-engine.js',
   'js/engine/trigger-queue.js',

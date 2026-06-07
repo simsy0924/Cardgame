@@ -54,6 +54,17 @@
       normalized.cardName = normalized.card.name;
     }
 
+    // 출처 효과 메타를 최상위로 끌어올린다(중첩 eventData로만 전달된 경우 대비).
+    // card-move.makeEvent는 이미 eventData를 펼쳐 최상위에 싣지만, 다른 발동 경로도 같은 규약을 따르게 한다.
+    if (normalized.eventData && typeof normalized.eventData === 'object') {
+      if (normalized.sourceEffectId == null && normalized.eventData.sourceEffectId != null) {
+        normalized.sourceEffectId = normalized.eventData.sourceEffectId;
+      }
+      if (normalized.sourceCardId == null && normalized.eventData.sourceCardId != null) {
+        normalized.sourceCardId = normalized.eventData.sourceCardId;
+      }
+    }
+
     return Object.freeze(normalized);
   }
 

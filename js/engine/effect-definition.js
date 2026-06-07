@@ -41,6 +41,42 @@
     return result;
   }
 
+  // 명시 매칭용 대상 매처 배열 정규화.
+  // 입력: 'effId' | { effectId } | { cardId } | { tagAny:[...] } 들의 배열.
+  // 매칭 단위는 effect-id이며, cardId/tagAny는 매칭 시점에 explicit-match가 확장/대조한다.
+  function normalizeTargetMatchers(value) {
+    const matchers = [];
+    asArray(value).forEach(entry => {
+      if (entry == null) return;
+      if (typeof entry === 'string') {
+        if (entry === '') return;
+        matchers.push(Object.freeze({ effectId: entry }));
+        return;
+      }
+      if (typeof entry !== 'object') return;
+      if (entry.effectId) { matchers.push(Object.freeze({ effectId: String(entry.effectId) })); return; }
+      if (entry.cardId) { matchers.push(Object.freeze({ cardId: String(entry.cardId) })); return; }
+      const tagAny = uniqueStrings(entry.tagAny || entry.tags || entry.tag);
+      if (tagAny.length) matchers.push(Object.freeze({ tagAny: Object.freeze(tagAny) }));
+    });
+    return matchers;
+  }
+
+  // 이벤트 유발 응답 명세 정규화: { event(s), sourceEffectId(s), sourceCardId(s) }.
+  function normalizeRespondsTo(value) {
+    if (!value || typeof value !== 'object') return null;
+    const events = uniqueStrings(value.events || value.event);
+    const sourceEffectIds = uniqueStrings(value.sourceEffectIds || value.sourceEffectId);
+    const sourceCardIds = uniqueStrings(value.sourceCardIds || value.sourceCardId);
+    if (events.length === 0 && sourceEffectIds.length === 0 && sourceCardIds.length === 0) return null;
+    return Object.freeze({
+      events: Object.freeze(events),
+      event: events.length === 1 ? events[0] : null,
+      sourceEffectIds: Object.freeze(sourceEffectIds),
+      sourceCardIds: Object.freeze(sourceCardIds),
+    });
+  }
+
   function cloneOncePerTurn(value, effectId) {
     if (value === true) {
       return Object.freeze({ scope: 'turn', key: effectId, limit: 1 });
@@ -205,6 +241,9 @@
 
       tags: Object.freeze(tags),
       negateTags: Object.freeze(negateTags),
+      // 명시 매칭(무효 카드가 대상 목록 보유): negateTargets는 체인 위 효과를, respondsTo는 이벤트 출처를 대조한다.
+      negateTargets: Object.freeze(normalizeTargetMatchers(raw.negateTargets)),
+      respondsTo: normalizeRespondsTo(raw.respondsTo),
       processingNegate: processingNegate ? Object.freeze(processingNegate) : null,
       summonProcedure: raw.summonProcedure || null,
       continuousRule: raw.continuousRule || null,

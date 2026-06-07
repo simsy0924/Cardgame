@@ -46,6 +46,7 @@ module.exports = function runFinalGateTests() {
   assertBefore(scripts, 'js/engine/card-move.js', 'js/engine/effect-context.js');
   assertBefore(scripts, 'js/engine/effect-context.js', 'js/effects/theme/penguin.js');
   assertBefore(scripts, 'js/effects/theme/liger.js', 'js/engine/processing-negate-engine.js');
+  assertBefore(scripts, 'js/engine/explicit-match.js', 'js/engine/processing-negate-engine.js');
   assertBefore(scripts, 'js/engine/processing-negate-engine.js', 'js/engine/chain-engine.js');
   assertBefore(scripts, 'js/engine/chain-engine.js', 'js/engine/trigger-queue.js');
   assertBefore(scripts, 'js/engine/trigger-queue.js', 'js/engine/continuous-engine.js');

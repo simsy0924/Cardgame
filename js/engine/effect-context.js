@@ -233,6 +233,14 @@
     if (!opts.effect && ctx.effect) opts.effect = ctx.effect;
     if (!opts.chainLink && ctx.chainLink) opts.chainLink = ctx.chainLink;
     if (!opts.event && ctx.event) opts.eventData = Object.assign({}, opts.eventData || {}, { causedByEventId: ctx.event.eventId || null });
+    // 이동으로 발생하는 이벤트가 "어떤 효과가 일으켰는지" 스스로 알도록 출처 메타를 싣는다.
+    // 명시 매칭(respondsTo)이 event.sourceEffectId로 발동 효과를 식별하는 근거가 된다.
+    if (opts.effect && (opts.effect.id || opts.effect.cardId)) {
+      opts.eventData = Object.assign({}, opts.eventData || {}, {
+        sourceEffectId: opts.effect.id || null,
+        sourceCardId: opts.effect.cardId || null,
+      });
+    }
     return opts;
   }
 

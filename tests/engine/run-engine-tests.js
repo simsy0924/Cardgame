@@ -1,5 +1,7 @@
 const tests = [
   ['card-move', require('./card-move.test')],
+  ['source-effect-metadata', require('./source-effect-metadata.test')],
+  ['explicit-match', require('./explicit-match.test')],
   ['chain-engine', require('./chain-engine.test')],
   ['full-chain-migration', require('./full-chain-migration.test')],
   ['chain-network-safety', require('./chain-network-safety.test')],
