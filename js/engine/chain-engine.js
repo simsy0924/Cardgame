@@ -50,6 +50,8 @@
   };
 
   const usageCounters = new Map();
+  // 해결 중 무효화된 링크 id → 사유. 링크 객체는 freeze되므로 별도 맵으로 관리한다.
+  const negatedLinkIds = new Map();
   let nextChainSequence = 1;
   let nextLinkSequence = 1;
 
@@ -613,8 +615,8 @@
       return makeFail(err.message, { chainLink });
     }
 
-    if (chainLink.negated) {
-      const skippedResult = makeOk({ chainLink, effect, skipped: true, negated: true, reason: chainLink.negateReason || 'preNegated' });
+    if (chainLink.negated || negatedLinkIds.has(chainLink.id)) {
+      const skippedResult = makeOk({ chainLink, effect, skipped: true, negated: true, reason: chainLink.negateReason || negatedLinkIds.get(chainLink.id) || 'preNegated' });
       emitChainLinkResolved(ctx, chainLink, skippedResult, true);
       return skippedResult;
     }
@@ -678,6 +680,17 @@
       const result = resolveChainLink(ctx, links[i]);
       resolved.push(result);
       if (!result.ok) errors.push(result);
+
+      // "그 효과를 무효로 한다" 계열: 무효화 효과의 resolve가 negatePreviousLink를
+      // 반환하면, 이 링크가 응답했던 직전 링크(체인 순서상 바로 아래)를 무효로 표시한다.
+      // 링크 객체는 freeze이므로 negatedLinkIds 맵으로 표시하고 resolveChainLink가 건너뛴다.
+      const inner = result && result.ok && result.result && typeof result.result === 'object' ? result.result : null;
+      if (inner && inner.negatePreviousLink === true && i - 1 >= 0) {
+        markChainLinkNegated(links[i - 1].id, inner.reason || links[i].effectId || 'negatedByChainResponse');
+      }
+      if (inner && inner.negateLinkId) {
+        markChainLinkNegated(inner.negateLinkId, inner.reason || links[i].effectId || 'negatedByChainResponse');
+      }
     }
 
     const chainBeforeClear = getChainState();
@@ -707,10 +720,17 @@
     return makeOk({ resolved, count: resolved.length, errors, chain: chainBeforeClear });
   }
 
+  function markChainLinkNegated(linkId, reason) {
+    if (!linkId) return makeFail('linkId가 필요합니다.');
+    negatedLinkIds.set(linkId, reason || 'negated');
+    return makeOk({ linkId, reason: negatedLinkIds.get(linkId) });
+  }
+
   function clearChain() {
     const previous = getChainState();
     chainState.active = false;
     chainState.links.length = 0;
+    negatedLinkIds.clear();
     chainState.responding = false;
     chainState.priority = null;
     chainState.passCount = 0;
@@ -897,6 +917,7 @@
     openChainResponseWindow,
     resolveChain: localResolveChain,
     resolveChainLink,
+    markChainLinkNegated,
     clearChain,
 
     // 안전한 신규 효과 진입점. 레거시 beginChain을 대체하지 않고 신엔진 효과만 사용한다.

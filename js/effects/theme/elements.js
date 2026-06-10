@@ -144,7 +144,9 @@
   function canRecoverOrSummon(ctx, card) { const def = getCardDef(card); return def && def.cardType === 'monster' ? hasFieldSpace(ctx, my(ctx)) : true; }
   function recoverOrSummon(ctx, card, zone, label) { const def = getCardDef(card); if (def && def.cardType === 'monster') return summonFromZone(ctx, card, zone, label); return addToHandFromZone(ctx, card, zone, label); }
   function bounceCardToHand(ctx, controller, zone, card) { const owner = normalizeController(controller); return ctx.move.addToHand({ cardId: getCardId(card), controller: owner, from: { controller: owner, zone }, reason: 'elementsBounceToHand' }); }
-  function negateCurrentChainLink(ctx) { if (ctx.chainLink) { ctx.chainLink.negated = true; ctx.chainLink.isNegated = true; ctx.chainLink.negatedBy = ctx.effect.id; } logSafe(`${getCardName(ctx.effect.cardId)}: 효과를 무효로 했습니다.`, 'mine'); dispatchPending(ctx); return true; }
+  // 체인 링크 객체는 freeze이므로 직접 쓰지 않는다. 체인 엔진이 negatePreviousLink를
+  // 해석해 이 링크가 응답한 직전 링크를 무효 처리한다(chain-engine.resolveChain).
+  function negateCurrentChainLink(ctx) { logSafe(`${getCardName(ctx.effect.cardId)}: 효과를 무효로 했습니다.`, 'mine'); dispatchPending(ctx); return { ok: true, negated: true, negatePreviousLink: true, reason: ctx.effect && ctx.effect.id }; }
   function removeSelfAsCost(ctx) { const z = sourceZone(ctx); if (z === ZONES.FIELD) return ctx.move.sendToGrave({ cardId: sourceCardId(ctx), from: { controller: my(ctx), zone: ZONES.FIELD }, reason: 'elementsCostSendSelf' }); if (z === ZONES.HAND) return ctx.move.sendToGrave({ cardId: sourceCardId(ctx), from: { controller: my(ctx), zone: ZONES.HAND }, reason: 'elementsCostSendSelf' }); return { ok: false, error: '코스트로 보낼 수 있는 위치가 아닙니다.' }; }
 
   const effects = [];

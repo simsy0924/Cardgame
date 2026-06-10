@@ -99,6 +99,17 @@
     return base;
   }
 
+  // 발동/유발 효과가 부여한 일회성 공격력 수정치.
+  // atkBuff = 영구("공격력을 N 올린다"), atkBuffTurn = 턴 종료시까지.
+  // 지속 효과 재계산(atk = base + 지속 보정)이 매 렌더마다 돌기 때문에,
+  // 일회성 버프는 이 필드에 보존해 두고 재계산식에 항상 합산한다.
+  function getOneShotAtkBuff(card) {
+    if (!card) return 0;
+    const permanent = Number(card.atkBuff || 0);
+    const untilEndOfTurn = Number(card.atkBuffTurn || 0);
+    return (Number.isFinite(permanent) ? permanent : 0) + (Number.isFinite(untilEndOfTurn) ? untilEndOfTurn : 0);
+  }
+
   function eachMonsterOnField(gameState, callback) {
     const state = resolveGameState(gameState);
     [CONTROLLERS.ME, CONTROLLERS.OPPONENT].forEach(controller => {
@@ -300,7 +311,7 @@
   function resetContinuousCardState(card) {
     if (!card) return;
     const base = ensureCardBaseAttack(card);
-    card.atk = base;
+    card.atk = base + getOneShotAtkBuff(card);
     card._hbContinuous = {
       appliedEffects: [],
       attackModifier: 0,
@@ -368,7 +379,7 @@
         if (!target || !Number.isFinite(delta) || delta === 0) return null;
         if (!target._hbContinuous) resetContinuousCardState(target);
         target._hbContinuous.attackModifier += delta;
-        target.atk = getBaseAttack(target) + target._hbContinuous.attackModifier;
+        target.atk = getBaseAttack(target) + getOneShotAtkBuff(target) + target._hbContinuous.attackModifier;
         const entry = makeReason({ amount: delta, reason: detail || 'attackModifier' });
         target._hbContinuous.appliedEffects.push(Object.freeze(entry));
         return entry;
@@ -566,7 +577,7 @@
       if (modifier !== 0) {
         if (!card._hbContinuous) resetContinuousCardState(card);
         card._hbContinuous.attackModifier = modifier;
-        card.atk = base + modifier;
+        card.atk = base + getOneShotAtkBuff(card) + modifier;
       }
     });
 
@@ -817,6 +828,7 @@
     checkEffectImmunity,
     checkCannotBeSentToGrave,
     getAttackModifier,
+    getOneShotAtkBuff,
     getAvailableMonsterZoneCount,
     canAttackWithMonster,
   });

@@ -26,7 +26,6 @@ function enterGame() {
   gameClock = { host: 500, guest: 500, runningFor: 'host', lastUpdated: Date.now() };
   G.myExtraSlots = 0;
   G.opExtraSlots = 0;
-  G.penguinHeroAtkBuff = false;
   attackedMonstersThisTurn.clear();
 
   listenOpponentState();

@@ -196,8 +196,10 @@
 
     // 브라우저 플레이에서는 기존 카드 선택 UI를 재사용한다. 체인 엔진은 반환값을 기다리지 않지만,
     // 기존 프로젝트도 같은 방식의 비동기 선택을 사용하므로 호환을 위해 resolve 내부에서 콜백 처리한다.
+    // picker는 로컬 플레이어 컨트롤러일 때만 띄운다(상대/AI 해결은 자동 첫 후보).
+    const isLocalHumanPick = normalizeController(ctx && ctx.controller) === CONTROLLERS.ME && !ctx._hbAutoPick && !ctx.isAI;
     // eslint-disable-next-line no-undef
-    if (typeof openCardPicker === 'function' && !ctx._hbAutoPick) {
+    if (typeof openCardPicker === 'function' && isLocalHumanPick) {
       // eslint-disable-next-line no-undef
       openCardPicker(list, title, count, sel => {
         const selected = (sel || []).map(i => list[i]).filter(Boolean);
@@ -487,7 +489,7 @@
     });
   }
 
-  function returnFieldCardToHand(ctx, controller, cardId, reason) {
+  function returnFieldCardToHand(ctx, controller, cardId, reason, options) {
     const owner = normalizeController(controller);
     return ctx.move.moveCard({
       cardId,
@@ -496,6 +498,8 @@
       to: { controller: owner, zone: ZONES.HAND },
       reason: reason || 'penguinReturnFieldCard',
       eventController: owner,
+      // "대상으로 하고" 효과의 바운스는 isTargeting을 명시해 비대상 내성(전설 ③ 등)을 통과시킨다.
+      isTargeting: !!(options && options.isTargeting),
     });
   }
 
@@ -518,12 +522,13 @@
     return global.HB_CONTINUOUS_ENGINE || (global.HB_ENGINE && global.HB_ENGINE.continuous) || null;
   }
 
-  function getMonsterSendToGraveBlock(ctx, target, targetController, reason) {
+  function getMonsterSendToGraveBlock(ctx, target, targetController, reason, action) {
     if (!target) return { blocked: true, reason: 'noTarget', message: '묘지로 보낼 몬스터가 없습니다.' };
 
     const continuous = getContinuousEngine();
     if (!continuous) return { blocked: false };
 
+    const moveAction = action || 'sendToGrave';
     const checkInput = {
       gameState: ctx && ctx.gameState,
       target,
@@ -535,18 +540,18 @@
       controller: normalizeController(ctx && ctx.controller),
       effect: ctx && ctx.effect,
       chainLink: ctx && ctx.chainLink,
-      action: 'sendToGrave',
+      action: moveAction,
       reason: reason || 'penguinSendOpponentMonsterToGrave',
     };
 
     if (typeof continuous.checkEffectImmunity === 'function') {
       const immunity = continuous.checkEffectImmunity(checkInput);
       if (immunity && immunity.blocked) {
-        return { blocked: true, reason: immunity.reason || 'effectImmunity', detail: immunity, message: `${getCardName(target)}는 효과 내성이 있어 묘지로 보낼 수 없습니다.` };
+        return { blocked: true, reason: immunity.reason || 'effectImmunity', detail: immunity, message: `${getCardName(target)}는 효과 내성이 있어 처리할 수 없습니다.` };
       }
     }
 
-    if (typeof continuous.checkCannotBeSentToGrave === 'function') {
+    if (moveAction === 'sendToGrave' && typeof continuous.checkCannotBeSentToGrave === 'function') {
       const graveBlock = continuous.checkCannotBeSentToGrave(checkInput);
       if (graveBlock && graveBlock.blocked) {
         return { blocked: true, reason: graveBlock.reason || 'cannotBeSentToGrave', detail: graveBlock, message: `${getCardName(target)}는 묘지로 보낼 수 없습니다.` };
@@ -573,7 +578,8 @@
     const sendable = getSendableOpponentMonsters(ctx, 'awakenedPenguinLegion1SendOpponent');
     if (!sendable.length) return { code: 'onlyProtectedOpponentMonsters', message: '상대 필드의 몬스터가 모두 효과 내성이 있거나 묘지로 보낼 수 없어 「각성의 펭귄 군단」 반복 처리를 종료합니다.' };
 
-    const gravePenguins = findZoneCards(ctx, ZONES.GRAVE, isPenguinMonster);
+    // 소환 제한 카드(펭귄 용사 등)는 이 효과로 소생할 수 없으므로 후보에서 제외하고 판정한다.
+    const gravePenguins = findZoneCards(ctx, ZONES.GRAVE, c => isPenguinMonster(c) && canSummonWithReason(ctx, c, 'awakenedPenguinLegion1Revive'));
     if (!gravePenguins.length) return { code: 'noGravePenguin', message: '소환할 묘지의 「펭귄」 몬스터가 없어 「각성의 펭귄 군단」 반복 처리를 종료합니다.' };
 
     if (!hasFieldSpace(ctx)) return { code: 'noFieldSpace', message: '자신 몬스터 존이 가득 차 「각성의 펭귄 군단」 반복 처리를 종료합니다.' };
@@ -622,20 +628,36 @@
     });
   }
 
-  function banishOpponentMonsters(ctx, count) {
+  function getBanishableOpponentMonsters(ctx, reason) {
     const opponent = opponentOf(ctx.controller);
     const monsters = zoneArray(ctx, opponent, ZONES.FIELD).filter(card => card && isMonster(card));
-    const selected = chooseCards(Object.assign({}, ctx, { _hbAutoPick: true }), monsters, '상대 몬스터 제외', Math.min(count, monsters.length)) || [];
-    const results = [];
-    selected.forEach(card => {
-      results.push(ctx.move.banishCard({
+    return monsters.filter(card => !getMonsterSendToGraveBlock(ctx, card, opponent, reason, 'banish').blocked);
+  }
+
+  function banishOpponentMonsters(ctx, count, onDone) {
+    const opponent = opponentOf(ctx.controller);
+    const candidates = getBanishableOpponentMonsters(ctx, 'penguinWizardBanishOpponentMonster');
+    const n = Math.min(Math.max(0, Number(count || 0)), candidates.length);
+    if (n <= 0) {
+      const empty = { ok: true, results: [], banished: 0 };
+      if (onDone) onDone(empty);
+      return empty;
+    }
+    const apply = (cards) => {
+      const results = (cards || []).filter(Boolean).map(card => ctx.move.banishCard({
         cardId: card.id,
         controller: opponent,
         from: { controller: opponent, zone: ZONES.FIELD },
         reason: 'penguinWizardBanishOpponentMonster',
       }));
-    });
-    return { ok: results.every(r => r.ok), results };
+      const out = { ok: results.every(r => r.ok !== false), results, banished: results.filter(r => r.ok !== false).length };
+      if (onDone) onDone(out);
+      return out;
+    };
+    let syncResult = null;
+    const picked = chooseCards(ctx, candidates, `상대 몬스터 ${n}장 제외`, n, cards => { syncResult = apply(cards); });
+    // picker가 열린 경우(picked === null) 결과는 콜백에서 적용된다.
+    return syncResult || { ok: true, deferred: true, awaitingSelection: picked === null };
   }
 
   function putHandCardOnDeck(ctx, cardId, reason) {
@@ -671,6 +693,25 @@
 
   function cardMatchesEvent(ctx, cardId) {
     return !!(ctx.event && ctx.event.cardId === cardId);
+  }
+
+  // "이 카드를 소환했을 경우/묘지로 보내졌을 경우" 류 자기-유발 판정.
+  // cardId만 비교하면 상대 필드/묘지의 동명 카드까지 유발 후보가 되므로,
+  // 이벤트 당사자(controller)와 이 효과 소스의 controller가 같은지도 확인한다.
+  function selfEventMatches(ctx, cardId) {
+    if (!cardMatchesEvent(ctx, cardId)) return false;
+    const e = ctx.event || {};
+    const eventController = e.controller || (e.to && e.to.controller) || null;
+    if (!eventController) return true;
+    return normalizeControllerSafe(eventController, ctx.controller) === normalizeController(ctx.controller);
+  }
+
+  // "이 카드는 ~의 효과로만 소환할 수 있다" 소환 제한(card-move가 reason으로 강제)을
+  // 후보 수집 단계에서 미리 적용해, 고를 수 없는 카드가 picker에 뜨지 않게 한다.
+  function canSummonWithReason(ctx, cardOrId, reason) {
+    const move = global.HB_CARD_MOVE;
+    if (!move || typeof move.canSummonWithReason !== 'function') return true;
+    return move.canSummonWithReason(ctx && ctx.gameState, getCardId(cardOrId), reason);
   }
 
   function chainHasOpponentMonsterEffect(ctx) {
@@ -715,10 +756,41 @@
     });
   }
 
+  // "상대가 몬스터 효과를 발동했을 때 … 그 효과를 무효로 한다" — 응답 대상은
+  // 체인의 마지막 링크(직전에 발동된 효과)이므로 그 링크만 검사한다.
+  function lastChainLinkIsOpponentMonsterEffect(ctx) {
+    const links = getActiveChainLinks(ctx);
+    if (!links.length) return false;
+    const last = links[links.length - 1];
+    if (!last) return false;
+    const rawController = last.controller || last.by || last.actorController || last.sourceController;
+    const controller = normalizeControllerSafe(rawController, CONTROLLERS.OPPONENT);
+    if (controller === normalizeControllerSafe(ctx && ctx.controller, CONTROLLERS.ME)) return false;
+    const card = getCardDef(last.cardId);
+    return !card || card.cardType === 'monster'; // 카드 정보를 모르는 레거시 링크는 몬스터로 간주(호환)
+  }
+
   function getAttackValue(cardOrId) {
     const card = cardOrId && typeof cardOrId === 'object' ? cardOrId : null;
     const def = getCardDef(cardOrId);
     return Number((card && (card.atk ?? card.attack)) ?? (def && (def.atk ?? def.attack)) ?? 0);
+  }
+
+  // 발동/유발 효과의 일회성 공격력 버프.
+  // card.atk 직접 수정은 지속 효과 재계산(renderAll → applyContinuousEffects)이
+  // atk를 atkBase 기준으로 되돌릴 때 증발하므로, 보존 필드에 기록한다.
+  // atkBuff = 영구("공격력을 N 올린다"), atkBuffTurn = "턴 종료시까지"(턴 경계에 해제).
+  function applyOneShotAtkBuff(card, amount, untilEndOfTurn) {
+    if (!card) return { ok: false, error: '버프 대상이 없습니다.' };
+    const delta = Number(amount || 0);
+    if (!Number.isFinite(delta) || delta === 0) return { ok: true, skipped: true };
+    const key = untilEndOfTurn ? 'atkBuffTurn' : 'atkBuff';
+    card[key] = Number(card[key] || 0) + delta;
+    const def = getCardDef(card.id);
+    const base = (typeof card.atkBase === 'number') ? card.atkBase : Number((def && def.atk) || 0);
+    const continuous = Number((card._hbContinuous && card._hbContinuous.attackModifier) || 0);
+    card.atk = base + Number(card.atkBuff || 0) + Number(card.atkBuffTurn || 0) + continuous;
+    return { ok: true, cardId: card.id, atk: card.atk, amount: delta, untilEndOfTurn: !!untilEndOfTurn };
   }
 
   function increaseOwnPenguinAttack(ctx, amount, reason) {
@@ -726,9 +798,8 @@
     const results = [];
     zoneArray(ctx, ctx.controller, ZONES.FIELD).forEach(card => {
       if (!isPenguinMonster(card)) return;
-      const base = Number(card.atk ?? getAttackValue(card));
-      card.atk = base + buff;
-      results.push({ cardId: card.id, atk: card.atk });
+      const applied = applyOneShotAtkBuff(card, buff, false);
+      if (applied.ok && !applied.skipped) results.push({ cardId: card.id, atk: card.atk });
     });
     if (results.length) logSafe(`${reason || '펭귄 효과'}: 펭귄 몬스터 공격력 +${buff}`, 'mine');
     renderAndSync();
@@ -803,12 +874,12 @@
       zone: ZONES.FIELD,
       tags: [TAGS.DECK_SUMMON, 'penguinSummonTrigger'],
       oncePerTurn: { key: '꼬마 펭귄_2', limit: 2 },
-      condition(ctx) { return cardMatchesEvent(ctx, '꼬마 펭귄') && findDeckCards(ctx, c => isPenguinMonster(c.id)).length > 0 && hasFieldSpace(ctx); },
+      condition(ctx) { return selfEventMatches(ctx, '꼬마 펭귄') && findDeckCards(ctx, c => isPenguinMonster(c.id) && canSummonWithReason(ctx, c, 'kkomaPenguin2')).length > 0 && hasFieldSpace(ctx); },
       collectChoices(ctx) {
-        return { candidates: findDeckCards(ctx, c => isPenguinMonster(c.id)), title: '덱에서 소환할 펭귄 몬스터 선택', count: 1, emptyMessage: '덱에 펭귄 몬스터가 없습니다.' };
+        return { candidates: findDeckCards(ctx, c => isPenguinMonster(c.id) && canSummonWithReason(ctx, c, 'kkomaPenguin2')), title: '덱에서 소환할 펭귄 몬스터 선택', count: 1, emptyMessage: '덱에 펭귄 몬스터가 없습니다.' };
       },
       resolve(ctx) {
-        const target = firstOrSelected(ctx, findDeckCards(ctx, c => isPenguinMonster(c.id)), { byId: true });
+        const target = firstOrSelected(ctx, findDeckCards(ctx, c => isPenguinMonster(c.id) && canSummonWithReason(ctx, c, 'kkomaPenguin2')), { byId: true });
         return target ? summonFromDeck(ctx, target.id, 'kkomaPenguin2') : { ok: false, error: '덱에 펭귄 몬스터가 없습니다.' };
       },
     }),
@@ -824,7 +895,7 @@
       zone: ZONES.FIELD,
       tags: [TAGS.DECK_SEARCH, TAGS.DISCARD_HAND, 'penguinSummonTrigger'],
       oncePerTurn: { key: '펭귄 부부_1', limit: 1 },
-      condition(ctx) { return cardMatchesEvent(ctx, '펭귄 부부') && sourceWasSummonedFrom(ctx.event, ZONES.DECK) && findDeckCards(ctx, c => isPenguinCard(c.id)).length > 0; },
+      condition(ctx) { return selfEventMatches(ctx, '펭귄 부부') && sourceWasSummonedFrom(ctx.event, ZONES.DECK) && findDeckCards(ctx, c => isPenguinCard(c.id)).length > 0; },
       collectChoices(ctx) {
         const candidates = findDeckCards(ctx, c => isPenguinCard(c.id));
         return { candidates, title: '펭귄 부부 ①: 덱에서 패에 넣을 펭귄 카드 (최대 2장)', count: Math.min(2, candidates.length), emptyMessage: '덱에 펭귄 카드가 없습니다.' };
@@ -847,7 +918,7 @@
       timing: TIMING.MY_DEPLOY,
       zone: ZONES.HAND,
       tags: [TAGS.DRAW, TAGS.DISCARD_HAND, 'returnSelfToDeck'],
-      oncePerTurn: { key: '펭귄 부부_2', limit: 1 },
+      // 카드 텍스트는 "1효과는 1턴에 1번"만 제한한다 — ②는 횟수 제한 없음.
       condition(ctx) { return !!(ctx.card && ctx.card.id === '펭귄 부부'); },
       canResolve(ctx) { return canDraw(ctx, 2); },
       resolve(ctx) {
@@ -913,12 +984,16 @@
       canResolve(ctx) { return canGatekeeperOneResolve(ctx); },
       resolve(ctx) {
         const field = zoneArray(ctx, ctx.controller, ZONES.FIELD);
-        const self = field.find(c => c && c.id === '수문장 펭귄');
-        if (self) self.atk = Number(self.atk || getCardDef('수문장 펭귄').atk || 0) + 1;
+        // 발동한 카피 자신(sourceIndex)을 우선 지정하고, 없으면 첫 동명 카드.
+        const self = (typeof ctx.sourceIndex === 'number' && field[ctx.sourceIndex] && field[ctx.sourceIndex].id === '수문장 펭귄')
+          ? field[ctx.sourceIndex]
+          : field.find(c => c && c.id === '수문장 펭귄');
+        // 텍스트에 지속 제한이 없으므로 영구 버프(턴 종료 리셋 없음).
+        const buff = self ? applyOneShotAtkBuff(self, 1, false) : { ok: false, error: '필드에 수문장 펭귄이 없습니다.' };
         const mine = discardOneFromHand(ctx, '수문장 펭귄 ①: 자신 패 1장 버리기');
         // 상대 패 조작은 공개 정보가 아닐 수 있으므로 실제 선택은 네트워크/상대 클라이언트가 처리한다.
         try { if (typeof global.sendAction === 'function') global.sendAction({ type: 'forceDiscard', count: 1, reason: '수문장 펭귄 ①' }); } catch (_) {}
-        return { ok: mine.ok, atkUp: !!self, discard: mine, opponentDiscardRequested: true };
+        return { ok: mine.ok !== false && buff.ok !== false, atkUp: !!self, buff, discard: mine, opponentDiscardRequested: true };
       },
     }),
     makeEffect({
@@ -937,6 +1012,9 @@
         return e.controller === ctx.controller && e.reason === 'penguinVillageDiscardReplacement' && isPenguinMonster(e.cardId);
       },
       canResolve(ctx) { return canSendOpponentMonsterToGraveForActivation(ctx, 'gatekeeperPenguin2'); },
+      collectChoices(ctx) {
+        return { candidates: getSendableOpponentMonsters(ctx, 'gatekeeperPenguin2'), title: '수문장 펭귄 ②: 묘지로 보낼 상대 몬스터 선택', count: 1, emptyMessage: '묘지로 보낼 수 있는 상대 몬스터가 없습니다.' };
+      },
       resolve(ctx) { return sendOpponentMonsterToGrave(ctx, 'gatekeeperPenguin2'); },
     }),
 
@@ -967,13 +1045,14 @@
       timing: TIMING.MY_DEPLOY,
       zone: ZONES.GRAVE,
       tags: [TAGS.COST_BANISH, TAGS.HAND_SUMMON],
-      condition(ctx) { return findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)).length > 0 && hasFieldSpace(ctx); },
+      // 펭귄 용사/전설은 "영광의 효과 등으로만 소환" 제한이 있어 후보에서 제외된다.
+      condition(ctx) { return findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id) && canSummonWithReason(ctx, c, 'penguinCharge2')).length > 0 && hasFieldSpace(ctx); },
       cost(ctx) { return ctx.move.banishCard({ cardId: '펭귄!돌격!', controller: ctx.controller, from: { controller: ctx.controller, zone: ZONES.GRAVE }, reason: 'penguinCharge2Cost' }); },
       collectChoices(ctx) {
-        return { candidates: findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)), title: '패에서 소환할 펭귄 몬스터 선택', count: 1, emptyMessage: '패에 펭귄 몬스터가 없습니다.' };
+        return { candidates: findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id) && canSummonWithReason(ctx, c, 'penguinCharge2')), title: '패에서 소환할 펭귄 몬스터 선택', count: 1, emptyMessage: '패에 펭귄 몬스터가 없습니다.' };
       },
       resolve(ctx) {
-        const target = firstOrSelected(ctx, findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)), { byId: true });
+        const target = firstOrSelected(ctx, findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id) && canSummonWithReason(ctx, c, 'penguinCharge2')), { byId: true });
         return target ? summonFromHandById(ctx, target.id, 'penguinCharge2') : { ok: false, error: '패에 펭귄 몬스터가 없습니다.' };
       },
     }),
@@ -1027,7 +1106,11 @@
       text: '상대 필드에 몬스터가 존재할 경우에만 패에 넣을 수 있으며, 펭귄의 영광의 효과나 이 카드의 효과로만 소환할 수 있다.',
       type: EFFECT_TYPES.PROCEDURE,
       tags: ['keyCardFetchCondition', 'summonRestriction'],
-      summonProcedure: { requiresOpponentMonster: true, allowedSummonReasons: ['penguinGlory1', 'penguinHero1'] },
+      // 텍스트: "'펭귄의 영광'의 효과나 이 카드의 효과로만 소환할 수 있다."
+      // 일반/마법/함정은 발동 코스트로 묘지에 간 뒤 효과가 처리되므로,
+      // '펭귄이여 영원하라'는 ①(패 발동)·②(묘지 발동) 모두 처리 시점에 묘지/제외 상태
+      // = 카드명 '펭귄의 영광' 취급 → 영광의 효과로서 소환이 허용된다.
+      summonProcedure: { requiresOpponentMonster: true, allowedSummonReasons: ['penguinGlory1', 'penguinHero1', 'penguinHero3', 'penguinForever1HandSummon', 'penguinForever2'] },
       condition(ctx) { return zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).some(isMonster); },
     }),
     makeEffect({
@@ -1041,15 +1124,48 @@
       zone: ZONES.FIELD,
       tags: [TAGS.DECK_SEARCH, TAGS.DECK_SUMMON, TAGS.DISCARD_HAND],
       oncePerTurn: { key: '펭귄 용사_1', limit: 1 },
-      condition(ctx) { return cardMatchesEvent(ctx, '펭귄 용사'); },
+      condition(ctx) { return selfEventMatches(ctx, '펭귄 용사'); },
       canResolve(ctx) { return canHeroOneResolve(ctx); },
       resolve(ctx) {
-        const searchTarget = firstOrSelected(ctx, findDeckCards(ctx, c => isPenguinCard(c.id)), { byId: true });
-        const search = searchTarget ? addDeckCardToHand(ctx, searchTarget.id, true) : { ok: true, skipped: true };
-        const summonTarget = firstOrSelected(ctx, findDeckCards(ctx, c => isPenguinMonster(c.id)), { byId: true });
-        const summon = summonTarget && hasFieldSpace(ctx) ? summonFromDeck(ctx, summonTarget.id, 'penguinHero1') : { ok: true, skipped: true };
-        const discard = discardOneFromHand(ctx, '펭귄 용사 ①: 패 1장 버리기');
-        return { ok: search.ok && summon.ok && discard.ok, search, summon, discard };
+        // 서치 → 소환 → 버리기 3단계 모두 플레이어 선택. 로컬 플레이어는 순차 picker,
+        // 비로컬/자동 환경은 첫 후보로 진행한다(chooseCards가 분기).
+        const out = { ok: true };
+        const pickCtx = Object.assign({}, ctx, { selectedCards: [] });
+        const finishWithDiscard = () => {
+          out.discard = discardOneFromHand(ctx, '펭귄 용사 ①: 패 1장 버리기');
+          dispatchPending(ctx);
+          renderAndSync();
+          out.ok = (out.search ? out.search.ok !== false : true)
+            && (out.summon ? out.summon.ok !== false : true)
+            && out.discard.ok !== false;
+        };
+        const summonStep = () => {
+          const candidates = findDeckCards(ctx, c => isPenguinMonster(c.id) && canSummonWithReason(ctx, c, 'penguinHero1'));
+          if (!candidates.length || !hasFieldSpace(ctx)) {
+            out.summon = { ok: true, skipped: true };
+            finishWithDiscard();
+            return;
+          }
+          chooseCards(pickCtx, candidates, '펭귄 용사 ①: 덱에서 소환할 펭귄 몬스터 선택', 1, picked => {
+            const target = picked && picked[0];
+            out.summon = target ? summonFromDeck(ctx, target.id, 'penguinHero1') : { ok: true, skipped: true };
+            finishWithDiscard();
+          });
+        };
+        const searchCandidates = findDeckCards(ctx, c => isPenguinCard(c.id));
+        if (!searchCandidates.length) {
+          out.search = { ok: true, skipped: true };
+          summonStep();
+          return out;
+        }
+        chooseCards(pickCtx, searchCandidates, '펭귄 용사 ①: 덱에서 패에 넣을 펭귄 카드 선택', 1, picked => {
+          const target = picked && picked[0];
+          out.search = target ? addDeckCardToHand(ctx, target.id, true) : { ok: true, skipped: true };
+          dispatchPending(ctx);
+          renderAndSync();
+          summonStep();
+        });
+        return out;
       },
     }),
     makeEffect({
@@ -1063,6 +1179,10 @@
       tags: ['returnSelfToHand', 'recoverPenguinMagic'],
       oncePerTurn: { key: '펭귄 용사_2', limit: 1 },
       condition(ctx) { return !isMyTurnFallback(ctx) && findZoneCards(ctx, ZONES.GRAVE, isPenguinMagic).concat(findZoneCards(ctx, ZONES.EXILE, isPenguinMagic)).length > 0; },
+      collectChoices(ctx) {
+        const candidates = findZoneCards(ctx, ZONES.GRAVE, isPenguinMagic).concat(findZoneCards(ctx, ZONES.EXILE, isPenguinMagic));
+        return { candidates, title: '펭귄 용사 ②: 패에 넣을 펭귄 마법 선택', count: 1, emptyMessage: '묘지/제외에 펭귄 마법이 없습니다.' };
+      },
       resolve(ctx) {
         const returned = returnOwnFieldCardToHand(ctx, '펭귄 용사', 'penguinHero2Return');
         const recover = recoverFromGraveOrExileToHand(ctx, isPenguinMagic, true, 'penguinHero2Recover');
@@ -1079,14 +1199,19 @@
       timing: TIMING.ON_SENT_TO_GRAVE,
       zone: ZONES.GRAVE,
       tags: [TAGS.GRAVE_SUMMON, 'turnAttackBuff'],
-      oncePerTurn: { key: '펭귄 용사_3', limit: 1 },
-      condition(ctx) { return cardMatchesEvent(ctx, '펭귄 용사') && hasFieldSpace(ctx); },
+      // 카드 텍스트는 "1,2효과는 각각 1턴에 1번"만 제한한다 — ③은 횟수 제한 없음.
+      condition(ctx) { return selfEventMatches(ctx, '펭귄 용사') && hasFieldSpace(ctx); },
       resolve(ctx) {
         const summon = summonFromGraveOrExile(ctx, '펭귄 용사', 'penguinHero3');
+        // "턴 종료시까지 1씩 올린다" — 턴 한정 버프(턴 경계에 clearEndOfTurnAtkBuffs가 해제).
+        const buffed = [];
         zoneArray(ctx, ctx.controller, ZONES.FIELD).forEach(card => {
-          if (isPenguinMonster(card)) card.atk = Number(card.atk || getCardDef(card.id).atk || 0) + 1;
+          if (!isPenguinMonster(card)) return;
+          const applied = applyOneShotAtkBuff(card, 1, true);
+          if (applied.ok && !applied.skipped) buffed.push({ cardId: card.id, atk: card.atk });
         });
-        return { ok: summon.ok, summon, buffed: true };
+        renderAndSync();
+        return { ok: summon.ok, summon, buffed };
       },
     }),
 
@@ -1102,16 +1227,20 @@
       condition(ctx) {
         return zoneArray(ctx, ctx.controller, ZONES.FIELD).some(isPenguinMonster)
           && zoneArray(ctx, ctx.controller, ZONES.HAND).filter(c => c && c.id !== '펭귄의 일격').length > 0
-          && chainHasOpponentMonsterEffect(ctx);
+          && lastChainLinkIsOpponentMonsterEffect(ctx);
       },
       cost(ctx) {
         return discardOneFromHand(ctx, '펭귄의 일격 ① 코스트: 패 1장 버리기', { excludeCardId: '펭귄의 일격' });
       },
       resolve(ctx) {
-        // 체인 링크 객체는 freeze될 수 있으므로 직접 수정하지 않는다.
-        // 실제 무효 처리는 체인 엔진/네트워크 계층이 이 결과를 해석하도록 둔다.
-        try { if (typeof global.sendAction === 'function') global.sendAction({ type: 'negate', reason: '펭귄의 일격' }); } catch (_) {}
-        return { ok: true, negated: true, reason: 'penguinStrike1' };
+        // 체인 링크 객체는 freeze이므로 직접 수정하지 않고, 체인 엔진이
+        // negatePreviousLink를 해석해 이 링크가 응답한 직전 링크를 무효 처리한다.
+        // negate 알림 액션은 발동자 클라이언트에서만 1회 송신한다(양측 모두 resolve를 실행하므로).
+        if (normalizeController(ctx.controller) === CONTROLLERS.ME) {
+          try { if (typeof global.sendAction === 'function') global.sendAction({ type: 'negate', reason: '펭귄의 일격' }); } catch (_) {}
+        }
+        logSafe('펭귄의 일격 ①: 상대 몬스터 효과를 무효로 합니다.', 'mine');
+        return { ok: true, negated: true, negatePreviousLink: true, reason: 'penguinStrike1' };
       },
     }),
     makeEffect({
@@ -1170,7 +1299,7 @@
             break;
           }
 
-          const sent = sendOpponentMonsterToGrave(ctx, `awakenedPenguinLegion1SendOpponent_${guard}`);
+          const sent = sendOpponentMonsterToGrave(ctx, 'awakenedPenguinLegion1SendOpponent');
           if (!sent.ok) {
             stopReason = { code: sent.reason || 'sendOpponentMonsterFailed', message: sent.error || '상대 몬스터를 묘지로 보낼 수 없어 「각성의 펭귄 군단」 반복 처리를 종료합니다.' };
             notifySafe(stopReason.message);
@@ -1178,8 +1307,8 @@
             break;
           }
 
-          const target = firstOrSelected(ctx, findZoneCards(ctx, ZONES.GRAVE, isPenguinMonster), { byId: true });
-          const summon = target ? summonFromGraveOrExile(ctx, target.id, `awakenedPenguinLegion1Revive_${guard}`) : { ok: false, error: '묘지에 펭귄 몬스터가 없습니다.' };
+          const target = firstOrSelected(ctx, findZoneCards(ctx, ZONES.GRAVE, c => isPenguinMonster(c) && canSummonWithReason(ctx, c, 'awakenedPenguinLegion1Revive')), { byId: true });
+          const summon = target ? summonFromGraveOrExile(ctx, target.id, 'awakenedPenguinLegion1Revive') : { ok: false, error: '묘지에 펭귄 몬스터가 없습니다.' };
           results.push({ ok: !!summon.ok, discarded, sent, summon, revivedCardId: target && target.id });
           if (!summon.ok) {
             stopReason = { code: 'summonFailed', message: summon.error || '묘지의 「펭귄」 몬스터를 소환할 수 없어 「각성의 펭귄 군단」 반복 처리를 종료합니다.' };
@@ -1295,14 +1424,45 @@
       oncePerTurn: { key: '펭귄이여 영원하라_1', limit: 1 },
       condition(ctx) { return zoneArray(ctx, ctx.controller, ZONES.FIELD).length > 0 && zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).length > 0; },
       resolve(ctx) {
-        const myTarget = firstOrSelected(ctx, zoneArray(ctx, ctx.controller, ZONES.FIELD), { byId: true });
-        const opTarget = firstOrSelected(ctx, zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD), { byId: true });
-        const results = [];
-        if (myTarget) results.push(returnFieldCardToHand(ctx, ctx.controller, myTarget.id, 'penguinForever1ReturnMine'));
-        if (opTarget) results.push(returnFieldCardToHand(ctx, opponentOf(ctx.controller), opTarget.id, 'penguinForever1ReturnOpponent'));
-        const handPenguin = firstOrSelected(ctx, findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)), { byId: true });
-        if (handPenguin && hasFieldSpace(ctx)) results.push(summonFromHandById(ctx, handPenguin.id, 'penguinForever1HandSummon'));
-        return { ok: results.every(r => r.ok), results };
+        // 자신/상대 필드 카드 1장씩 대상 바운스(대상 지정) → 그 후 임의로 패의 펭귄 1장 소환.
+        // 로컬 플레이어는 순차 picker + 소환 여부 확인, 비로컬/자동 환경은 첫 후보·자동 소환.
+        const out = { ok: true, results: [] };
+        const pickCtx = Object.assign({}, ctx, { selectedCards: [] });
+        const optionalSummonStep = () => {
+          const candidates = findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id) && canSummonWithReason(ctx, c, 'penguinForever1HandSummon'));
+          if (!candidates.length || !hasFieldSpace(ctx)) { renderAndSync(); return; }
+          const doSummon = () => {
+            chooseCards(pickCtx, candidates, '펭귄이여 영원하라 ①: 패에서 소환할 펭귄 몬스터 선택 (임의)', 1, picked => {
+              const target = picked && picked[0];
+              if (target) out.results.push(summonFromHandById(ctx, target.id, 'penguinForever1HandSummon'));
+              dispatchPending(ctx);
+              renderAndSync();
+            });
+          };
+          // "소환할 수 있다" — 임의 효과이므로 로컬 플레이어에게 의사를 묻는다.
+          if (typeof ctx.askPlayer === 'function' && normalizeController(ctx.controller) === CONTROLLERS.ME && !ctx._hbAutoPick && !ctx.isAI) {
+            ctx.askPlayer('펭귄이여 영원하라 ①\n패에서 펭귄 몬스터 1장을 소환하시겠습니까? (임의)', yes => { if (yes) doSummon(); else renderAndSync(); });
+          } else {
+            doSummon();
+          }
+        };
+        const bounceOpponentStep = () => {
+          const opCards = zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).filter(Boolean);
+          chooseCards(pickCtx, opCards, '펭귄이여 영원하라 ①: 패로 되돌릴 상대 필드 카드 선택', 1, picked => {
+            const target = picked && picked[0];
+            if (target) out.results.push(returnFieldCardToHand(ctx, opponentOf(ctx.controller), target.id, 'penguinForever1ReturnOpponent', { isTargeting: true }));
+            dispatchPending(ctx);
+            renderAndSync();
+            optionalSummonStep();
+          });
+        };
+        const myCards = zoneArray(ctx, ctx.controller, ZONES.FIELD).filter(Boolean);
+        chooseCards(pickCtx, myCards, '펭귄이여 영원하라 ①: 패로 되돌릴 자신 필드 카드 선택', 1, picked => {
+          const target = picked && picked[0];
+          if (target) out.results.push(returnFieldCardToHand(ctx, ctx.controller, target.id, 'penguinForever1ReturnMine', { isTargeting: true }));
+          bounceOpponentStep();
+        });
+        return out;
       },
     }),
     makeEffect({
@@ -1314,13 +1474,15 @@
       timing: TIMING.OPPONENT_TURN,
       zone: ZONES.GRAVE,
       tags: [TAGS.COST_BANISH, TAGS.HAND_SUMMON],
-      condition(ctx) { return !isMyTurnFallback(ctx) && hasFieldSpace(ctx) && findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)).length > 0; },
+      // 이 카드는 묘지/제외 상태에서 카드명이 '펭귄의 영광' 취급이므로,
+      // ②(묘지에서 발동)는 영광의 효과로서 펭귄 용사/전설도 소환할 수 있다(허용 목록에 포함).
+      condition(ctx) { return !isMyTurnFallback(ctx) && hasFieldSpace(ctx) && findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id) && canSummonWithReason(ctx, c, 'penguinForever2')).length > 0; },
       cost(ctx) { return ctx.move.banishCard({ cardId: '펭귄이여 영원하라', controller: ctx.controller, from: { controller: ctx.controller, zone: ZONES.GRAVE }, reason: 'penguinForever2Cost' }); },
       collectChoices(ctx) {
-        return { candidates: findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)), title: '패에서 소환할 펭귄 몬스터 선택', count: 1, emptyMessage: '패에 펭귄 몬스터가 없습니다.' };
+        return { candidates: findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id) && canSummonWithReason(ctx, c, 'penguinForever2')), title: '패에서 소환할 펭귄 몬스터 선택', count: 1, emptyMessage: '패에 펭귄 몬스터가 없습니다.' };
       },
       resolve(ctx) {
-        const target = firstOrSelected(ctx, findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id)), { byId: true });
+        const target = firstOrSelected(ctx, findZoneCards(ctx, ZONES.HAND, c => isPenguinMonster(c.id) && canSummonWithReason(ctx, c, 'penguinForever2')), { byId: true });
         return target ? summonFromHandById(ctx, target.id, 'penguinForever2') : { ok: false, error: '패에 펭귄 몬스터가 없습니다.' };
       },
     }),
@@ -1331,7 +1493,9 @@
       text: '자신 필드에 몬스터가 존재할 경우에만 패에 넣을 수 있고, 패에서 카드명을 펭귄 용사로 취급하며, 펭귄의 영광의 효과로만 소환할 수 있다.',
       type: EFFECT_TYPES.PROCEDURE,
       tags: ['keyCardFetchCondition', 'summonRestriction'],
-      summonProcedure: { requiresOwnMonster: true, treatedAsInHand: '펭귄 용사', allowedSummonReasons: ['penguinGlory1'] },
+      // "'펭귄의 영광'의 효과로만 소환" — 영원하라 ①/②는 처리 시점에 묘지/제외 상태
+      // = 카드명 '펭귄의 영광' 취급이므로 허용된다.
+      summonProcedure: { requiresOwnMonster: true, treatedAsInHand: '펭귄 용사', allowedSummonReasons: ['penguinGlory1', 'penguinForever1HandSummon', 'penguinForever2'] },
       condition(ctx) { return zoneArray(ctx, ctx.controller, ZONES.FIELD).some(isMonster); },
     }),
     makeEffect({
@@ -1345,7 +1509,7 @@
       zone: ZONES.FIELD,
       tags: [TAGS.GRAVE_SUMMON],
       oncePerTurn: { key: '펭귄의 전설_1', limit: 1 },
-      condition(ctx) { return cardMatchesEvent(ctx, '펭귄의 전설') && findZoneCards(ctx, ZONES.GRAVE, c => c.id === '꼬마 펭귄').length > 0 && hasFieldSpace(ctx); },
+      condition(ctx) { return selfEventMatches(ctx, '펭귄의 전설') && findZoneCards(ctx, ZONES.GRAVE, c => c.id === '꼬마 펭귄').length > 0 && hasFieldSpace(ctx); },
       resolve(ctx) {
         const count = Math.min(2, findZoneCards(ctx, ZONES.GRAVE, c => c.id === '꼬마 펭귄').length);
         const results = [];
@@ -1363,13 +1527,16 @@
       zone: ZONES.FIELD,
       tags: ['returnSelfToHand', TAGS.GRAVE_SUMMON, TAGS.EXILE_SUMMON],
       oncePerTurn: { key: '펭귄의 전설_2', limit: 1 },
-      condition(ctx) { return !isMyTurnFallback(ctx) && hasFieldSpace(ctx) && findZoneCards(ctx, ZONES.GRAVE, isPenguinMonster).concat(findZoneCards(ctx, ZONES.EXILE, isPenguinMonster)).length > 0; },
+      // 소환 제한 카드(펭귄 용사 등)는 이 효과로 소생할 수 없으므로 후보에서 제외한다.
+      condition(ctx) { return !isMyTurnFallback(ctx) && hasFieldSpace(ctx) && findZoneCards(ctx, ZONES.GRAVE, c => isPenguinMonster(c) && canSummonWithReason(ctx, c, 'penguinLegend2Summon')).concat(findZoneCards(ctx, ZONES.EXILE, c => isPenguinMonster(c) && canSummonWithReason(ctx, c, 'penguinLegend2Summon'))).length > 0; },
       collectChoices(ctx) {
-        return { candidates: findZoneCards(ctx, ZONES.GRAVE, isPenguinMonster).concat(findZoneCards(ctx, ZONES.EXILE, isPenguinMonster)), title: '묘지/제외의 펭귄 몬스터 1장 선택 (소환)', count: 1, emptyMessage: '묘지/제외에 펭귄 몬스터가 없습니다.' };
+        const eligible = c => isPenguinMonster(c) && canSummonWithReason(ctx, c, 'penguinLegend2Summon');
+        return { candidates: findZoneCards(ctx, ZONES.GRAVE, eligible).concat(findZoneCards(ctx, ZONES.EXILE, eligible)), title: '묘지/제외의 펭귄 몬스터 1장 선택 (소환)', count: 1, emptyMessage: '묘지/제외에 펭귄 몬스터가 없습니다.' };
       },
       resolve(ctx) {
         const returned = returnOwnFieldCardToHand(ctx, '펭귄의 전설', 'penguinLegend2Return');
-        const target = firstOrSelected(ctx, findZoneCards(ctx, ZONES.GRAVE, isPenguinMonster).concat(findZoneCards(ctx, ZONES.EXILE, isPenguinMonster)), { byId: true });
+        const eligible = c => isPenguinMonster(c) && canSummonWithReason(ctx, c, 'penguinLegend2Summon');
+        const target = firstOrSelected(ctx, findZoneCards(ctx, ZONES.GRAVE, eligible).concat(findZoneCards(ctx, ZONES.EXILE, eligible)), { byId: true });
         const summon = target ? summonFromGraveOrExile(ctx, target.id, 'penguinLegend2Summon') : { ok: false, error: '묘지/제외에 펭귄 몬스터가 없습니다.' };
         return { ok: returned.ok && summon.ok, returned, summon };
       },
@@ -1426,13 +1593,26 @@
       zone: ZONES.FIELD,
       tags: [TAGS.DISCARD_HAND, 'banishOpponentMonster'],
       oncePerTurn: { key: '펭귄 마법사_2', limit: 2 },
-      condition(ctx) { return cardMatchesEvent(ctx, '펭귄 마법사') && zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).some(isMonster) && zoneArray(ctx, ctx.controller, ZONES.HAND).length > 0; },
+      condition(ctx) { return selfEventMatches(ctx, '펭귄 마법사') && zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).some(isMonster) && zoneArray(ctx, ctx.controller, ZONES.HAND).length > 0; },
       resolve(ctx) {
-        const discardCount = Math.min(3, zoneArray(ctx, ctx.controller, ZONES.HAND).length, zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD).filter(isMonster).length);
-        // 한 번의 picker로 버릴 N장을 모두 고른다(루프마다 picker를 여는 stale-pool 문제 회피).
-        const discard = requestHandDiscard(ctx, { count: discardCount, reason: '펭귄 마법사 ②: 패 버리기' });
-        const banish = banishOpponentMonsters(ctx, discardCount);
-        return { ok: (discard.ok !== false) && banish.ok, discard, banish };
+        // "패를 3장까지 버리고, 그 수까지 상대 필드의 몬스터를 제외한다"
+        // — picker는 최대 3장에서 더 적게 골라도 되며(=까지), 제외는 실제 버린 수에 연동해
+        //   버리기 완료 콜백에서 처리한다(텍스트 순서: 버리기 → 제외).
+        const maxDiscard = Math.min(3, zoneArray(ctx, ctx.controller, ZONES.HAND).length);
+        if (maxDiscard <= 0) return { ok: false, error: '버릴 패가 없습니다.' };
+        const out = { ok: true };
+        out.discard = requestHandDiscard(ctx, {
+          count: maxDiscard,
+          reason: '펭귄 마법사 ②: 패 버리기',
+          title: '펭귄 마법사 ②: 버릴 패 선택 (최대 3장, 버린 수까지 상대 몬스터 제외)',
+        }, res => {
+          const discarded = (res && res.discarded) || 0;
+          out.banish = banishOpponentMonsters(ctx, discarded, () => {
+            dispatchPending(ctx);
+            renderAndSync();
+          });
+        });
+        return out;
       },
     }),
     makeEffect({
@@ -1448,18 +1628,21 @@
       oncePerTurn: { key: '펭귄 마법사_3', limit: 2 },
       condition(ctx) {
         const e = ctx.event || {};
-        const myTargets = findZoneCards(ctx, ZONES.EXILE, isMonster, ctx.controller);
-        const opTargets = findZoneCards(ctx, ZONES.EXILE, isMonster, opponentOf(ctx.controller));
+        const eligible = c => isMonster(c) && canSummonWithReason(ctx, c, 'penguinWizard3ExileSummon');
+        const myTargets = findZoneCards(ctx, ZONES.EXILE, eligible, ctx.controller);
+        const opTargets = findZoneCards(ctx, ZONES.EXILE, eligible, opponentOf(ctx.controller));
         return e.reason === 'penguinVillageDiscardReplacement' && hasFieldSpace(ctx) && myTargets.concat(opTargets).length > 0;
       },
       collectChoices(ctx) {
-        const myTargets = findZoneCards(ctx, ZONES.EXILE, isMonster, ctx.controller).map(card => Object.assign({ _owner: ctx.controller }, card));
-        const opTargets = findZoneCards(ctx, ZONES.EXILE, isMonster, opponentOf(ctx.controller)).map(card => Object.assign({ _owner: opponentOf(ctx.controller) }, card));
+        const eligible = c => isMonster(c) && canSummonWithReason(ctx, c, 'penguinWizard3ExileSummon');
+        const myTargets = findZoneCards(ctx, ZONES.EXILE, eligible, ctx.controller).map(card => Object.assign({ _owner: ctx.controller }, card));
+        const opTargets = findZoneCards(ctx, ZONES.EXILE, eligible, opponentOf(ctx.controller)).map(card => Object.assign({ _owner: opponentOf(ctx.controller) }, card));
         return { candidates: myTargets.concat(opTargets), title: '제외 상태의 몬스터 1장 선택 (소환)', count: 1, emptyMessage: '제외 상태의 몬스터가 없습니다.' };
       },
       resolve(ctx) {
-        const myTargets = findZoneCards(ctx, ZONES.EXILE, isMonster, ctx.controller).map(card => Object.assign({ _owner: ctx.controller }, card));
-        const opTargets = findZoneCards(ctx, ZONES.EXILE, isMonster, opponentOf(ctx.controller)).map(card => Object.assign({ _owner: opponentOf(ctx.controller) }, card));
+        const eligible = c => isMonster(c) && canSummonWithReason(ctx, c, 'penguinWizard3ExileSummon');
+        const myTargets = findZoneCards(ctx, ZONES.EXILE, eligible, ctx.controller).map(card => Object.assign({ _owner: ctx.controller }, card));
+        const opTargets = findZoneCards(ctx, ZONES.EXILE, eligible, opponentOf(ctx.controller)).map(card => Object.assign({ _owner: opponentOf(ctx.controller) }, card));
         const target = firstOrSelected(ctx, myTargets.concat(opTargets), { byId: true });
         if (!target) return { ok: false, error: '제외 상태의 몬스터가 없습니다.' };
         return ctx.move.summonCard({
@@ -1488,8 +1671,8 @@
     }
 
     const proceed = opts.confirmChoice === true || opts.autoPick === true;
-    const run = () => {
-      const target = opts.targetCard || fieldPenguins[0];
+    const run = (chosenTarget) => {
+      const target = chosenTarget || opts.targetCard || fieldPenguins[0];
       if (!target) return { ok: false, handled: false, reason: 'noPenguinMonster' };
       const ctx = global.HB_EFFECT_CONTEXT && global.HB_EFFECT_CONTEXT.createEffectContext({ gameState: state, controller, cardId: '펭귄 마을', effect: registry.getEffectById('penguin-village-2-discard-replacement') });
       const result = ctx
@@ -1517,13 +1700,29 @@
       return { ok: true, handled: true, replacement: result, targetCardId: target.id };
     };
 
-    if (proceed) return run();
+    // "대신 자신 몬스터 존의 '펭귄'몬스터 1장을" — 보낼 펭귄은 플레이어가 고른다.
+    // targetCard가 이미 지정됐거나(전투 피해 경로), autoPick/비로컬/후보 1장이면 자동 진행.
+    const pickTargetAndRun = () => {
+      const canPick = !opts.targetCard
+        && opts.autoPick !== true
+        && controller === CONTROLLERS.ME
+        && fieldPenguins.length > 1
+        && typeof global.openCardPicker === 'function';
+      if (!canPick) return run(null);
+      global.openCardPicker(fieldPenguins, '펭귄 마을 ②: 대신 묘지로 보낼 펭귄 몬스터 선택', 1, sel => {
+        const mon = (sel && sel.length) ? fieldPenguins[sel[0]] : fieldPenguins[0];
+        run(mon);
+      }, true);
+      return { ok: true, handled: true, pending: true };
+    };
+
+    if (proceed) return pickTargetAndRun();
 
     // eslint-disable-next-line no-undef
     if (typeof gameConfirm === 'function') {
       // eslint-disable-next-line no-undef
       gameConfirm('펭귄 마을 ②\n버리는 대신 필드의 펭귄 몬스터를 묘지로 보냅니까?', yes => {
-        if (yes) run();
+        if (yes) pickTargetAndRun();
         else if (typeof opts.onDecline === 'function') opts.onDecline();
       });
       return { ok: true, handled: true, pending: true };

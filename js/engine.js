@@ -51,7 +51,6 @@ let G = {
   turn: 1,
   phase: 'draw',
   activePlayer: 'host', // 'host' | 'guest'
-  penguinHeroAtkBuff: false,
   goldenAppleActive: false,
   exileBanActive: false,
 };
@@ -648,7 +647,8 @@ function checkImmunity(cardId, effectType, source = 'opponent') {
     }
   }
   if (cardId === '펭귄의 전설' && source === 'opponent') {
-    if (effectType === 'effect') {
+    // 'effect'(비대상 효과)와 비대상 묘지行 모두 차단. 'target'(대상 지정)은 텍스트대로 통과.
+    if (effectType === 'effect' || effectType === 'toGrave') {
       if (G.myField.some(c => c.id === '펭귄의 전설')) {
         return { immune: true, reason: '펭귄의 전설 ③: 대상으로 하지 않는 효과를 받지 않습니다.' };
       }
@@ -694,6 +694,21 @@ function sendToGraveWithImmunityCheck(cardId, from = 'field', source = 'opponent
   return true;
 }
 
+// 펭귄의 전설 ③ — 레거시 네트워크 액션(opFieldRemove/opFieldExile) 수신 경로용.
+// (이전에는 호출만 있고 정의가 없어 가드가 무음으로 무력화되어 있었다.)
+// 텍스트: "이 카드를 대상으로 하지 않는 상대 카드의 효과를 받지 않는다"
+// → 대상 지정(isTargeted=true) 효과는 통과, 비대상 효과만 차단한다.
+function checkPenguinLegendImmunity(cardId, isTargeted = false) {
+  if (cardId !== '펭귄의 전설') return false;
+  if (isTargeted === true) return false;
+  const immune = G.myField.some(c => c && c.id === '펭귄의 전설');
+  if (immune) {
+    log('내성: 펭귄의 전설 ③ — 대상으로 하지 않는 상대 효과를 받지 않습니다.', 'system');
+    notify('펭귄의 전설 ③: 대상으로 하지 않는 상대 효과를 받지 않습니다.');
+  }
+  return immune;
+}
+
 
 function isMyFieldCardEffectNegated(cardId) {
   if (!cardId) return false;
@@ -702,10 +717,23 @@ function isMyFieldCardEffectNegated(cardId) {
   return !!(G.myFieldCard && G.myFieldCard.id === cardId && G.myFieldCard.effectNegatedUntilEndTurn);
 }
 
+// "턴 종료시까지" 공격력 버프(atkBuffTurn)만 해제한다.
+// 영구 버프(atkBuff: 수문장 ①, 평화의 펭귄 ① 등)는 유지된다.
+// 양쪽 클라이언트가 각자 턴 경계마다 호출한다(endTurn 발신/수신 모두).
+function clearEndOfTurnAtkBuffs() {
+  [G.myField, G.opField].forEach(field => {
+    (field || []).forEach(c => {
+      if (!c || !c.atkBuffTurn) return;
+      c.atkBuffTurn = 0;
+      const base = (typeof c.atkBase === 'number') ? c.atkBase : (CARDS[c.id]?.atk || 0);
+      c.atk = base + Number(c.atkBuff || 0);
+    });
+  });
+}
+
 function resetTurnEffects() {
   resetEffectUsed();
-  if (G.penguinHeroAtkBuff) { G.myField.forEach(c => { if (isPenguinMonster(c.id)) c.atk = c.atkBase || CARDS[c.id]?.atk || 0; }); G.penguinHeroAtkBuff = false; }
-  G.myField.forEach(c => { if (c.id === '수문장 펭귄') c.atk = c.atkBase || 3; });
+  clearEndOfTurnAtkBuffs();
   G.ligerKingImmune = false; // 라이거 킹 내성 턴 종료 시 해제
   G.myField.forEach(c => { if (c) c.effectNegatedUntilEndTurn = false; });
   if (G.myFieldCard) G.myFieldCard.effectNegatedUntilEndTurn = false;

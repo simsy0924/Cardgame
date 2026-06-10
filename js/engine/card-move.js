@@ -320,6 +320,16 @@
       return failResult('몬스터 존이 가득 찼습니다.', { cardId, controller: to.controller });
     }
 
+    // 효과에 의한 필드 이탈(바운스/덱 되돌리기)도 내성 검사 대상이다.
+    // 묘지行/제외는 sendToGrave/banishCard가 이미 검사하므로 여기서는
+    // 필드 → 패/덱 계열 이동만 backstop으로 확인한다.
+    if (opts.effect
+      && (from.zone === ZONES.FIELD || from.zone === ZONES.FIELD_ZONE)
+      && (to.zone === ZONES.HAND || to.zone === ZONES.PUBLIC_HAND || to.zone === ZONES.DECK)) {
+      const immuneBlock = checkRemovalImmunity(state, findCardInZone(state, from, cardId), from.controller, opts, 'move');
+      if (immuneBlock) return immuneBlock;
+    }
+
     let removed;
     try {
       removed = zoneAccess.removeCardFromZone(state, from.controller, from.zone, cardId, from.index);
@@ -361,6 +371,27 @@
     });
   }
 
+  // "이 카드는 ~의 효과로만 소환할 수 있다" 류의 소환 제한.
+  // 카드의 PROCEDURE EffectDefinition에 summonProcedure.allowedSummonReasons가 선언돼 있으면,
+  // summonCard의 reason이 그 목록에 있을 때만 소환을 허용한다.
+  function getSummonRestriction(cardId) {
+    const registry = global.HB_EFFECT_REGISTRY;
+    if (!registry || typeof registry.getEffectsByCardId !== 'function') return null;
+    let effects;
+    try { effects = registry.getEffectsByCardId(cardId) || []; }
+    catch (_) { return null; }
+    const proc = effects.find(effect => effect && effect.summonProcedure
+      && Array.isArray(effect.summonProcedure.allowedSummonReasons)
+      && effect.summonProcedure.allowedSummonReasons.length > 0);
+    return proc ? proc.summonProcedure : null;
+  }
+
+  function canSummonWithReason(gameState, cardId, reason) {
+    const restriction = getSummonRestriction(normalizeCardId(cardId));
+    if (!restriction) return true;
+    return restriction.allowedSummonReasons.indexOf(String(reason || '')) !== -1;
+  }
+
   function summonCard(options) {
     const opts = options || {};
     const state = resolveGameState(opts.gameState);
@@ -371,6 +402,11 @@
     const def = getCardDef(cardId);
     if (def && def.cardType && def.cardType !== 'monster') {
       return failResult('몬스터만 소환할 수 있습니다.', { cardId, cardType: def.cardType });
+    }
+    if (opts.bypassSummonRestriction !== true && !canSummonWithReason(state, cardId, opts.reason || 'summon')) {
+      return failResult(`${getCardName(cardId)}는 지정된 효과로만 소환할 수 있습니다.`, {
+        cardId, reason: opts.reason || 'summon', blockedBySummonRestriction: true,
+      });
     }
     if (!hasFieldSpace(state, owner)) {
       return failResult('몬스터 존이 가득 찼습니다.', { cardId, controller: owner });
@@ -543,6 +579,9 @@
     result.events = [result.event, sentEvent];
     result.diff = makeDiff('discardCard', result.event, { secondaryEventType: sentEvent.type });
     flushPendingMoveEvents(state, opts);
+    // 패 0장 = 패배 규칙. 레거시 경로(manualDiscard/forceDiscard)만 검사하던 것을
+    // 신엔진 버리기에서도 동일하게 검사한다(브라우저 전역이 없으면 무시).
+    try { if (typeof global.checkWinCondition === 'function') global.checkWinCondition(); } catch (_) {}
     return result;
   }
 
@@ -763,6 +802,7 @@
     removeFieldCard,
     getFieldSlotLimit,
     hasFieldSpace,
+    canSummonWithReason,
     dispatchMoveEvent,
   });
 })(window);
