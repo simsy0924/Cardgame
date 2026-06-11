@@ -202,4 +202,99 @@ module.exports = function runPenguinTextComplianceTests() {
     assert(typeof reg.getEffectById('gatekeeper-penguin-2-village-send-opponent').collectChoices === 'function', 'choices: 수문장 ② collectChoices');
     assert(typeof reg.getEffectById('penguin-hero-2-quick-return-recover-magic').collectChoices === 'function', 'choices: 용사 ② collectChoices');
   }
+
+  // ── 8) 전설 ③ 내성 — 코스트는 통과한다 (코스트는 효과가 아님) ──
+  {
+    const ctx = loadAllEffects(createContext());
+    const state = makeState({ myField: [makeCard('펭귄의 전설', { atk: 5, atkBase: 5 })] });
+    ctx.G = state;
+    // 상대가 "상대 필드의 카드 1장을 묘지로 보내고 발동" 류 코스트를 지불 (크아이가 ② 패턴)
+    const rawEffect = {
+      id: 'test-op-cost-send', cardId: '그레이트 올드 원-크아이가', type: 'activation',
+      cost(c) {
+        return c.move.sendToGrave({ cardId: '펭귄의 전설', controller: 'me', from: { controller: 'me', zone: 'field' }, reason: 'testOpCost' });
+      },
+      resolve() { return { ok: true }; },
+    };
+    const paid = ctx.HB_CHAIN_ENGINE.payCost({ gameState: state, controller: 'opponent' }, rawEffect);
+    assertEqual(paid.ok, true, 'cost: 상대 코스트의 전설 묘지行은 내성을 통과');
+    assert(state.myGrave.some(c => c.id === '펭귄의 전설'), 'cost: 전설이 코스트로 묘지에 감');
+  }
+
+  // ── 8-1) 코스트여도 "묘지로 보내지지 않는다" 무조건 룰은 유지 ──
+  {
+    const ctx = loadAllEffects(createContext());
+    const state = makeState({ myField: [makeCard('아우터 갓-아자토스', { atk: 10, atkBase: 10 })] });
+    ctx.G = state;
+    const r = ctx.HB_CARD_MOVE.sendToGrave({
+      gameState: state, cardId: '아우터 갓-아자토스', controller: 'me', from: { controller: 'me', zone: 'field' },
+      effect: { id: 'op-cost', controller: 'opponent' }, actorController: 'opponent', isCost: true, reason: 'opCost',
+    });
+    assertEqual(r.ok, false, 'cost: 아자토스의 묘지行 불가 룰은 코스트에도 적용');
+  }
+
+  // ── 8-2) 플레이어 명령형(playerDirective) 효과는 내성 예외 ──
+  {
+    const ctx = loadAllEffects(createContext());
+    const state = makeState({ myField: [makeCard('펭귄의 전설', { atk: 5, atkBase: 5 })] });
+    ctx.G = state;
+    const r = ctx.HB_CARD_MOVE.sendToGrave({
+      gameState: state, cardId: '펭귄의 전설', controller: 'me', from: { controller: 'me', zone: 'field' },
+      effect: { id: 'op-player-directive', controller: 'opponent', tags: ['playerDirective'] },
+      actorController: 'opponent', reason: 'playerDirectiveEffect',
+    });
+    assertEqual(r.ok, true, 'playerDirective: 플레이어 명령형 효과는 전설 내성을 통과');
+    assert(state.myGrave.some(c => c.id === '펭귄의 전설'), 'playerDirective: 전설이 묘지로 감');
+  }
+
+  // ── 8-3) 상대 지속 효과의 공격력 보정도 전설에는 적용되지 않는다 ──
+  {
+    const ctx = loadAllEffects(createContext());
+    ctx.HB_EFFECT_REGISTRY.registerEffects([{
+      id: 'test-op-continuous-debuff', cardId: '테스트 디버퍼', type: 'continuous', zones: ['field'],
+      text: '상대 필드의 몬스터의 공격력을 1 내린다.',
+      continuousRule: { attackModifiers: [{ opponentCardsOnly: true, amount: -1 }] },
+    }]);
+    const state = makeState({
+      myField: [makeCard('펭귄의 전설', { atk: 5, atkBase: 5 }), makeCard('꼬마 펭귄', { atk: 1, atkBase: 1 })],
+      opField: [makeCard('테스트 디버퍼', { atk: 0, atkBase: 0 })],
+    });
+    ctx.G = state;
+    ctx.HB_CONTINUOUS_ENGINE.applyContinuousEffects(state);
+    assertEqual(state.myField.find(c => c.id === '꼬마 펭귄').atk, 0, 'contAtk: 내성 없는 꼬마 펭귄은 -1 적용');
+    assertEqual(state.myField.find(c => c.id === '펭귄의 전설').atk, 5, 'contAtk: 전설은 비대상 지속 디버프를 받지 않음');
+  }
+
+  // ── 8-4) 비대상 무효화(일격 ①)는 필드의 전설의 효과를 무효화하지 못한다 ──
+  {
+    const ctx = loadAllEffects(createContext());
+    const state = makeState({
+      myHand: [makeCard('펭귄의 일격'), makeCard('펭귄 마을')],
+      myField: [makeCard('꼬마 펭귄', { atk: 1 })],
+      opField: [makeCard('펭귄의 전설', { atk: 5, atkBase: 5 })],
+      opGrave: [makeCard('꼬마 펭귄')],
+      activeController: 'me',
+    });
+    ctx.G = state;
+    ctx.isMyTurn = true; // 상대 기준 상대 턴 → 전설 ② 발동 가능
+    const chain = ctx.HB_CHAIN_ENGINE;
+
+    const opAct = chain.activateEffect({
+      gameState: state, controller: 'opponent', cardId: '펭귄의 전설',
+      sourceZone: 'field', effect: 'penguin-legend-2-quick-return-revive-monster',
+    });
+    assertEqual(opAct.ok, true, 'negateImmunity: 상대 전설 ② 발동');
+
+    const myAct = chain.activateEffect({
+      gameState: state, controller: 'me', cardId: '펭귄의 일격',
+      sourceZone: 'hand', effect: 'penguin-strike-1-negate-monster-effect',
+    });
+    assertEqual(myAct.ok, true, 'negateImmunity: 일격 ① 체인 발동');
+
+    const resolved = chain.resolveChain({ controller: 'me' });
+    assertEqual(resolved.ok, true, 'negateImmunity: 체인 해결');
+    // 비대상 무효화는 전설 ③에 막혀 전설 ②가 그대로 처리된다.
+    assert(state.opHand.some(c => c.id === '펭귄의 전설'), 'negateImmunity: 전설 ②가 처리되어 패로 되돌아감');
+    assert(state.opField.some(c => c.id === '꼬마 펭귄'), 'negateImmunity: 묘지의 꼬마 펭귄이 소생됨');
+  }
 };

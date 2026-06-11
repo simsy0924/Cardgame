@@ -322,7 +322,8 @@ function activateCard(handIdx, effectNo) {
         // 코스트: 이 카드를 묘지로
         G.myGrave.push(G.myHand.splice(handIdx, 1)[0]);
         log(`단단한 카드 자물쇠: ${t.name} 효과 무효화 발동`, 'mine');
-        sendAction({ type: 'negateField', cardId: t.id });
+        // 텍스트가 "필드의 카드 1장을 대상으로" — 대상 지정 효과이므로 비대상 내성(전설 ③)을 통과한다.
+        sendAction({ type: 'negateField', cardId: t.id, targeting: true });
         activateIgnitionEffect({ type: 'fieldNegate', label: `단단한 카드 자물쇠 → ${t.name}`, targetId: t.id });
       });
       return;

@@ -26,6 +26,10 @@
     NEGATE_EFFECT: 'negateEffect',
     DRAW: 'draw',
 
+    // 플레이어 명령형 효과("스스로 고르고 버린다/보낸다" 류) — 카드가 아니라
+    // 플레이어에게 작용하므로 "효과를 받지 않는다" 내성을 통과한다.
+    PLAYER_DIRECTIVE: 'playerDirective',
+
     PLACE_FIELD_CARD: 'placeFieldCard',
     FIELD_CARD_ACTIVATION: 'fieldCardActivation',
     FIELD_ZONE_EFFECT: 'fieldZoneEffect',

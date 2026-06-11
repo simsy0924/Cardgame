@@ -632,6 +632,12 @@ function handleOpponentAction(action) {
       break;
     case 'negateField': {
       // 상대 효과로 내 필드 카드 효과가 턴 종료까지 무효
+      // 펭귄의 전설 ③: 대상으로 하지 않는 무효화는 받지 않는다 (대상 지정이면 action.targeting=true)
+      if (typeof checkPenguinLegendImmunity === 'function' &&
+          checkPenguinLegendImmunity(action.cardId, action.targeting === true)) {
+        renderAll();
+        break;
+      }
       const nfName = CARDS[action.cardId]?.name || action.cardId;
       let applied = false;
       const mon = G.myField.find(c => c && c.id === action.cardId);
@@ -663,6 +669,14 @@ function handleOpponentAction(action) {
       // 상대가 내 필드 몬스터 공격력 변경 (지배룡과 지배자 ① 등)
       const fi = action.fieldIdx;
       if (fi !== undefined && G.myField[fi]) {
+        // 펭귄의 전설 ③: 대상으로 하지 않는 공격력 변경 효과는 받지 않는다
+        if (typeof checkPenguinLegendImmunity === 'function' &&
+            checkPenguinLegendImmunity(G.myField[fi].id, action.targeting === true)) {
+          renderAll();
+          break;
+        }
+        // 효과로 받은 공격력 변동은 atkBuff에 기록해 지속 효과 재계산에도 보존한다.
+        G.myField[fi].atkBuff = Number(G.myField[fi].atkBuff || 0) + (action.delta || 0);
         G.myField[fi].atk = Math.max(0, (G.myField[fi].atk || 0) + (action.delta || 0));
         log(`상대 효과: 내 ${G.myField[fi].name} ATK ${action.delta > 0 ? '+' : ''}${action.delta} → ${G.myField[fi].atk}`, 'opponent');
       }
