@@ -297,4 +297,37 @@ module.exports = function runPenguinTextComplianceTests() {
     assert(state.opHand.some(c => c.id === '펭귄의 전설'), 'negateImmunity: 전설 ②가 처리되어 패로 되돌아감');
     assert(state.opField.some(c => c.id === '꼬마 펭귄'), 'negateImmunity: 묘지의 꼬마 펭귄이 소생됨');
   }
+
+  // ── 9) 슈브 니구라스 ②도 같은 무효화 메커니즘으로 실제 작동한다 ──
+  //     (기존엔 frozen 체인 링크에 직접 써서 무효가 불발이었다)
+  {
+    const ctx = loadAllEffects(createContext());
+    const state = makeState({
+      myField: [makeCard('아우터 갓 슈브 니구라스', { atk: 0, atkBase: 0 })],
+      myDeck: [makeCard('엘더 갓-노덴스')],
+      opField: [makeCard('펭귄 용사', { atk: 4 })],
+      opGrave: [makeCard('펭귄의 영광')],
+    });
+    ctx.G = state;
+    ctx.isMyTurn = true;
+    const chain = ctx.HB_CHAIN_ENGINE;
+
+    const opAct = chain.activateEffect({
+      gameState: state, controller: 'opponent', cardId: '펭귄 용사',
+      sourceZone: 'field', effect: 'penguin-hero-2-quick-return-recover-magic',
+    });
+    assertEqual(opAct.ok, true, 'shub2: 상대 용사 ② 발동');
+
+    const myAct = chain.activateEffect({
+      gameState: state, controller: 'me', cardId: '아우터 갓 슈브 니구라스',
+      sourceZone: 'field', effect: 'cthulhu-outer-shub-2-response-banish-elder-negate',
+    });
+    assertEqual(myAct.ok, true, 'shub2: 슈브 ② 체인 발동');
+    assert(state.myExile.some(c => c.id === '엘더 갓-노덴스'), 'shub2: 코스트로 엘더 갓 제외');
+
+    const resolved = chain.resolveChain({ controller: 'me' });
+    assertEqual(resolved.ok, true, 'shub2: 체인 해결');
+    assert(state.opField.some(c => c.id === '펭귄 용사'), 'shub2: 무효된 용사 ②는 처리되지 않아 필드 잔류');
+    assert(!state.opHand.some(c => c.id === '펭귄의 영광'), 'shub2: 무효된 용사 ②의 회수도 처리되지 않음');
+  }
 };

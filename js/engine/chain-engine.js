@@ -639,9 +639,19 @@
 
     const negateResult = applyProcessingNegate(ctx, chainLink, effect);
     if (negateResult.ok && negateResult.negated) {
-      const skippedResult = makeOk({ chainLink, effect, skipped: true, negated: true, reason: negateResult.reason, negateResult });
-      emitChainLinkResolved(ctx, chainLink, skippedResult, true);
-      return skippedResult;
+      // 처리 시 무효도 비대상 무효이므로, 상대의 내성 카드(전설 ③ 등)가 발동한
+      // 효과는 무효화하지 못한다. 자기 효과 무효(르뤼에 ③ 등, actor==controller)는 그대로.
+      const candidate = negateResult.candidate || null;
+      const actor = candidate && (candidate.controller || candidate.sourceController);
+      const immunityBlock = actor && actor !== chainLink.controller
+        ? negateBlockedByImmunity(ctx, { controller: actor, tags: (candidate.effect && candidate.effect.tags) || candidate.tags || [] }, chainLink, null)
+        : null;
+      if (!immunityBlock) {
+        const skippedResult = makeOk({ chainLink, effect, skipped: true, negated: true, reason: negateResult.reason, negateResult });
+        emitChainLinkResolved(ctx, chainLink, skippedResult, true);
+        return skippedResult;
+      }
+      if (global.console && global.console.info) global.console.info('[chain-engine] 처리 시 무효가 내성으로 차단됨:', chainLink.cardId, immunityBlock.reason || '');
     }
 
     try {
@@ -739,12 +749,16 @@
 
   // 비대상 무효화도 "효과를 받지 않는다" 내성의 적용 대상이다(펭귄의 전설 ③ 등).
   // 무효화될 링크의 발동 카드가 아직 필드에 있고 내성이 활성화돼 있으면 무효화를 차단한다.
-  // 대상 지정 무효화는 inner.isTargeting/targeting=true로 표시하면 내성을 통과한다.
+  // 예외(내성 통과): ① 대상 지정 무효(inner.isTargeting/targeting=true),
+  //                  ② 플레이어 명령형 무효(inner.playerDirective 또는 무효화 효과의 playerDirective 태그).
   function negateBlockedByImmunity(ctx, negatingLink, targetLink, inner) {
     const continuous = global.HB_CONTINUOUS_ENGINE || (global.HB_ENGINE && global.HB_ENGINE.continuous);
     const zoneAccess = global.HB_ZONE_ACCESS;
     if (!continuous || typeof continuous.checkEffectImmunity !== 'function' || !zoneAccess) return null;
     if (!targetLink || !targetLink.cardId) return null;
+    if (inner && inner.playerDirective === true) return null;
+    const negatingTags = (negatingLink && negatingLink.tags) || [];
+    if (negatingTags.indexOf && negatingTags.indexOf('playerDirective') !== -1) return null;
     const sourceZone = targetLink.sourceZone;
     if (sourceZone !== 'field' && sourceZone !== 'fieldZone') return null;
 
