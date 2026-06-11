@@ -50,6 +50,8 @@
   };
 
   const usageCounters = new Map();
+  // 해결 중 무효화된 링크 id → 사유. 링크 객체는 freeze되므로 별도 맵으로 관리한다.
+  const negatedLinkIds = new Map();
   let nextChainSequence = 1;
   let nextLinkSequence = 1;
 
@@ -355,6 +357,7 @@
         index: typeof ctx.sourceIndex === 'number' ? ctx.sourceIndex : null,
       },
       reason: 'cardActivationCost',
+      isCost: true,
       eventData: { tag: 'cardActivationCost', effectId: effect.id },
     });
 
@@ -375,6 +378,9 @@
     }
 
     try {
+      // 코스트는 효과가 아니다 — cost(ctx) 동안의 ctx.move 호출에 isCost가 주입되도록
+      // 표시해, "효과를 받지 않는다" 내성이 코스트 지불을 막지 않게 한다.
+      ctx._hbPayingCost = true;
       const result = effect.cost(ctx);
       if (!resultOk(result)) {
         return makeFail('코스트를 지불할 수 없습니다.', { effectId: effect.id, result });
@@ -382,6 +388,8 @@
       return makeOk({ effect, ctx, paidCost: result === undefined ? true : result });
     } catch (err) {
       return makeFail(`cost 실행 중 오류: ${err.message}`, { effectId: effect.id, errorObject: err });
+    } finally {
+      ctx._hbPayingCost = false;
     }
   }
 
@@ -613,8 +621,8 @@
       return makeFail(err.message, { chainLink });
     }
 
-    if (chainLink.negated) {
-      const skippedResult = makeOk({ chainLink, effect, skipped: true, negated: true, reason: chainLink.negateReason || 'preNegated' });
+    if (chainLink.negated || negatedLinkIds.has(chainLink.id)) {
+      const skippedResult = makeOk({ chainLink, effect, skipped: true, negated: true, reason: chainLink.negateReason || negatedLinkIds.get(chainLink.id) || 'preNegated' });
       emitChainLinkResolved(ctx, chainLink, skippedResult, true);
       return skippedResult;
     }
@@ -631,9 +639,19 @@
 
     const negateResult = applyProcessingNegate(ctx, chainLink, effect);
     if (negateResult.ok && negateResult.negated) {
-      const skippedResult = makeOk({ chainLink, effect, skipped: true, negated: true, reason: negateResult.reason, negateResult });
-      emitChainLinkResolved(ctx, chainLink, skippedResult, true);
-      return skippedResult;
+      // 처리 시 무효도 비대상 무효이므로, 상대의 내성 카드(전설 ③ 등)가 발동한
+      // 효과는 무효화하지 못한다. 자기 효과 무효(르뤼에 ③ 등, actor==controller)는 그대로.
+      const candidate = negateResult.candidate || null;
+      const actor = candidate && (candidate.controller || candidate.sourceController);
+      const immunityBlock = actor && actor !== chainLink.controller
+        ? negateBlockedByImmunity(ctx, { controller: actor, tags: (candidate.effect && candidate.effect.tags) || candidate.tags || [] }, chainLink, null)
+        : null;
+      if (!immunityBlock) {
+        const skippedResult = makeOk({ chainLink, effect, skipped: true, negated: true, reason: negateResult.reason, negateResult });
+        emitChainLinkResolved(ctx, chainLink, skippedResult, true);
+        return skippedResult;
+      }
+      if (global.console && global.console.info) global.console.info('[chain-engine] 처리 시 무효가 내성으로 차단됨:', chainLink.cardId, immunityBlock.reason || '');
     }
 
     try {
@@ -678,6 +696,22 @@
       const result = resolveChainLink(ctx, links[i]);
       resolved.push(result);
       if (!result.ok) errors.push(result);
+
+      // "그 효과를 무효로 한다" 계열: 무효화 효과의 resolve가 negatePreviousLink를
+      // 반환하면, 이 링크가 응답했던 직전 링크(체인 순서상 바로 아래)를 무효로 표시한다.
+      // 링크 객체는 freeze이므로 negatedLinkIds 맵으로 표시하고 resolveChainLink가 건너뛴다.
+      const inner = result && result.ok && result.result && typeof result.result === 'object' ? result.result : null;
+      if (inner && inner.negatePreviousLink === true && i - 1 >= 0) {
+        const immunityBlock = negateBlockedByImmunity(ctx, links[i], links[i - 1], inner);
+        if (immunityBlock) {
+          if (global.console && global.console.info) global.console.info('[chain-engine] 무효화가 내성으로 차단됨:', links[i - 1].cardId, immunityBlock.reason || '');
+        } else {
+          markChainLinkNegated(links[i - 1].id, inner.reason || links[i].effectId || 'negatedByChainResponse');
+        }
+      }
+      if (inner && inner.negateLinkId) {
+        markChainLinkNegated(inner.negateLinkId, inner.reason || links[i].effectId || 'negatedByChainResponse');
+      }
     }
 
     const chainBeforeClear = getChainState();
@@ -707,10 +741,58 @@
     return makeOk({ resolved, count: resolved.length, errors, chain: chainBeforeClear });
   }
 
+  function markChainLinkNegated(linkId, reason) {
+    if (!linkId) return makeFail('linkId가 필요합니다.');
+    negatedLinkIds.set(linkId, reason || 'negated');
+    return makeOk({ linkId, reason: negatedLinkIds.get(linkId) });
+  }
+
+  // 비대상 무효화도 "효과를 받지 않는다" 내성의 적용 대상이다(펭귄의 전설 ③ 등).
+  // 무효화될 링크의 발동 카드가 아직 필드에 있고 내성이 활성화돼 있으면 무효화를 차단한다.
+  // 예외(내성 통과): ① 대상 지정 무효(inner.isTargeting/targeting=true),
+  //                  ② 플레이어 명령형 무효(inner.playerDirective 또는 무효화 효과의 playerDirective 태그).
+  function negateBlockedByImmunity(ctx, negatingLink, targetLink, inner) {
+    const continuous = global.HB_CONTINUOUS_ENGINE || (global.HB_ENGINE && global.HB_ENGINE.continuous);
+    const zoneAccess = global.HB_ZONE_ACCESS;
+    if (!continuous || typeof continuous.checkEffectImmunity !== 'function' || !zoneAccess) return null;
+    if (!targetLink || !targetLink.cardId) return null;
+    if (inner && inner.playerDirective === true) return null;
+    const negatingTags = (negatingLink && negatingLink.tags) || [];
+    if (negatingTags.indexOf && negatingTags.indexOf('playerDirective') !== -1) return null;
+    const sourceZone = targetLink.sourceZone;
+    if (sourceZone !== 'field' && sourceZone !== 'fieldZone') return null;
+
+    const state = resolveGameState(ctx && ctx.gameState);
+    let card = null;
+    try {
+      card = sourceZone === 'fieldZone'
+        ? zoneAccess.getFieldZoneCard(state, targetLink.sourceController || targetLink.controller)
+        : zoneAccess.getZoneArray(state, targetLink.sourceController || targetLink.controller, 'field')
+          .find(c => c && c.id === targetLink.cardId);
+    } catch (_) { card = null; }
+    if (!card || card.id !== targetLink.cardId) return null;
+
+    try {
+      const block = continuous.checkEffectImmunity({
+        gameState: state,
+        target: card,
+        targetController: targetLink.controller,
+        actorController: negatingLink.controller,
+        action: 'negateEffect',
+        isTargeting: !!(inner && (inner.isTargeting === true || inner.targeting === true)),
+      });
+      return block && block.blocked ? block : null;
+    } catch (err) {
+      console.warn('[chain-engine] 무효화 내성 확인 중 오류:', err);
+      return null;
+    }
+  }
+
   function clearChain() {
     const previous = getChainState();
     chainState.active = false;
     chainState.links.length = 0;
+    negatedLinkIds.clear();
     chainState.responding = false;
     chainState.priority = null;
     chainState.passCount = 0;
@@ -897,6 +979,7 @@
     openChainResponseWindow,
     resolveChain: localResolveChain,
     resolveChainLink,
+    markChainLinkNegated,
     clearChain,
 
     // 안전한 신규 효과 진입점. 레거시 beginChain을 대체하지 않고 신엔진 효과만 사용한다.

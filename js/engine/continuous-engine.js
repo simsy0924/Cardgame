@@ -99,6 +99,17 @@
     return base;
   }
 
+  // 발동/유발 효과가 부여한 일회성 공격력 수정치.
+  // atkBuff = 영구("공격력을 N 올린다"), atkBuffTurn = 턴 종료시까지.
+  // 지속 효과 재계산(atk = base + 지속 보정)이 매 렌더마다 돌기 때문에,
+  // 일회성 버프는 이 필드에 보존해 두고 재계산식에 항상 합산한다.
+  function getOneShotAtkBuff(card) {
+    if (!card) return 0;
+    const permanent = Number(card.atkBuff || 0);
+    const untilEndOfTurn = Number(card.atkBuffTurn || 0);
+    return (Number.isFinite(permanent) ? permanent : 0) + (Number.isFinite(untilEndOfTurn) ? untilEndOfTurn : 0);
+  }
+
   function eachMonsterOnField(gameState, callback) {
     const state = resolveGameState(gameState);
     [CONTROLLERS.ME, CONTROLLERS.OPPONENT].forEach(controller => {
@@ -300,7 +311,7 @@
   function resetContinuousCardState(card) {
     if (!card) return;
     const base = ensureCardBaseAttack(card);
-    card.atk = base;
+    card.atk = base + getOneShotAtkBuff(card);
     card._hbContinuous = {
       appliedEffects: [],
       attackModifier: 0,
@@ -366,9 +377,11 @@
         }
         delta = Number(delta || 0);
         if (!target || !Number.isFinite(delta) || delta === 0) return null;
+        // 상대 카드에 대한 지속 공격력 보정은 내성("효과를 받지 않는다")을 통과하지 못한다.
+        if (attackModifierBlockedByImmunity(state, target, findMonsterOwnerOnField(state, target), sourceCtx.controller)) return null;
         if (!target._hbContinuous) resetContinuousCardState(target);
         target._hbContinuous.attackModifier += delta;
-        target.atk = getBaseAttack(target) + target._hbContinuous.attackModifier;
+        target.atk = getBaseAttack(target) + getOneShotAtkBuff(target) + target._hbContinuous.attackModifier;
         const entry = makeReason({ amount: delta, reason: detail || 'attackModifier' });
         target._hbContinuous.appliedEffects.push(Object.freeze(entry));
         return entry;
@@ -566,7 +579,7 @@
       if (modifier !== 0) {
         if (!card._hbContinuous) resetContinuousCardState(card);
         card._hbContinuous.attackModifier = modifier;
-        card.atk = base + modifier;
+        card.atk = base + getOneShotAtkBuff(card) + modifier;
       }
     });
 
@@ -697,6 +710,43 @@
     return makeBlockResult('cannotBeSentToGrave', block);
   }
 
+  // card가 어느 컨트롤러의 필드에 있는지 식별(identity 우선, 동일 id 폴백).
+  function findMonsterOwnerOnField(gameState, card) {
+    if (!card) return null;
+    let owner = null;
+    eachMonsterOnField(gameState, (fieldCard, controller) => {
+      if (owner) return;
+      if (fieldCard === card) owner = controller;
+    });
+    if (owner) return owner;
+    eachMonsterOnField(gameState, (fieldCard, controller) => {
+      if (owner) return;
+      if (getCardId(fieldCard) && getCardId(fieldCard) === getCardId(card)) owner = controller;
+    });
+    return owner;
+  }
+
+  // 상대 지속 효과가 내성 카드("효과를 받지 않는다")의 공격력을 바꾸지 못하게 하는 게이트.
+  // 지속 효과는 비대상이므로 isTargeting=false로 판정한다.
+  function attackModifierBlockedByImmunity(state, target, targetController, actorController) {
+    if (!target || !actorController || !targetController) return false;
+    if (normalizeController(actorController) === normalizeController(targetController)) return false;
+    try {
+      const block = checkEffectImmunity({
+        gameState: state,
+        target,
+        targetController: normalizeController(targetController),
+        actorController: normalizeController(actorController),
+        action: 'attackModifier',
+        isTargeting: false,
+      });
+      return !!(block && block.blocked);
+    } catch (err) {
+      console.warn('[continuous-engine] 공격력 보정 내성 확인 중 오류:', err);
+      return false;
+    }
+  }
+
   function getAttackModifier(card, ctx) {
     const input = ctx || {};
     const state = resolveGameState(input.gameState);
@@ -705,17 +755,20 @@
 
     let total = 0;
     const active = getActiveContinuousEffects(state);
+    const targetController = input.targetController || input.controller || findMonsterOwnerOnField(state, target);
     active.forEach(entry => {
       const sourceCtx = entry.context;
       const checkCtx = buildCheckContext(Object.assign({}, input, {
         gameState: state,
         target,
         card: target,
-        targetController: input.targetController || input.controller || entry.controller,
+        targetController: targetController || entry.controller,
       }), entry);
       const rule = getRule(entry.effect, sourceCtx, createNoopHelpers(sourceCtx));
       const delta = collectAttackModifierFromRule(rule, target, checkCtx, sourceCtx);
-      if (Number.isFinite(delta)) total += delta;
+      if (!Number.isFinite(delta) || delta === 0) return;
+      if (attackModifierBlockedByImmunity(state, target, targetController, entry.controller)) return;
+      total += delta;
     });
     return total;
   }
@@ -817,6 +870,7 @@
     checkEffectImmunity,
     checkCannotBeSentToGrave,
     getAttackModifier,
+    getOneShotAtkBuff,
     getAvailableMonsterZoneCount,
     canAttackWithMonster,
   });

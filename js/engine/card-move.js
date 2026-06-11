@@ -320,6 +320,15 @@
       return failResult('몬스터 존이 가득 찼습니다.', { cardId, controller: to.controller });
     }
 
+    // 효과에 의한 필드 이탈(바운스/덱·패 되돌리기/컨트롤 이동 등)은 목적지와 무관하게
+    // 내성 검사 대상이다. sendToGrave/banishCard 경유 호출은 내부 moveCard에 opts.effect를
+    // 넘기지 않으므로(상위에서 이미 검사) 여기서 중복 검사되지 않는다.
+    if (opts.effect && (from.zone === ZONES.FIELD || from.zone === ZONES.FIELD_ZONE)) {
+      const moveAction = to.zone === ZONES.GRAVE ? 'sendToGrave' : (to.zone === ZONES.EXILE ? 'banish' : 'move');
+      const immuneBlock = checkRemovalImmunity(state, findCardInZone(state, from, cardId), from.controller, opts, moveAction);
+      if (immuneBlock) return immuneBlock;
+    }
+
     let removed;
     try {
       removed = zoneAccess.removeCardFromZone(state, from.controller, from.zone, cardId, from.index);
@@ -361,6 +370,27 @@
     });
   }
 
+  // "이 카드는 ~의 효과로만 소환할 수 있다" 류의 소환 제한.
+  // 카드의 PROCEDURE EffectDefinition에 summonProcedure.allowedSummonReasons가 선언돼 있으면,
+  // summonCard의 reason이 그 목록에 있을 때만 소환을 허용한다.
+  function getSummonRestriction(cardId) {
+    const registry = global.HB_EFFECT_REGISTRY;
+    if (!registry || typeof registry.getEffectsByCardId !== 'function') return null;
+    let effects;
+    try { effects = registry.getEffectsByCardId(cardId) || []; }
+    catch (_) { return null; }
+    const proc = effects.find(effect => effect && effect.summonProcedure
+      && Array.isArray(effect.summonProcedure.allowedSummonReasons)
+      && effect.summonProcedure.allowedSummonReasons.length > 0);
+    return proc ? proc.summonProcedure : null;
+  }
+
+  function canSummonWithReason(gameState, cardId, reason) {
+    const restriction = getSummonRestriction(normalizeCardId(cardId));
+    if (!restriction) return true;
+    return restriction.allowedSummonReasons.indexOf(String(reason || '')) !== -1;
+  }
+
   function summonCard(options) {
     const opts = options || {};
     const state = resolveGameState(opts.gameState);
@@ -371,6 +401,11 @@
     const def = getCardDef(cardId);
     if (def && def.cardType && def.cardType !== 'monster') {
       return failResult('몬스터만 소환할 수 있습니다.', { cardId, cardType: def.cardType });
+    }
+    if (opts.bypassSummonRestriction !== true && !canSummonWithReason(state, cardId, opts.reason || 'summon')) {
+      return failResult(`${getCardName(cardId)}는 지정된 효과로만 소환할 수 있습니다.`, {
+        cardId, reason: opts.reason || 'summon', blockedBySummonRestriction: true,
+      });
     }
     if (!hasFieldSpace(state, owner)) {
       return failResult('몬스터 존이 가득 찼습니다.', { cardId, controller: owner });
@@ -391,23 +426,40 @@
     });
   }
 
+  function effectHasPlayerDirectiveTag(effect) {
+    if (!effect) return false;
+    const tags = Array.isArray(effect.tags) ? effect.tags : [];
+    return tags.indexOf('playerDirective') !== -1;
+  }
+
   // 상대 효과가 카드를 제거하려 할 때 내성/보호(지속효과)를 조회하는 backstop.
   // 효과 기반(ctx.move → opts.effect 주입) 제거만 검사하고, 전투/룰/레거시 직접 호출은 통과시킨다.
   // 자기 효과(actor === owner)는 막지 않는다. 막혀야 하면 failResult를, 아니면 null을 반환한다.
+  // 예외 규칙:
+  //  - 코스트(opts.isCost — chain-engine payCost가 주입)는 효과가 아니므로
+  //    "효과를 받지 않는다" 내성을 통과한다. 단 "묘지로 보내지지 않는다" 같은
+  //    무조건 룰(cannotBeSentToGrave)은 코스트에도 적용한다.
+  //  - 플레이어 명령형 효과(playerDirective 태그/플래그)는 카드가 아니라 플레이어에게
+  //    작용하므로 내성을 통과한다.
   function checkRemovalImmunity(state, card, owner, opts, action) {
     const continuous = global.HB_CONTINUOUS_ENGINE;
     if (!continuous || !opts.effect || !card) return null;
     const ownerC = normalizeController(owner);
     const actor = normalizeController(opts.actorController || (opts.effect && opts.effect.controller) || ownerC);
     if (actor === ownerC) return null; // 자기 효과는 내성 대상 아님
+
+    const isCost = opts.isCost === true;
+    const playerDirective = opts.playerDirective === true || effectHasPlayerDirectiveTag(opts.effect);
+
     const checkInput = {
       gameState: state, target: card, card, monster: card,
       targetController: ownerC, actorController: actor,
       action, reason: opts.reason, effect: opts.effect, chainLink: opts.chainLink,
       isTargeting: opts.isTargeting === true,
+      isCost, playerDirective,
     };
     const name = getCardName(normalizeCardId(card), card);
-    if (typeof continuous.checkEffectImmunity === 'function') {
+    if (!isCost && !playerDirective && typeof continuous.checkEffectImmunity === 'function') {
       const imm = continuous.checkEffectImmunity(checkInput);
       if (imm && imm.blocked) return failResult(`${name}는 효과를 받지 않습니다(내성).`, { blocked: true, immunity: imm, reason: imm.reason || 'effectImmunity' });
     }
@@ -415,7 +467,7 @@
       const g = continuous.checkCannotBeSentToGrave(checkInput);
       if (g && g.blocked) return failResult(`${name}는 묘지로 보낼 수 없습니다.`, { blocked: true, immunity: g, reason: g.reason || 'cannotBeSentToGrave' });
     }
-    if (opts.isTargeting === true && typeof continuous.checkTargetProtection === 'function') {
+    if (!isCost && !playerDirective && opts.isTargeting === true && typeof continuous.checkTargetProtection === 'function') {
       const tp = continuous.checkTargetProtection(checkInput);
       if (tp && tp.blocked) return failResult(`${name}는 대상으로 지정할 수 없습니다(대상 내성).`, { blocked: true, immunity: tp, reason: tp.reason || 'targetProtection' });
     }
@@ -543,6 +595,9 @@
     result.events = [result.event, sentEvent];
     result.diff = makeDiff('discardCard', result.event, { secondaryEventType: sentEvent.type });
     flushPendingMoveEvents(state, opts);
+    // 패 0장 = 패배 규칙. 레거시 경로(manualDiscard/forceDiscard)만 검사하던 것을
+    // 신엔진 버리기에서도 동일하게 검사한다(브라우저 전역이 없으면 무시).
+    try { if (typeof global.checkWinCondition === 'function') global.checkWinCondition(); } catch (_) {}
     return result;
   }
 
@@ -763,6 +818,7 @@
     removeFieldCard,
     getFieldSlotLimit,
     hasFieldSpace,
+    canSummonWithReason,
     dispatchMoveEvent,
   });
 })(window);

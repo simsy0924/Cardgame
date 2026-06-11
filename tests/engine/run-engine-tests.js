@@ -10,6 +10,7 @@ const tests = [
   ['penguin-discard', require('./penguin-discard.test')],
   ['immunity-enforcement', require('./immunity-enforcement.test')],
   ['penguin-bugfixes', require('./penguin-bugfixes.test')],
+  ['penguin-text-compliance', require('./penguin-text-compliance.test')],
   ['legacy-cleanup', require('./legacy-cleanup.test')],
   ['final-gate', require('./final-gate.test')],
   ['final-audit', require('./final-audit.test')],

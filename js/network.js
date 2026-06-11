@@ -590,9 +590,10 @@ function handleOpponentAction(action) {
       {
         const idx = G.myField.findIndex(c => c.id === action.cardId);
         if (idx >= 0) {
-          // 펭귄의 전설 ③: 대상 지정 효과 무효
+          // 펭귄의 전설 ③: 대상으로 하지 않는 상대 효과 차단.
+          // 레거시 송신자가 대상 지정 효과면 action.targeting=true를 실어 보낸다(기본은 비대상).
           if (typeof checkPenguinLegendImmunity === 'function' &&
-              checkPenguinLegendImmunity(action.cardId, true)) {
+              checkPenguinLegendImmunity(action.cardId, action.targeting === true)) {
             // 전설 내성 — 효과 무효, 카드 유지
             renderAll();
             break;
@@ -609,9 +610,9 @@ function handleOpponentAction(action) {
       {
         const idx = G.myField.findIndex(c => c.id === action.cardId);
         if (idx >= 0) {
-          // 펭귄의 전설 ③: 대상 지정 효과 무효
+          // 펭귄의 전설 ③: 대상으로 하지 않는 상대 효과 차단 (대상 지정이면 action.targeting=true)
           if (typeof checkPenguinLegendImmunity === 'function' &&
-              checkPenguinLegendImmunity(action.cardId, true)) {
+              checkPenguinLegendImmunity(action.cardId, action.targeting === true)) {
             renderAll();
             break;
           }
@@ -631,6 +632,12 @@ function handleOpponentAction(action) {
       break;
     case 'negateField': {
       // 상대 효과로 내 필드 카드 효과가 턴 종료까지 무효
+      // 펭귄의 전설 ③: 대상으로 하지 않는 무효화는 받지 않는다 (대상 지정이면 action.targeting=true)
+      if (typeof checkPenguinLegendImmunity === 'function' &&
+          checkPenguinLegendImmunity(action.cardId, action.targeting === true)) {
+        renderAll();
+        break;
+      }
       const nfName = CARDS[action.cardId]?.name || action.cardId;
       let applied = false;
       const mon = G.myField.find(c => c && c.id === action.cardId);
@@ -662,6 +669,14 @@ function handleOpponentAction(action) {
       // 상대가 내 필드 몬스터 공격력 변경 (지배룡과 지배자 ① 등)
       const fi = action.fieldIdx;
       if (fi !== undefined && G.myField[fi]) {
+        // 펭귄의 전설 ③: 대상으로 하지 않는 공격력 변경 효과는 받지 않는다
+        if (typeof checkPenguinLegendImmunity === 'function' &&
+            checkPenguinLegendImmunity(G.myField[fi].id, action.targeting === true)) {
+          renderAll();
+          break;
+        }
+        // 효과로 받은 공격력 변동은 atkBuff에 기록해 지속 효과 재계산에도 보존한다.
+        G.myField[fi].atkBuff = Number(G.myField[fi].atkBuff || 0) + (action.delta || 0);
         G.myField[fi].atk = Math.max(0, (G.myField[fi].atk || 0) + (action.delta || 0));
         log(`상대 효과: 내 ${G.myField[fi].name} ATK ${action.delta > 0 ? '+' : ''}${action.delta} → ${G.myField[fi].atk}`, 'opponent');
       }
@@ -712,6 +727,8 @@ function handleOpponentAction(action) {
       // [BUG FIX] 상대 턴 종료 시 내 턴 시작 — 턴 종료 효과 리셋
       G.exileBanActive  = false;
       G.goldenAppleActive = false;
+      // "턴 종료시까지" 공격력 버프는 턴 경계마다 양쪽 클라이언트에서 해제한다.
+      if (typeof clearEndOfTurnAtkBuffs === 'function') clearEndOfTurnAtkBuffs();
       // [BUG-4 FIX] 수신 측에서도 G.turn을 동기화한다.
       // 발신 측(endTurn 함수)이 G.turn++를 수행한 뒤 action.turn에 새 값을 포함해서 보내므로,
       // 수신 측은 그 값으로 덮어써 양측 turn 카운트를 일치시킨다.

@@ -232,6 +232,9 @@
     if (!opts.actorController) opts.actorController = ctx.controller;
     if (!opts.effect && ctx.effect) opts.effect = ctx.effect;
     if (!opts.chainLink && ctx.chainLink) opts.chainLink = ctx.chainLink;
+    // 코스트 지불 중(chain-engine payCost가 표시)의 이동은 효과가 아니므로,
+    // card-move의 "효과를 받지 않는다" 내성 검사를 통과하도록 isCost를 주입한다.
+    if (opts.isCost == null && ctx._hbPayingCost === true) opts.isCost = true;
     if (!opts.event && ctx.event) opts.eventData = Object.assign({}, opts.eventData || {}, { causedByEventId: ctx.event.eventId || null });
     return opts;
   }
