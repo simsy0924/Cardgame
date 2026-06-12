@@ -330,4 +330,81 @@ module.exports = function runPenguinTextComplianceTests() {
     assert(state.opField.some(c => c.id === '펭귄 용사'), 'shub2: 무효된 용사 ②는 처리되지 않아 필드 잔류');
     assert(!state.opHand.some(c => c.id === '펭귄의 영광'), 'shub2: 무효된 용사 ②의 회수도 처리되지 않음');
   }
+
+  // ── 10) 유발 효과도 상대가 있으면 체인을 열어 두고 응답 창을 거친다 ──
+  {
+    const ctx = loadAllEffects(createContext());
+    ctx.AI = { active: true }; // 응답할 상대(AI)가 있는 환경
+    const state = makeState({
+      myField: [makeCard('꼬마 펭귄', { atk: 1 })],
+      myDeck: [makeCard('현자 펭귄')],
+    });
+    ctx.G = state;
+    const received = ctx.HB_TRIGGER_QUEUE.receiveEvent(
+      { type: 'summon', cardId: '꼬마 펭귄', controller: 'me', to: { controller: 'me', zone: 'field' } },
+      state
+    );
+    assertEqual(received.ok, true, 'triggerChain: 이벤트 수신');
+    const act = ctx.HB_TRIGGER_QUEUE.activateSelectedTrigger({ effectId: 'kkoma-penguin-2-on-summon-deck-summon', controller: 'me' });
+    assertEqual(act.ok, true, 'triggerChain: 꼬마 ② 트리거 발동');
+    assert(ctx.HB_CHAIN_ENGINE.hasActiveChain(), 'triggerChain: 체인이 열린 채 응답 대기');
+    assertEqual(state.myField.length, 1, 'triggerChain: 해결 전 — 덱 소환 미실행');
+
+    ctx.HB_CHAIN_ENGINE.passChainResponse('opponent');
+    ctx.HB_CHAIN_ENGINE.passChainResponse('me');
+    assert(state.myField.some(c => c.id === '현자 펭귄'), 'triggerChain: 패스 2회 후 해결되어 덱에서 소환');
+    assert(!ctx.HB_CHAIN_ENGINE.hasActiveChain(), 'triggerChain: 체인 종료');
+  }
+
+  // ── 10-1) PvP(roomRef)에서 수동 발동도 즉시 해결되지 않고 응답 창을 연다 ──
+  //     (기존엔 window.roomRef 오판으로 네트워크전의 모든 발동이 즉시 해결됐다)
+  {
+    const ctx = loadAllEffects(createContext());
+    ctx.roomRef = {
+      child: () => ({ set() { return Promise.resolve(); }, update() { return Promise.resolve(); }, on() {}, off() {} }),
+      update() { return Promise.resolve(); },
+    };
+    const state = makeState({ myHand: [makeCard('꼬마 펭귄')] });
+    ctx.G = state;
+    const entries = ctx.HB_EFFECT_UI.getAvailableEffects({
+      gameState: state, controller: 'me', player: 'me',
+      cardId: '꼬마 펭귄', card: state.myHand[0], zone: 'hand', sourceIndex: 0,
+    });
+    const entry = entries.find(e => e.effect.id === 'kkoma-penguin-1-hand-summon');
+    assert(entry, 'pvpChain: 꼬마 ① 발동 가능');
+    const act = ctx.HB_EFFECT_UI.activateAvailableEffect(entry, {});
+    assertEqual(act.ok, true, 'pvpChain: 발동 성공');
+    assert(ctx.HB_CHAIN_ENGINE.hasActiveChain(), 'pvpChain: 체인이 열린 채 응답 대기');
+    assertEqual(state.myField.length, 0, 'pvpChain: 해결 전 — 소환 미실행');
+
+    ctx.HB_CHAIN_ENGINE.passChainResponse('opponent');
+    ctx.HB_CHAIN_ENGINE.passChainResponse('me');
+    assert(state.myField.some(c => c.id === '꼬마 펭귄'), 'pvpChain: 패스 2회 후 소환');
+  }
+
+  // ── 10-2) 원격 체인 미러 동기화 — 비발동측 엔진에서 패스/해결이 동작한다 ──
+  {
+    const ctx = loadAllEffects(createContext());
+    const state = makeState({ opHand: [makeCard('꼬마 펭귄')] });
+    ctx.G = state;
+    // 상대(guest)가 발동한 체인 미러를 수신 (나 = host)
+    const sync = ctx.HB_CHAIN_ENGINE.syncRemoteChainState({
+      hbEngine: true, active: true, chainId: 'remote_c1', passCount: 0, priority: 'host',
+      links: [{ id: 'remote_L1', by: 'guest', effectId: 'kkoma-penguin-1-hand-summon', cardId: '꼬마 펭귄', sourceZone: 'hand', sourceIndex: 0, label: '꼬마 ①' }],
+    });
+    assertEqual(sync.ok, true, 'remoteSync: 미러 재구성');
+    assert(ctx.HB_CHAIN_ENGINE.hasActiveChain(), 'remoteSync: 수신측 엔진에 체인 활성');
+    assertEqual(ctx.HB_CHAIN_ENGINE.getChainState().priority, 'me', 'remoteSync: 우선권이 수신측(me)으로 매핑');
+
+    const pass1 = ctx.HB_CHAIN_ENGINE.passChainResponse('me');
+    assertEqual(pass1.ok, true, 'remoteSync: 수신측 패스 가능 (기존엔 활성 체인 없음 오류)');
+    const pass2 = ctx.HB_CHAIN_ENGINE.passChainResponse('opponent');
+    assertEqual(pass2.ok, true, 'remoteSync: 해결 패스');
+    assert(state.opField.some(c => c.id === '꼬마 펭귄'), 'remoteSync: 재구성된 상대 링크 해결(패→필드)');
+
+    // 해결된(비활성) 미러 수신 → 로컬 엔진 체인 정리
+    const clear = ctx.HB_CHAIN_ENGINE.syncRemoteChainState({ hbEngine: true, active: false, links: [] });
+    assertEqual(clear.ok, true, 'remoteSync: 비활성 미러 처리');
+    assert(!ctx.HB_CHAIN_ENGINE.hasActiveChain(), 'remoteSync: 체인 정리됨');
+  }
 };

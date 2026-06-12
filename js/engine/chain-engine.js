@@ -618,6 +618,12 @@
           || [],
       }), effect);
     } catch (err) {
+      // 원격 미러로 재구성된 링크는 이 클라이언트에 등록되지 않은 효과(레거시 래퍼 등)일 수 있다.
+      // 그 해결은 소유 클라이언트가 권위적으로 처리하므로 여기서는 오류 대신 건너뛴다.
+      if (chainLink.remote === true) {
+        console.warn('[chain-engine] 원격 링크의 효과를 찾지 못해 건너뜁니다:', chainLink.effectId, err.message);
+        return makeOk({ chainLink, skipped: true, remoteUnknownEffect: true });
+      }
       return makeFail(err.message, { chainLink });
     }
 
@@ -865,6 +871,81 @@
     return setLegacyChainMirror(chainState.active ? getLegacyChainMirrorState() : null);
   }
 
+  // 상대 클라이언트가 발행한 체인 미러(account.js buildLegacyMirrorFromHbState 형식)를
+  // 로컬 엔진 체인 상태로 재구성한다. 이게 없으면 비발동측 엔진에 링크가 없어
+  // 응답/패스(passChainResponse)가 "활성 체인이 없습니다"로 실패해 PvP 체인이 데드락된다.
+  // 미러의 by/priority는 역할(role)이므로 수신측 관점의 controller로 변환한다.
+  function syncRemoteChainState(remoteMirror) {
+    const mirror = remoteMirror || null;
+    if (!mirror || mirror.hbEngine !== true) return makeFail('hbEngine 체인 미러가 아닙니다.');
+    if (chainState.resolving) return makeOk({ skipped: true, reason: 'locallyResolving' });
+
+    // 해결/종료된 체인 → 로컬 엔진 체인도 정리한다.
+    if (!mirror.active || !Array.isArray(mirror.links) || mirror.links.length === 0) {
+      const cleared = chainState.active ? clearChain() : null;
+      return makeOk({ cleared: !!cleared });
+    }
+
+    const sameChain = !!(chainState.active && chainState.id && mirror.chainId && chainState.id === mirror.chainId);
+    // [N2와 동일한 stale 가드] 같은 체인에서 링크 수가 줄어든 미러는 오래된 발행이다.
+    if (sameChain && mirror.links.length < chainState.links.length) {
+      return makeOk({ skipped: true, reason: 'staleMirror' });
+    }
+
+    if (!sameChain) {
+      chainState.links.length = 0;
+      negatedLinkIds.clear();
+      chainState.id = mirror.chainId || makeChainId();
+      chainState.createdAt = mirror.createdAt || Date.now();
+      chainState.resolvedAt = 0;
+    }
+
+    chainState.active = true;
+    chainState.responding = true;
+    chainState.passCount = Math.max(0, Number(mirror.passCount || 0));
+    chainState.priority = roleToController(mirror.priority);
+
+    if (!sameChain || mirror.links.length > chainState.links.length) {
+      const existingById = new Map(chainState.links.map(link => [link.id, link]));
+      const rebuilt = mirror.links.map((m, index) => {
+        const found = m && m.id ? existingById.get(m.id) : null;
+        if (found) return found; // 로컬에서 만든 링크는 원본(선택/코스트 정보 포함)을 보존
+        const controller = roleToController(m && m.by);
+        const sequence = nextLinkSequence++;
+        const sourceIndex = typeof (m && m.sourceIndex) === 'number' ? m.sourceIndex : null;
+        return Object.freeze({
+          id: (m && m.id) || makeChainLinkId(sequence),
+          chainId: chainState.id,
+          effectId: (m && m.effectId) || null,
+          cardId: (m && m.cardId) || null,
+          cardName: (m && (m.label || m.cardId)) || null,
+          controller,
+          sourceZone: (m && m.sourceZone) || null,
+          sourceController: controller,
+          sourceIndex,
+          source: Object.freeze({ controller, zone: (m && m.sourceZone) || null, index: sourceIndex }),
+          targets: Object.freeze([]),
+          paidCost: null,
+          tags: Object.freeze([]),
+          negated: false,
+          negateReason: null,
+          createdAtPhase: null,
+          createdAtTurn: null,
+          createdAt: (m && m.createdAt) || Date.now(),
+          sequence,
+          order: index + 1,
+          remote: true,
+          activationData: Object.freeze({ remoteMirror: true, legacyLink: m && m.legacy ? m : undefined }),
+        });
+      });
+      chainState.links.length = 0;
+      chainState.links.push.apply(chainState.links, rebuilt);
+    }
+
+    syncLegacyChainMirror();
+    return makeOk({ imported: true, chain: getChainState() });
+  }
+
   function getChainLinks() {
     return chainState.links.slice();
   }
@@ -988,6 +1069,7 @@
     getChainState,
     getChainLinks,
     hasActiveChain,
+    syncRemoteChainState,
     roleToController,
     controllerToRole,
     getLegacyChainMirrorState,

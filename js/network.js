@@ -69,6 +69,16 @@ function listenChainState() {
     const wasActive = !!(activeChainState && activeChainState.active);
     const data = snap.val();
 
+    // [체인 동기화] 수신한 HB 체인 미러를 로컬 엔진 체인 상태에도 재구성한다.
+    // 이게 없으면 비발동측 엔진에 링크가 없어 응답/패스가 실패하고 체인이 데드락된다.
+    // (stale 가드/해결 중 보호는 syncRemoteChainState 내부에서 처리)
+    if (window.HB_CHAIN_ENGINE && typeof window.HB_CHAIN_ENGINE.syncRemoteChainState === 'function') {
+      try {
+        if (data && data.hbEngine === true) window.HB_CHAIN_ENGINE.syncRemoteChainState(data);
+        else if (!data) window.HB_CHAIN_ENGINE.syncRemoteChainState({ hbEngine: true, active: false, links: [] });
+      } catch (err) { console.warn('[network] 체인 엔진 동기화 실패:', err); }
+    }
+
     // 체인이 끝났으면 null로 명시 초기화
     if (!data || !data.active) {
       if (activeChainState && activeChainState.active) {

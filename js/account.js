@@ -448,6 +448,11 @@ async function claimMissionReward(missionId) {
         controllerToRole,
         importChainState(data) {
           if (!data || data.hbEngine !== true) return false;
+          // 미러 표시만 갱신하던 기존 스텁과 달리, 엔진 체인 상태도 재구성해
+          // 비발동측에서 응답/패스(passChainResponse)가 실제로 동작하게 한다.
+          safeCall(() => {
+            if (chain && typeof chain.syncRemoteChainState === 'function') chain.syncRemoteChainState(data);
+          });
           publishChainMirror(data, { publish: false });
           return true;
         },

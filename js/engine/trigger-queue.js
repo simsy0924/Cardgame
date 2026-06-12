@@ -526,6 +526,17 @@
     return makeOk({ skipped: Object.freeze(skipped), activated: Object.freeze(activated), count: remote.length });
   }
 
+  // 네트워크전(roomRef 존재) 또는 AI전이면 체인에 응답할 상대가 있다.
+  // roomRef는 engine.js의 top-level let이라 window.roomRef로는 보이지 않는다 — typeof로 조회.
+  function hasOpponentForChainResponse() {
+    try {
+      // eslint-disable-next-line no-undef
+      if (typeof roomRef !== 'undefined' && roomRef) return true;
+    } catch (_) {}
+    if (global.roomRef) return true;
+    return !!(global.AI && global.AI.active);
+  }
+
   function activateTriggerEntry(trigger, options) {
     if (!trigger) return makeFail('trigger가 없습니다.');
     const chain = global.HB_CHAIN_ENGINE || (global.HB_ENGINE && global.HB_ENGINE.chain);
@@ -534,12 +545,14 @@
     }
 
     const opts = options || {};
-    // 체인 응답 중이 아니면 유발 효과 선택은 기본 즉시 해결한다.
-    // 명시적으로 false를 준 경우(연속 체인 합류 등)만 체인에 머무른다.
+    // [체인 규칙] 발동하는 유발 효과도 체인 블록을 형성하고 응답 창을 열어야 한다.
+    // 상대가 있으면(네트워크/AI전) 즉시 해결하지 않고 체인을 열어 둔 채 응답을 기다린다.
+    // 상대가 없으면(완전 로컬 — 응답 주체가 없어 영구 대기가 됨) 즉시 해결한다.
+    // 명시 옵션(resolveImmediately/autoResolve)이 있으면 그것을 따른다.
     const explicitImmediate = opts.resolveImmediately === true || opts.autoResolve === true;
     const explicitDefer = opts.resolveImmediately === false || opts.autoResolve === false;
     const chainActive = typeof chain.hasActiveChain === 'function' ? !!chain.hasActiveChain() : false;
-    const resolveImmediately = explicitImmediate || (!explicitDefer && !chainActive);
+    const resolveImmediately = explicitImmediate || (!explicitDefer && !chainActive && !hasOpponentForChainResponse());
 
     function proceed(finalOpts) {
       const activation = chain.activateEffect({

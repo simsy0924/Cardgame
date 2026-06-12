@@ -246,7 +246,15 @@
 
   function hasOpponentForChainResponse() {
     // 네트워크전(roomRef 존재) 또는 AI전이면 응답할 상대가 있다.
-    return !!global.roomRef || !!(global.AI && global.AI.active);
+    // roomRef는 engine.js의 top-level let이라 window.roomRef로는 보이지 않는다 —
+    // typeof로 전역 lexical 바인딩을 직접 조회한다(이전 구현은 PvP를 false로 오판해
+    // 네트워크전의 모든 수동 발동이 응답 창 없이 즉시 해결되는 버그가 있었다).
+    try {
+      // eslint-disable-next-line no-undef
+      if (typeof roomRef !== 'undefined' && roomRef) return true;
+    } catch (_) {}
+    if (global.roomRef) return true;
+    return !!(global.AI && global.AI.active);
   }
 
   function shouldResolveImmediatelyFromUi(opts) {
