@@ -235,31 +235,13 @@ function _buildChainActivate(entry, idx, aiCtx) {
   };
 }
 
-function collectHbEngineChainOptions(aiCtx) {
-  const options = [];
-  if (!activeChainState || !activeChainState.active || activeChainState.hbEngine !== true) return options;
-
-  // HB_CHAIN_ENGINE 체인은 레거시 addChainLink와 섞이면 내부 chainState와
-  // 화면 mirror/Firebase chainState가 서로 다른 링크 목록을 갖게 된다.
-  // 따라서 신엔진 체인에서는 신엔진 QUICK/TRIGGER 응답만 수집한다.
-  // AI 응답은 ai.js의 _collectAIEngineActions('chain')가 opponent 컨트롤러로 별도 수집한다.
-  if (aiCtx) return options;
-
-  _collectNewEngineChainOptionsForZone(options, G.myHand, 'hand', null);
-  _collectNewEngineChainOptionsForZone(options, G.myField, 'field', null);
-  _collectNewEngineChainOptionsForZone(options, G.myGrave, 'grave', null);
-  _collectNewEngineChainOptionsForZone(options, G.myExile, 'exile', null);
-  _collectNewEngineFieldZoneChainOptions(options);
-  return options;
-}
-
 function collectChainOptions(aiCtx) {
   const options = [];
   if (!activeChainState || !activeChainState.active) return options;
 
-  if (activeChainState.hbEngine === true) {
-    return collectHbEngineChainOptions(aiCtx);
-  }
+  // Phase 3: 모든 활성 체인은 동일한 응답 수집 경로를 사용한다.
+  // 레거시 응답의 실제 링크 등록도 addChainLink → HB_CHAIN_ENGINE 어댑터를 타므로
+  // 신엔진 링크 목록과 화면/Firebase 미러가 갈라지지 않는다.
 
   // ── AI 컨텍스트 스왑 ──
   // condition/activate 내부가 참조하는 전역 변수를 AI 데이터로 임시 교체.
