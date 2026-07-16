@@ -1,6 +1,19 @@
+const fs = require('fs');
+const path = require('path');
 const { createContext, loadCore, makeCard, makeState, assert, assertEqual } = require('./_setup');
 
 module.exports = function runStateSessionTests() {
+  const networkSource = fs.readFileSync(path.join(__dirname, '../../js/network.js'), 'utf8');
+  assert(
+    !/^\s*lastActionKey,\s*$/m.test(networkSource),
+    'network state capture must not reference an undeclared lastActionKey shorthand'
+  );
+  assertEqual(
+    (networkSource.match(/lastActionKey:\s*lastHandledActionKey/g) || []).length,
+    2,
+    'snapshot and session state must map the handled action cursor explicitly'
+  );
+
   const ctx = loadCore(createContext());
   const state = makeState({
     myHand: [makeCard('hand-a')],
