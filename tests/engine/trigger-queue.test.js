@@ -54,10 +54,51 @@ module.exports = function runTriggerQueueTests() {
   assert(!ids.includes('test-trigger-continuous-excluded'), 'continuous effect should not be collected as trigger');
 
   ctx.HB_TRIGGER_QUEUE.clearTriggerQueue();
-  const result = ctx.HB_TRIGGER_QUEUE.enqueueEvent({ type: 'summon', cardId: 'x', controller: 'me' }, state);
+  const result = ctx.HB_TRIGGER_QUEUE.enqueueEvent(
+    { type: 'summon', cardId: 'x', controller: 'me' },
+    state,
+    { process: false }
+  );
   assert(result.ok, `enqueueEvent failed: ${result.error}`);
   const queue = ctx.HB_TRIGGER_QUEUE.getQueueState();
   assertEqual(queue.optional.length, 1, 'optional queue should contain one entry');
+
+  const serializedQueue = ctx.HB_TRIGGER_QUEUE.exportQueueState();
+  assertEqual(serializedQueue.length, 2, 'mandatory and optional triggers should be serialized');
+  ctx.HB_TRIGGER_QUEUE.clearTriggerQueue();
+  const restoredQueue = ctx.HB_TRIGGER_QUEUE.importQueueState(serializedQueue, state);
+  assert(restoredQueue.ok, 'serialized trigger queue should restore');
+  assertEqual(restoredQueue.count, 2, 'both queued triggers should restore');
+  assertEqual(ctx.HB_TRIGGER_QUEUE.getQueueState().mandatory.length, 1, 'mandatory queue should restore');
+  assertEqual(ctx.HB_TRIGGER_QUEUE.getQueueState().optional.length, 1, 'optional queue should restore');
+
+  ctx.HB_TRIGGER_QUEUE.clearTriggerQueue();
+  ctx.HB_EFFECT_REGISTRY.registerEffect({
+    id: 'test-trigger-awaiting-choice',
+    cardId: state.myField[0].id,
+    type: 'trigger',
+    zone: 'field',
+    event: 'choice-test',
+    optional: true,
+    canResolve() { return true; },
+    collectChoices() {
+      return { candidates: [makeCard('choice-a'), makeCard('choice-b')], count: 1, forced: true };
+    },
+    resolve() { return true; },
+  }, { replace: true });
+  let finishPicker = null;
+  ctx.openCardPicker = (_cards, _title, _count, done) => { finishPicker = done; };
+  ctx.HB_TRIGGER_QUEUE.enqueueEvent({ type: 'choice-test', controller: 'me' }, state, { process: false });
+  const awaitingResult = ctx.HB_TRIGGER_QUEUE.activateSelectedTrigger(
+    { effectId: 'test-trigger-awaiting-choice', controller: 'me' },
+    { resolveImmediately: true }
+  );
+  assert(awaitingResult.ok && awaitingResult.awaitingSelection, 'trigger choice should enter awaiting state');
+  assertEqual(ctx.HB_TRIGGER_QUEUE.getQueueState().awaitingCount, 1, 'awaiting trigger must stay serializable');
+  assertEqual(ctx.HB_TRIGGER_QUEUE.exportQueueState()[0].queueType, 'awaiting', 'awaiting queue type must be exported');
+  assert(typeof finishPicker === 'function', 'picker completion callback should be captured');
+  finishPicker([0]);
+  assertEqual(ctx.HB_TRIGGER_QUEUE.getQueueState().awaitingCount, 0, 'completed trigger choice must leave awaiting state');
 
   // [H1] 공개 패(PUBLIC_HAND) 트리거가 reveal addToHand 경로로 발동하는지 검증.
   // 젊은 라이온 ① 류: zones:[publicHand] + addedToHand. 레거시 direct-push가

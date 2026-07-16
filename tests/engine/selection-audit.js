@@ -29,7 +29,13 @@ function runSelectionAudit(themeFilter) {
   allEffects.forEach(effect => {
     const theme = effect.theme || (byId[effect.cardId] && byId[effect.cardId].theme) || '(미상)';
     if (themeFilter && theme !== themeFilter) return;
-    const src = String(effect.resolve || '') + String(effect.canResolve || '');
+    const src = [
+      effect.condition,
+      effect.canResolve,
+      effect.cost,
+      effect.target,
+      effect.resolve,
+    ].map(fn => String(fn || '')).join('\n');
     const hasCollect = typeof effect.collectChoices === 'function';
     const sig = {
       firstOrSelected: /firstOrSelected\s*\(/.test(src),
@@ -91,8 +97,7 @@ function runSelectionAudit(themeFilter) {
   immun.sort((a, b) => a.theme.localeCompare(b.theme)).forEach(i => {
     console.log(`    ${i.theme}: ${i.cardId} ${i.effectNo ? '#' + i.effectNo : ''} [${i.keys.join(',')}]`);
   });
-  console.log('  ⚠️ 강제 실태: checkEffectImmunity 호출처 = penguin.js, circusmare.js 뿐 / card-move(파괴·묘지·제외) 미조회');
-  console.log('             checkTargetProtection 호출처 = 0개 (완전 미작동) / effectImmune 플래그 read 없음');
+  console.log('  중앙 강제: card-move가 대상 보호·효과 내성·묘지 전송 금지를 이동 직전에 검사하며 회귀 테스트로 검증한다.');
 
   return { rows, problems, immun };
 }

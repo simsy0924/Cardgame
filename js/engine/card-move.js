@@ -20,6 +20,7 @@
     SENT_TO_GRAVE: 'sentToGrave',
     EXILED: 'exiled',
     ADDED_TO_HAND: 'addedToHand',
+    DRAW: 'draw',
     DISCARDED: 'discarded',
     FIELD_CARD_PLACED: 'fieldCardPlaced',
     FIELD_CARD_LEFT: 'fieldCardLeft',
@@ -361,11 +362,31 @@
       reason: opts.reason,
       eventData: opts.eventData,
     }));
+    const isDrawMove = from.zone === ZONES.DECK
+      && (to.zone === ZONES.HAND || to.zone === ZONES.PUBLIC_HAND)
+      && (opts.isDraw === true || !!(opts.eventData && opts.eventData.draw) || /draw/i.test(String(opts.reason || '')));
+    const events = [event];
+    if (isDrawMove) {
+      if (global.HB_STATE_STORE && typeof global.HB_STATE_STORE.recordDraw === 'function') {
+        global.HB_STATE_STORE.recordDraw(state, to.controller, 1);
+      }
+      if (eventType !== EVENTS.DRAW) {
+        events.push(dispatchMoveEvent(state, makeEvent(EVENTS.DRAW || 'draw', {
+          cardId,
+          card: movedCard,
+          controller: opts.eventController ? normalizeController(opts.eventController) : to.controller,
+          from,
+          to,
+          reason: opts.reason,
+          eventData: Object.assign({}, opts.eventData || {}, { draw: true }),
+        })));
+      }
+    }
 
     return okResult({
       movedCard,
       event,
-      events: [event],
+      events,
       diff: makeDiff('moveCard', event),
     });
   }

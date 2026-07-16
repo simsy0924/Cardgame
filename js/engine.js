@@ -104,6 +104,19 @@ function formatSeconds(sec) {
 // 기존 코드에서 confirm()을 호출하는 모든 부분은 이 함수를 경유한다.
 // callback(true/false) 형태로 결과를 반환한다.
 let _gcPending = null; // 현재 대기 중인 콜백
+
+function notifyInteractionIdle() {
+  setTimeout(() => {
+    const pickerBusy = typeof pickerRunning !== 'undefined' && pickerRunning;
+    const pickerQueued = typeof pickerQueue !== 'undefined' && pickerQueue && pickerQueue.length > 0;
+    if (_gcPending || pickerBusy || pickerQueued) return;
+    if (typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('hb:interaction-idle'));
+    }
+  }, 0);
+}
+window._notifyInteractionIdle = notifyInteractionIdle;
+
 function gameConfirm(msg, callback) {
   const overlay = document.getElementById('gameConfirmOverlay');
   const msgEl   = document.getElementById('gameConfirmMsg');
@@ -128,6 +141,7 @@ function gameConfirm(msg, callback) {
     noBtn.onclick  = null;
     _gcPending = null;
     callback(result);
+    notifyInteractionIdle();
   }
 
   _gcPending = (r) => close(r);
@@ -734,6 +748,9 @@ function clearEndOfTurnAtkBuffs() {
 function resetTurnEffects() {
   resetEffectUsed();
   clearEndOfTurnAtkBuffs();
+  if (window.HB_STATE_STORE && typeof window.HB_STATE_STORE.resetTurnStats === 'function') {
+    window.HB_STATE_STORE.resetTurnStats(G);
+  }
   G.ligerKingImmune = false; // 라이거 킹 내성 턴 종료 시 해제
   G.myField.forEach(c => { if (c) c.effectNegatedUntilEndTurn = false; });
   if (G.myFieldCard) G.myFieldCard.effectNegatedUntilEndTurn = false;

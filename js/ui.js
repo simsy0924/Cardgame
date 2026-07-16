@@ -404,27 +404,9 @@ function renderChainActions() {
   renderChainStack();
 }
 
-// 체인 응답 행(hang) 방지 워치독: 내(사람) 우선권으로 체인이 열린 채 일정 시간 방치되면
-// 자동으로 패스한다. 네트워크전에서 한쪽이 자리를 비워 체인이 무한 대기하는 것을 막는다.
-// AI전은 AI가 자체 자동패스 로직을 쓰므로 제외한다.
-const CHAIN_RESPONSE_IDLE_TIMEOUT_MS = 30000;
-let _chainPriorityHeldSince = 0;
-if (typeof window !== 'undefined' && !window.__chainResponseWatchdog) {
-  window.__chainResponseWatchdog = setInterval(function chainResponseWatchdog() {
-    try {
-      const active = !!(activeChainState && activeChainState.active);
-      const myPriority = active && activeChainState.priority === myRole;
-      if (!myPriority || (window.AI && window.AI.active)) { _chainPriorityHeldSince = 0; return; }
-      const now = Date.now();
-      if (_chainPriorityHeldSince === 0) { _chainPriorityHeldSince = now; return; }
-      if (now - _chainPriorityHeldSince >= CHAIN_RESPONSE_IDLE_TIMEOUT_MS) {
-        _chainPriorityHeldSince = 0;
-        if (window.HB_DEBUG_PICKER) console.warn('[chain] 응답 타임아웃 → 자동 패스');
-        if (typeof passChainPriority === 'function') passChainPriority();
-      }
-    } catch (_) {}
-  }, 3000);
-}
+// 사람 대 사람 체인은 자동 패스하지 않는다.
+// 연결이 끊기거나 창을 오래 비워도 우선권은 그대로 유지되며,
+// 해당 플레이어가 돌아와 직접 응답 또는 패스를 선택해야 한다.
 
 function renderChainStack() {
   let wrap = document.getElementById('chainStackView');
@@ -619,152 +601,6 @@ function _summonKeyCardFromDeck(cardId) {
 // activateQuickEffect, activateIgnitionEffect — 모두 effects-chain.js에서 관리
 // activateQuickEffect와 activateIgnitionEffect는 effects-chain.js에 정의됨
 // 이 파일에서 재정의하지 않음 — 기동효과는 체인 1로만 발동 가능
-
-function ensureCardInstanceId(card) {
-  if (!card) return null;
-  if (!card._iid) {
-    ensureCardInstanceId._seq = (ensureCardInstanceId._seq || 0) + 1;
-    card._iid = `cid_${Date.now()}_${ensureCardInstanceId._seq}`;
-  }
-  return card._iid;
-}
-
-function findCardIndexByInstanceId(zone, instanceId) {
-  if (!Array.isArray(zone) || !instanceId) return -1;
-  return zone.findIndex(c => c && c._iid === instanceId);
-}
-
-function resolveChain(chainState) {
-  const links = [...(chainState.links || [])];
-  const resolvedAt = Date.now();
-  usedKeyFetchInChain = {};
-  activeChainState = null; // ★ 즉시 초기화 → 버튼 정상화
-  renderChainActions();
-  if (roomRef) {
-    roomRef.child('chainState').set({ active: false, links: [], priority: null, passCount: 0, resolvedLinks: links, resolvedAt });
-  } else {
-    executeChainLocally(links.slice().reverse());
-  }
-}
-
-function executeChainLocally(links) {
-  links.forEach(link => {
-    if (link.by !== myRole) return;
-    if (link.type === 'keyFetch') {
-      resolveKeyFetch(link.cardId);
-    } else if (link.type === 'penguinVillage1') {
-      resolvePenguinVillage1();
-    } else if (link.type === 'triggerKkomaPenguin') {
-      resolveKkomaPenguin();
-    } else if (link.type === 'triggerPenguinBubu1') {
-      resolvePenguinBubu1();
-    } else if (link.type === 'triggerPenguinHero1') {
-      resolvePenguinHero1();
-    } else if (link.type === 'triggerPenguinLegend1') {
-      resolvePenguinLegend1();
-    } else if (link.type === 'triggerPenguinWizard2') {
-      resolvePenguinWizard2();
-    } else if (link.type === 'triggerPenguinHero3') {
-      resolvePenguinHero3();
-    } else if (link.type === 'quickPenguinHero2') {
-      resolvePenguinHero2();
-    } else if (link.type === 'quickPenguinLegend2') {
-      resolvePenguinLegend2();
-    } else if (link.type === 'quickPenguinStrike1') {
-      resolvePenguinStrike1();
-    } else if (link.type === 'quickPenguinForever2') {
-      resolvePenguinForever2();
-    } else if (link.type === 'ignitionPenguinBubu2') {
-      resolvePenguinBubu2();
-    } else if (link.type === 'ignitionSagePenguin1') {
-      resolveSagePenguin1();
-    } else if (link.type === 'ignitionSagePenguin2') {
-      resolveSagePenguin2();
-    } else if (link.type === 'ignitionSummonerPenguin1') {
-      resolveSummonerPenguin1(link.sourceInstanceId);
-    } else if (link.type === 'ignitionPenguinCharge1') {
-      resolvePenguinCharge1(link.sourceInstanceId);
-    } else if (link.type === 'ignitionPenguinCharge2') {
-      resolvePenguinCharge2();
-    } else if (link.type === 'ignitionPenguinGlory1') {
-      resolvePenguinGlory1(link.sourceInstanceId);
-    } else if (link.type === 'ignitionPenguinGlory2') {
-      resolvePenguinGlory2();
-    } else if (link.type === 'ignitionPenguinForever1') {
-      resolvePenguinForever1();
-    } else if (link.type === 'ignitionPenguinWizard1') {
-      resolvePenguinWizard1();
-    } else if (link.type === 'ignitionPenguinWizard3') {
-      resolvePenguinWizard3();
-    }
-  });
-  sendGameState();
-  renderAll();
-  usedKeyFetchInChain = {};
-}
-
-function manualDiscard(handIdx) {
-  if (handIdx < 0 || !G.myHand[handIdx]) return;
-  const c = G.myHand.splice(handIdx, 1)[0];
-  G.myGrave.push({ id: c.id, name: c.name });
-  selectedCardIdx = -1;
-  log(`패를 버림: ${c.name}`, 'mine');
-  sendAction({ type: 'discard', cardId: c.id });
-  onJibaeryongDiscarded(c.id);
-  onHandDiscarded_jibaeSasl();
-  sendGameState();
-  renderAll();
-  checkWinCondition();
-}
-
-// ★ 강제 패 버리기 — 반드시 1장 선택해야 함, 취소 불가
-function _forcedDiscardOne(title, callback) {
-  if (G.myHand.length === 0) { callback(); return; }
-  openCardPicker(G.myHand, title, 1, (sel) => {
-    if (sel.length > 0) {
-      const c = G.myHand.splice(sel[0], 1)[0];
-      G.myGrave.push(c);
-      log(`버림(코스트): ${c.name}`, 'mine');
-      onJibaeryongDiscarded(c.id);
-      onHandDiscarded_jibaeSasl();
-    }
-    callback();
-  }, true); // forced=true: 반드시 선택, 취소 불가
-}
-
-function resolveKeyFetch(cardId) {
-  const idx = G.myKeyDeck.findIndex(c => c.id === cardId);
-  if (idx < 0) { notify(`키 카드 덱에 ${CARDS[cardId]?.name || cardId}가 없습니다.`); return; }
-
-  // 직접 소환 전용 카드 — keyFetch 체인으로는 패에 넣을 수 없음
-  // (startKeyFetchEffect에서 _summonKeyCardFromDeck으로 분기되므로 여기 도달하면 오류)
-  if (['카드의 흑기사','풀려난 항아리의 마귀','카드 세계의 영웅'].includes(cardId)) {
-    notify(`${CARDS[cardId]?.name || cardId}는 키덱 버튼에서 [소환]으로 직접 소환해야 합니다.`);
-    return;
-  }
-
-  if (cardId === '펭귄 용사' && G.opField.length === 0) {
-    notify('펭귄 용사: 상대 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
-    return;
-  }
-  if (cardId === '펭귄의 전설' && G.myField.length === 0) {
-    notify('펭귄의 전설: 자신 필드에 몬스터가 없어 패에 넣을 수 없습니다.');
-    return;
-  }
-
-  const c = G.myKeyDeck.splice(idx, 1)[0];
-  G.myHand.push({ id: c.id, name: c.name, isPublic: true });
-  log(`키 카드 가져오기: ${c.name} (공개패)`, 'mine');
-  sendGameState(); renderAll();
-}
-
-function resolvePenguinVillage1() {
-  const idx = G.myHand.findIndex(c => c.id === '펭귄 마을' && !c.isPublic);
-  if (idx < 0) return;
-  G.myHand[idx].isPublic = true;
-  markEffectUsed('펭귄 마을', 1);
-  log('체인 처리: 펭귄 마을 ① 공개', 'mine');
-}
 
 function renderFieldZones() {
   const myFZ = document.getElementById('myFieldZone');
@@ -1352,6 +1188,7 @@ window._resetPickerQueue = function() {
   pickerSelected = [];
   try { closeModal('cardPickerModal'); } catch (_) {}
   console.log('[picker] queue reset.');
+  if (window._notifyInteractionIdle) window._notifyInteractionIdle();
 };
 
 // 워치독: 락이 걸렸는데 모달이 안 보이고 대기 중인 picker가 있으면 자동으로 재표시한다.
@@ -1369,7 +1206,12 @@ if (typeof window !== 'undefined' && !window.__pickerWatchdog) {
 // index.html의 취소 버튼이 호출하는데 정의가 없어 ReferenceError가 발생하던 함수.
 // 취소 = 콜백을 빈 배열로 호출하여 효과 발동을 중단.
 function cancelPick() {
-  if (pickerQueue.length === 0) { pickerRunning = false; closeModal('cardPickerModal'); return; }
+  if (pickerQueue.length === 0) {
+    pickerRunning = false;
+    closeModal('cardPickerModal');
+    if (window._notifyInteractionIdle) window._notifyInteractionIdle();
+    return;
+  }
   const { callback, forced } = pickerQueue[0];
   if (forced) { notify('이 picker는 취소할 수 없습니다.'); return; }
   closeModal('cardPickerModal');
@@ -1377,13 +1219,20 @@ function cancelPick() {
   pickerSelected = [];
   try { callback([]); } catch (e) { console.error('picker 취소 콜백 오류:', e); }
   if (pickerQueue.length > 0) setTimeout(runNextPicker, 150);
-  else pickerRunning = false;
+  else {
+    pickerRunning = false;
+    if (window._notifyInteractionIdle) window._notifyInteractionIdle();
+  }
 }
 window.cancelPick = cancelPick;
 
 function runNextPicker() {
   if (window.HB_DEBUG_PICKER) console.log('[picker] runNextPicker queueLen:', pickerQueue.length);
-  if (pickerQueue.length === 0) { pickerRunning = false; return; }
+  if (pickerQueue.length === 0) {
+    pickerRunning = false;
+    if (window._notifyInteractionIdle) window._notifyInteractionIdle();
+    return;
+  }
   pickerRunning = true;
   const { cards, title, maxPick, forced } = pickerQueue[0];
   pickerSelected = [];
@@ -1396,6 +1245,7 @@ function runNextPicker() {
       console.error('[picker] cardPickerModal/pickerTitle DOM 요소가 없습니다. 큐를 리셋합니다.');
       pickerQueue.shift();
       pickerRunning = false;
+      if (window._notifyInteractionIdle) window._notifyInteractionIdle();
       return;
     }
     titleEl.textContent = title;
@@ -1436,11 +1286,17 @@ function runNextPicker() {
     pickerQueue.shift();
     pickerRunning = false;
     if (pickerQueue.length > 0) setTimeout(runNextPicker, 150);
+    else if (window._notifyInteractionIdle) window._notifyInteractionIdle();
   }
 }
 
 function confirmPick() {
-  if (pickerQueue.length === 0) { pickerRunning = false; closeModal('cardPickerModal'); return; }
+  if (pickerQueue.length === 0) {
+    pickerRunning = false;
+    closeModal('cardPickerModal');
+    if (window._notifyInteractionIdle) window._notifyInteractionIdle();
+    return;
+  }
   const { callback, forced, maxPick } = pickerQueue[0];
 
   // 강제 모드: 아무것도 선택 안 하면 닫히지 않음
@@ -1460,7 +1316,10 @@ function confirmPick() {
 
   try { callback(selected); } catch(e) { console.error('picker 콜백 오류:', e); notify('효과 처리 오류: ' + e.message); }
   if (pickerQueue.length > 0) setTimeout(runNextPicker, 150);
-  else pickerRunning = false;
+  else {
+    pickerRunning = false;
+    if (window._notifyInteractionIdle) window._notifyInteractionIdle();
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -1885,6 +1744,16 @@ function confirmDeck() {
 
   window._confirmedDeck = deckArr;
   window._confirmedKeyDeck = keyArr;
+  if (window.HB_SESSION && roomCode && myRole) {
+    window.HB_SESSION.remember({
+      roomCode,
+      role: myRole,
+      playerName: myName || document.getElementById('playerName')?.value || '',
+      deckList: deckArr,
+      keyDeckList: keyArr,
+      stage: 'deckBuilder',
+    });
+  }
 
   document.getElementById('deckBuilder').style.display = 'none';
 
@@ -1941,5 +1810,6 @@ function checkBothDecksReady(overlay) {
 
 function enterGameWithDeck() {
   gameResultRecorded = false;
+  if (typeof rememberCurrentSession === 'function') rememberCurrentSession({ stage: 'playing' });
   enterGame();
 }
