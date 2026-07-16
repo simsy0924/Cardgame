@@ -21,6 +21,7 @@ module.exports = function testFullChainMigration() {
   ctx.renderAll = function renderAll() {};
   ctx.log = function log() {};
   ctx.notify = function notify() {};
+  ctx.canUseEffect = function canUseEffect() { return true; };
 
   runFile(ctx, 'js/effects-chain.js');
 
@@ -52,4 +53,21 @@ module.exports = function testFullChainMigration() {
   assertEqual(ctx.HB_CHAIN_ENGINE.hasActiveChain(), false, 'chain must resolve through HB engine');
   assertEqual(drawn, 1, 'legacy jarDraw resolver must execute once through adapter');
   assertEqual(ctx.G.searchBanActive, true, 'legacy second resolver must execute through adapter');
+
+  // [Phase 3 회귀] 모든 체인이 HB_CHAIN_ENGINE으로 이관된 뒤에도 아직 EffectDefinition으로
+  // 이식되지 않은 범용 응답 카드는 HB 체인에서 사라지면 안 된다. 응답을 선택한 뒤의
+  // addChainLink는 이미 legacy adapter를 통해 HB 체인에 안전하게 등록된다.
+  ctx.G.myHand = [{ id: '출입통제', name: '출입통제' }];
+  ctx._activateLegacyLinkInHbChain(
+    { type: 'jarDraw1', label: '상대의 서치 봉인의 항아리 ①', by: 'guest' },
+    { role: 'guest' }
+  );
+  assert(ctx.activeChainState && ctx.activeChainState.hbEngine === true, 'opponent legacy action must also open an HB chain');
+  assertEqual(ctx.activeChainState.priority, 'host', 'player must receive response priority after opponent activation');
+
+  const responseOptions = ctx.collectChainOptions();
+  assert(
+    responseOptions.some(option => option.cardId === '출입통제'),
+    'legacy fallback response must remain visible inside an HB engine chain until the card is ported'
+  );
 };
