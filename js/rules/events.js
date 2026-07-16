@@ -10,6 +10,7 @@
     SENT_TO_GRAVE: 'sentToGrave',
     EXILED: 'exiled',
     ADDED_TO_HAND: 'addedToHand',
+    DRAW: 'draw',
     DISCARDED: 'discarded',
     FIELD_CARD_PLACED: 'fieldCardPlaced',
     FIELD_CARD_LEFT: 'fieldCardLeft',

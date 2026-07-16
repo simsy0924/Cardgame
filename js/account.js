@@ -378,15 +378,21 @@ async function claimMissionReward(missionId) {
 
   function buildLegacyMirrorFromHbState(hbState) {
     const links = (hbState && hbState.links ? hbState.links : []).map(mapHbLinkToLegacyLink);
+    const engineState = safeCall(() => global.HB_CHAIN_ENGINE && typeof global.HB_CHAIN_ENGINE.exportChainState === 'function'
+      ? global.HB_CHAIN_ENGINE.exportChainState()
+      : null);
     return {
       hbEngine: true,
       active: !!(hbState && hbState.active && links.length > 0),
       links,
       priority: controllerToRole(hbState && hbState.priority),
       passCount: (hbState && hbState.passCount) || 0,
+      lastPasser: hbState && hbState.lastPasser ? controllerToRole(hbState.lastPasser) : null,
+      revision: (hbState && hbState.revision) || 0,
       startedBy: links[0] ? links[0].by : null,
       chainId: hbState && hbState.id,
       createdAt: (hbState && hbState.createdAt) || Date.now(),
+      engineState,
     };
   }
 
@@ -402,6 +408,10 @@ async function claimMissionReward(missionId) {
 
     if (opts.publish === false) return;
     safeCall(() => {
+      if (global.HB_NETWORK_SYNC && typeof global.HB_NETWORK_SYNC.publishChainState === 'function') {
+        global.HB_NETWORK_SYNC.publishChainState(mirror);
+        return;
+      }
       // eslint-disable-next-line no-undef
       if (typeof roomRef !== 'undefined' && roomRef) roomRef.child('chainState').set(mirror);
     });
@@ -442,16 +452,16 @@ async function claimMissionReward(missionId) {
     const chain = global.HB_CHAIN_ENGINE;
     if (!chain || chain.__p0RoleHelpersAttached) return;
     try {
-      const augmented = Object.assign({}, chain, {
-        __p0RoleHelpersAttached: true,
-        roleToController,
-        controllerToRole,
-        importChainState(data) {
+      const augmented = Object.assign({}, chain, { __p0RoleHelpersAttached: true });
+      if (typeof augmented.roleToController !== 'function') augmented.roleToController = roleToController;
+      if (typeof augmented.controllerToRole !== 'function') augmented.controllerToRole = controllerToRole;
+      if (typeof augmented.importChainState !== 'function') {
+        augmented.importChainState = function importChainStateFallback(data) {
           if (!data || data.hbEngine !== true) return false;
           publishChainMirror(data, { publish: false });
           return true;
-        },
-      });
+        };
+      }
       global.HB_CHAIN_ENGINE = Object.freeze(augmented);
       global.HB_ENGINE = global.HB_ENGINE || {};
       global.HB_ENGINE.chain = global.HB_CHAIN_ENGINE;

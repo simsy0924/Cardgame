@@ -49,7 +49,7 @@
   function isDragonMonster(cardOrId) { return DRAGON_IDS.includes(getCardId(cardOrId)) || getCardId(cardOrId) === '사원소의 지배룡'; }
   function isJibaeMonster(cardOrId) { return isMonster(cardOrId) && (isRulerMonster(cardOrId) || isDragonMonster(cardOrId)); }
   function first(list, pred) { return (list || []).find(pred || (x => x)); }
-  function firstOrSelected(ctx, list, pred) { const selected = getCardId((ctx && (ctx.selectedCard || ctx.selectedTarget || ctx.target)) || (ctx && ctx.selectedCardId)); if (selected) { const hit = (list || []).find(c => getCardId(c) === selected && (!pred || pred(c))); if (hit) return hit; } return first(list, pred); }
+  function firstOrSelected(ctx, list, pred) { const selectedItems = (ctx && ctx.selectedCards) || []; for (const item of selectedItems) { const raw = item && (item.c || item.card || item._targetCard || item._discardCard || item._rulerTarget || item._dragonTarget || item._ownTarget || item._opTarget || item); const iid = raw && raw._iid; const hit = (list || []).find(c => ((!iid || !c._iid) ? getCardId(c) === getCardId(raw) : c._iid === iid) && (!pred || pred(c))); if (hit) return hit; } const selected = getCardId((ctx && (ctx.selectedCard || ctx.selectedTarget || ctx.target)) || (ctx && ctx.selectedCardId)); if (selected) { const hit = (list || []).find(c => getCardId(c) === selected && (!pred || pred(c))); if (hit) return hit; } return first(list, pred); }
   function hasDeck(ctx, pred, n) { return deck(ctx).filter(pred || (() => true)).length >= (n || 1); }
   function hasFieldSpace(ctx, controller) { return global.HB_CARD_MOVE && global.HB_CARD_MOVE.hasFieldSpace ? global.HB_CARD_MOVE.hasFieldSpace(stateOf(ctx), controller || my(ctx)) : field(ctx, controller || my(ctx)).length < 5; }
   function canDraw(ctx, n) { return deck(ctx).length >= (n || 1); }
@@ -79,7 +79,7 @@
   function uniqueMaterials(ctx, pred) { const map = new Map(); field(ctx).concat(grave(ctx), exile(ctx)).forEach(c => { if (pred(c) && !map.has(getCardId(c))) map.set(getCardId(c), c); }); return Array.from(map.values()); }
   function removeMaterialById(ctx, id, pred) { const zones = [ZONES.FIELD, ZONES.GRAVE, ZONES.EXILE]; for (const z of zones) { const arr = zoneArray(ctx, my(ctx), z); const hit = arr.find(c => getCardId(c) === id && pred(c)); if (hit) return moveBanish(ctx, hit, z, 'rulerProcedureMaterial'); } return { ok: false, error: `${id} 소재 없음` }; }
   function applyMiracleTax(ctx, kind) { const st = stateOf(ctx); if (!st || !st.rulerMiracleActive) return { ok: true }; if (st.rulerMiracleType && kind && st.rulerMiracleType !== kind) return { ok: true }; return discardFirst(ctx, null, 'rulerMiracleTax'); }
-  function selectedIds(ctx) { return (ctx && (ctx.selectedCardIds || ctx.materialIds || ctx.materials)) || []; }
+  function selectedIds(ctx) { return (ctx && (ctx.selectedCardIds || ctx.materialIds || ctx.materials || ctx.selectedCards)) || []; }
   function chooseTwo(ctx, list) { const ids = selectedIds(ctx).map(getCardId); const picked = ids.length ? ids.map(id => list.find(c => getCardId(c) === id)).filter(Boolean) : list.slice(0, 2); return picked.slice(0, 2); }
   function optionalDiscardLoop(ctx, label) { let count = 0; while (hand(ctx).length && count < 20) { // 테스트/AI 기본값: 명시 선택이 없으면 더 버리지 않는다.
       const ids = selectedIds(ctx).map(getCardId);

@@ -861,6 +861,13 @@ body[data-sleeve='sleeve_aurora'] .card-back {
     <input id="playerName" type="text" placeholder="닉네임 입력" maxlength="12">
   </div>
 
+  <!-- 새로고침/재접속 복구 상태 -->
+  <div class="lobby-card hidden" id="resumeSessionCard">
+    <h2><span class="icon">↻</span>게임 복구</h2>
+    <div id="resumeSessionStatus" class="status-msg">이전 게임으로 돌아가는 중...</div>
+    <button id="cancelResumeBtn" class="btn btn-secondary hidden" onclick="cancelRememberedSession()">복구 취소</button>
+  </div>
+
   <!-- 방 만들기 -->
   <div class="lobby-card">
     <h2><span class="icon">+</span>새 방 만들기</h2>
@@ -1132,6 +1139,8 @@ body[data-sleeve='sleeve_aurora'] .card-back {
 <script src="js/engine/effect-definition.js?v=trigpicker10"></script>
 <script src="js/effects/effect-registry.js?v=trigpicker10"></script>
 <script src="js/engine.js?v=trigpicker10"></script>
+<script src="js/engine/state-store.js?v=state2"></script>
+<script src="js/engine/session-manager.js?v=state2"></script>
 <script src="js/engine/zone-access.js?v=trigpicker10"></script>
 <script src="js/engine/event-bus.js?v=trigpicker10"></script>
 <script src="js/engine/card-move.js?v=trigpicker10"></script>
@@ -1146,6 +1155,7 @@ body[data-sleeve='sleeve_aurora'] .card-back {
 <script src="js/effects/theme/lion.js?v=trigpicker10"></script>
 <script src="js/effects/theme/tiger.js?v=trigpicker10"></script>
 <script src="js/effects/theme/liger.js?v=trigpicker10"></script>
+<script src="js/engine/effect-choice-rules.js?v=state2"></script>
 <script src="js/engine/processing-negate-engine.js?v=trigpicker10"></script>
 <script src="js/engine/chain-engine.js?v=trigpicker10"></script>
 <script src="js/engine/trigger-queue.js?v=trigpicker10"></script>

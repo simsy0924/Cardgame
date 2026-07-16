@@ -23,6 +23,9 @@ function enterGame() {
   lastHandledActionTs = 0;
   lastLogTs = 0;
   gameActionListenerActive = false;
+  choiceRequestListenerActive = false;
+  processingChoiceRequest = false;
+  pendingRemoteChoiceRequests.length = 0;
   gameClock = { host: 500, guest: 500, runningFor: 'host', lastUpdated: Date.now() };
   G.myExtraSlots = 0;
   G.opExtraSlots = 0;
@@ -31,7 +34,7 @@ function enterGame() {
   listenOpponentState();
   listenChainState();
   listenClockState();
-  listenGameActions();
+  listenChoiceRequests();
   if (window.HB_NETWORK_SYNC && typeof window.HB_NETWORK_SYNC.listenStateDiffs === "function") {
     window.HB_NETWORK_SYNC.listenStateDiffs();
   }
@@ -44,46 +47,19 @@ function enterGame() {
     return;
   }
 
-  // Firebase에 내 상태가 있는지 먼저 확인
-  const myPath = myRole === 'host' ? 'hostState' : 'guestState';
-  roomRef.child(myPath).once('value').then(snap => {
-    const data = snap.val();
-    if (data && data.ts && data.hand && data.hand.length > 0) {
-      // ★ 재접속: Firebase 상태 복원 (새 패 뽑지 않음, initDecks 호출 안 함)
-      G.myHand = data.hand.map(c => ({ id: c.id, name: c.name, isPublic: c.isPublic || false }));
-      G.myField = data.field || [];
-      G.myGrave = data.grave || [];
-      G.myExile = data.exile || [];
-      G.myFieldCard = data.fieldCard || null;
-      G.myKeyDeck = (data.keyDeck || []).map(c => ({ id: c.id, name: c.name }));
-
-      // 덱은 저장된 deckList로 재구성 (없으면 기본 펭귄 덱)
-      const deckList = data.deckList || window._confirmedDeck || null;
-      if (deckList) {
-        G.myDeck = shuffle(deckList.map(id => ({ id, name: CARDS[id]?.name || id })));
-      } else {
-        G.myDeck = []; // 덱 소진 시 묘지로 복구됨
-      }
-      G.myDeckCount = G.myDeck.length;
-
-      // 페이즈/턴 복원
-      roomRef.child('roomPhase').once('value').then(phSnap => {
-        const ph = phSnap.val();
-        if (ph) {
-          isMyTurn = (ph.activePlayer === myRole);
-          advancePhase(ph.phase || 'deploy');
-        } else {
-          isMyTurn = (myRole === 'host');
-          advancePhase('deploy');
-        }
-        log('재접속: 이전 게임 상태 복원!', 'system');
-        notify('재접속: 이전 상태를 복원했습니다.');
-        renderAll();
-      });
-    } else {
-      // ★ 새 게임
-      _startNewGame();
+  restoreMyState().then(result => {
+    if (result && result.restored) {
+      advancePhase(G.phase || currentPhase || 'draw');
+      isMyTurn = G.activePlayer === myRole;
+      listenGameActions();
+      renderAll();
+      return;
     }
+    _startNewGame();
+    listenGameActions();
+  }).catch(err => {
+    console.error('[state] 게임 복원 실패:', err);
+    notify('상태 복원에 실패하여 게임을 시작할 수 없습니다.');
   });
 }
 
@@ -106,13 +82,13 @@ function _startNewGame() {
       roomRef.child('roomPhase').set({ activePlayer: 'host', phase: 'deploy' });
     }
   } else {
-    advancePhase('draw');
-    if (roomRef) {
-      roomRef.child('roomPhase').set({ activePlayer: 'host', phase: 'draw' });
-    }
+    // 후공 클라이언트도 현재 매치 단계(선공의 전개)를 표시한다.
+    // 공유 roomPhase는 선공 클라이언트만 기록해 시작 직후 draw로 되감기는 경쟁을 막는다.
+    advancePhase('deploy');
   }
 
   sendGameState();
+  if (typeof rememberCurrentSession === 'function') rememberCurrentSession({ stage: 'playing' });
   log('게임 시작!', 'system');
   renderAll();
 }

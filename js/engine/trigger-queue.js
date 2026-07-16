@@ -35,6 +35,7 @@
   const ANY_EVENT = '*';
   const mandatoryQueue = [];
   const optionalQueue = [];
+  const awaitingQueue = [];
   const triggerHistory = [];
   const MAX_HISTORY = 300;
   let nextTriggerSequence = 1;
@@ -233,7 +234,10 @@
     const opts = options || {};
     const mandatory = effect.mandatory === true || effect.optional === false;
     const optional = !mandatory;
-    const sequence = nextTriggerSequence++;
+    const sequence = Number.isFinite(Number(opts.sequence))
+      ? Math.max(1, Number(opts.sequence))
+      : nextTriggerSequence++;
+    nextTriggerSequence = Math.max(nextTriggerSequence, sequence + 1);
     const source = ctx.source || null;
     const entry = {
       id: opts.id || `trg_${Date.now()}_${sequence}`,
@@ -251,8 +255,8 @@
       event,
       optional,
       mandatory,
-      status: 'pending',
-      createdAt: Date.now(),
+      status: opts.status || 'pending',
+      createdAt: Math.max(0, Number(opts.createdAt || Date.now())),
     };
     return Object.freeze(entry);
   }
@@ -540,8 +544,24 @@
     const explicitDefer = opts.resolveImmediately === false || opts.autoResolve === false;
     const chainActive = typeof chain.hasActiveChain === 'function' ? !!chain.hasActiveChain() : false;
     const resolveImmediately = explicitImmediate || (!explicitDefer && !chainActive);
+    let selectionCompleted = false;
+
+    function removeAwaitingTrigger() {
+      const index = awaitingQueue.findIndex(entry => entry && entry.id === trigger.id);
+      if (index < 0) return false;
+      awaitingQueue.splice(index, 1);
+      return true;
+    }
+
+    function restoreFailedDeferredTrigger() {
+      const queue = trigger.mandatory ? mandatoryQueue : optionalQueue;
+      if (!queue.some(entry => entry && entry.id === trigger.id)) queue.push(trigger);
+      queue.sort(compareTriggerEntries);
+    }
 
     function proceed(finalOpts) {
+      selectionCompleted = true;
+      const wasAwaiting = removeAwaitingTrigger();
       const activation = chain.activateEffect({
         effect: trigger.effect,
         ctx: trigger.ctx,
@@ -558,6 +578,7 @@
         resolveImmediately,
       });
       remember(trigger, activation.ok ? 'activate' : 'activateFailed', activation);
+      if (!activation.ok && wasAwaiting) restoreFailedDeferredTrigger();
       return activation.ok ? makeOk({ trigger, activation }) : makeFail(activation.error || '유발 효과 발동에 실패했습니다.', { trigger, activation });
     }
 
@@ -567,7 +588,13 @@
     const ctrl = trigger.ctx && trigger.ctx.controller;
     const isLocal = ctrl === 'me' && opts.isAI !== true;
     if (isLocal && effectUi && typeof effectUi.requestPickerAndProceed === 'function' && trigger.effect && typeof trigger.effect.collectChoices === 'function') {
-      return effectUi.requestPickerAndProceed({ effect: trigger.effect, ctx: trigger.ctx }, opts, proceed);
+      const selectionResult = effectUi.requestPickerAndProceed({ effect: trigger.effect, ctx: trigger.ctx }, opts, proceed);
+      if (selectionResult && selectionResult.ok && selectionResult.awaitingSelection && !selectionCompleted) {
+        if (!awaitingQueue.some(entry => entry && entry.id === trigger.id)) awaitingQueue.push(trigger);
+        awaitingQueue.sort(compareTriggerEntries);
+        remember(trigger, 'awaitSelection', selectionResult);
+      }
+      return selectionResult;
     }
     return proceed(opts);
   }
@@ -663,16 +690,117 @@
     const cleared = Object.freeze({
       mandatory: mandatoryQueue.splice(0),
       optional: optionalQueue.splice(0),
+      awaiting: awaitingQueue.splice(0),
     });
     return cleared;
+  }
+
+  function cloneSerializable(value) {
+    if (value == null) return value;
+    try { return JSON.parse(JSON.stringify(value)); }
+    catch (_) { return null; }
+  }
+
+  function serializeTriggerEntry(entry, queueType) {
+    const card = entry && entry.ctx && entry.ctx.card;
+    return {
+      schema: 1,
+      queueType,
+      id: entry.id,
+      sequence: entry.sequence,
+      effectId: entry.effectId,
+      cardId: entry.cardId,
+      cardInstanceId: card && card._iid || null,
+      controller: entry.controller,
+      sourceController: entry.sourceController,
+      sourceZone: entry.sourceZone,
+      sourceIndex: entry.sourceIndex,
+      mandatory: entry.mandatory === true,
+      optional: entry.optional === true,
+      event: cloneSerializable(entry.event),
+      createdAt: entry.createdAt,
+    };
+  }
+
+  function exportQueueState() {
+    return mandatoryQueue.map(entry => serializeTriggerEntry(entry, 'mandatory'))
+      .concat(optionalQueue.map(entry => serializeTriggerEntry(entry, 'optional')))
+      .concat(awaitingQueue.map(entry => serializeTriggerEntry(entry, 'awaiting')));
+  }
+
+  function findRestoredLocation(effect, descriptor, gameState) {
+    const locations = findEffectSourceLocations(effect, gameState);
+    const instanceId = descriptor && descriptor.cardInstanceId;
+    if (instanceId) {
+      const exactInstance = locations.find(location => location.card && location.card._iid === instanceId);
+      if (exactInstance) return exactInstance;
+    }
+    const sameLocation = locations.find(location =>
+      (!descriptor.sourceController || location.controller === descriptor.sourceController)
+      && (!descriptor.sourceZone || location.zone === descriptor.sourceZone)
+      && (descriptor.sourceIndex == null || location.index === descriptor.sourceIndex)
+    );
+    return sameLocation || locations[0] || null;
+  }
+
+  function importQueueState(snapshot, gameState, options) {
+    const state = resolveGameState(gameState);
+    const descriptors = Array.isArray(snapshot) ? snapshot : [];
+    const restored = [];
+    const skipped = [];
+    clearTriggerQueue();
+
+    descriptors.forEach(descriptor => {
+      const effect = descriptor && registry.getEffectById && registry.getEffectById(descriptor.effectId);
+      if (!effect) {
+        skipped.push({ descriptor, reason: 'effectNotFound' });
+        return;
+      }
+      const event = descriptor.event && descriptor.event.type ? descriptor.event : null;
+      if (!event) {
+        skipped.push({ descriptor, reason: 'eventNotFound' });
+        return;
+      }
+      const location = findRestoredLocation(effect, descriptor, state);
+      if (!location) {
+        skipped.push({ descriptor, reason: 'sourceNotFound' });
+        return;
+      }
+      let ctx;
+      try {
+        ctx = makeContextForLocation(effect, event, state, location, options);
+      } catch (err) {
+        skipped.push({ descriptor, reason: 'contextError', error: err.message });
+        return;
+      }
+      const entry = createTriggerEntry(effect, ctx, event, {
+        id: descriptor.id,
+        sequence: descriptor.sequence,
+        createdAt: descriptor.createdAt,
+        status: 'pending',
+      });
+      const queue = entry.mandatory ? mandatoryQueue : optionalQueue;
+      if (!queue.some(existing => existing.id === entry.id)) queue.push(entry);
+      restored.push(entry);
+    });
+
+    mandatoryQueue.sort(compareTriggerEntries);
+    optionalQueue.sort(compareTriggerEntries);
+    return makeOk({
+      restored: Object.freeze(restored.slice()),
+      skipped: Object.freeze(skipped.slice()),
+      count: restored.length,
+    });
   }
 
   function getQueueState() {
     return Object.freeze({
       mandatory: mandatoryQueue.slice(),
       optional: optionalQueue.slice(),
+      awaiting: awaitingQueue.slice(),
       mandatoryCount: mandatoryQueue.length,
       optionalCount: optionalQueue.length,
+      awaitingCount: awaitingQueue.length,
     });
   }
 
@@ -696,6 +824,8 @@
 
     // 테스트/디버그 편의 함수.
     clearTriggerQueue,
+    exportQueueState,
+    importQueueState,
     getQueueState,
     getTriggerHistory,
   });

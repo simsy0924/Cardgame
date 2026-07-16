@@ -414,21 +414,29 @@
       status: 'pending',
     });
     if (!ref) return Promise.resolve({ ok: false, offline: true, requestId });
-    ref.child('choiceRequests').child(requestId).set(payload);
     return new Promise(resolve => {
       pendingChoiceRequests.set(requestId, resolve);
-      const timeoutId = setTimeout(() => {
-        if (!pendingChoiceRequests.has(requestId)) return;
-        pendingChoiceRequests.delete(requestId);
-        resolve({ ok: false, timeout: true, requestId });
-      }, request && request.timeoutMs ? request.timeoutMs : 30000);
+      let timeoutId = null;
+      if (request && Number(request.timeoutMs) > 0) {
+        timeoutId = setTimeout(() => {
+          if (!pendingChoiceRequests.has(requestId)) return;
+          pendingChoiceRequests.delete(requestId);
+          resolve({ ok: false, timeout: true, requestId });
+        }, Number(request.timeoutMs));
+      }
       ref.child('choiceResponses').child(requestId).on('value', snap => {
         const response = snap.val();
         if (!response || response.to !== role) return;
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
         ref.child('choiceResponses').child(requestId).off();
         pendingChoiceRequests.delete(requestId);
         resolve(Object.assign({ ok: true }, response));
+      });
+      ref.child('choiceRequests').child(requestId).set(payload).catch(error => {
+        if (timeoutId) clearTimeout(timeoutId);
+        ref.child('choiceResponses').child(requestId).off();
+        pendingChoiceRequests.delete(requestId);
+        resolve({ ok: false, requestId, error: error.message || String(error) });
       });
     });
   }
@@ -538,6 +546,27 @@
     });
   }
 
+  function publishChainState(payload) {
+    const ref = getRoomRef();
+    if (!ref || !payload) return Promise.resolve({ ok: false, offline: true });
+    const incoming = clone(payload);
+    const incomingRevision = Math.max(0, Number(
+      (incoming.engineState && incoming.engineState.revision) || incoming.revision || 0
+    ));
+    return ref.child('chainState').transaction(current => {
+      if (!current) return incoming;
+      const currentId = (current.engineState && current.engineState.id) || current.chainId || current.id || null;
+      const incomingId = (incoming.engineState && incoming.engineState.id) || incoming.chainId || incoming.id || null;
+      const currentRevision = Math.max(0, Number(
+        (current.engineState && current.engineState.revision) || current.revision || 0
+      ));
+      if (currentId && incomingId && currentId === incomingId && currentRevision > incomingRevision) {
+        return;
+      }
+      return incoming;
+    }).then(result => ({ ok: !!(result && result.committed), snapshot: result && result.snapshot && result.snapshot.val() }));
+  }
+
   const api = Object.freeze({
     isAuthority,
     hasAuthority: isAuthority,
@@ -558,6 +587,7 @@
     consumeResolvedChainState,
     resolveLegacyChain,
     listenStateDiffs,
+    publishChainState,
     STATE_MUTATING_ACTIONS,
     PUBLIC_ACTIONS,
     RECEIVER_MUTATING_ACTIONS,

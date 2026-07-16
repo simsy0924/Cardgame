@@ -1,65 +1,183 @@
 // network.js — Firebase 연결, 방 생성/참가, 게임 상태 동기화
 // FIREBASE GAME STATE SYNC
 // ─────────────────────────────────────────────
+let localStateRevision = 0;
+let opponentStateRevision = 0;
+let restoredStateSavedAt = 0;
+let lastHandledActionKey = null;
+let gameActionQuery = null;
+let processingNetworkAction = false;
+const pendingNetworkActions = [];
+let choiceRequestQuery = null;
+let choiceRequestListenerActive = false;
+let processingChoiceRequest = false;
+const pendingRemoteChoiceRequests = [];
+
+function captureExactGameState() {
+  if (!window.HB_STATE_STORE) return null;
+  G.phase = currentPhase || G.phase || 'draw';
+  G.activePlayer = isMyTurn ? myRole : (myRole === 'host' ? 'guest' : 'host');
+  return window.HB_STATE_STORE.captureLegacyState(G, {
+    revision: localStateRevision,
+    role: myRole,
+    roomCode,
+    playerName: myName,
+    deckList: window._confirmedDeck || null,
+    keyDeckList: window._confirmedKeyDeck || null,
+    attackedMonsterIds: attackedMonstersThisTurn,
+    pendingTriggers: window.HB_TRIGGER_QUEUE && typeof window.HB_TRIGGER_QUEUE.exportQueueState === 'function'
+      ? window.HB_TRIGGER_QUEUE.exportQueueState()
+      : [],
+    chainUsage: window.HB_CHAIN_ENGINE && typeof window.HB_CHAIN_ENGINE.getUsageSnapshot === 'function'
+      ? window.HB_CHAIN_ENGINE.getUsageSnapshot()
+      : [],
+    lastActionKey,
+    lastActionTs: lastHandledActionTs,
+  });
+}
+
+function rememberCurrentSession(patch) {
+  if (!window.HB_SESSION || !roomCode || !myRole) return null;
+  return window.HB_SESSION.remember(Object.assign({
+    roomCode,
+    role: myRole,
+    playerName: myName,
+    deckList: window._confirmedDeck || null,
+    keyDeckList: window._confirmedKeyDeck || null,
+    lastActionKey,
+    lastActionTs: lastHandledActionTs,
+  }, patch || {}));
+}
+
 function sendGameState() {
-  if (!roomRef) return;
-  const myState = {
-    // 패: id, name, isPublic 모두 저장
-    hand: G.myHand.map(c => ({ id: c.id, name: c.name, isPublic: c.isPublic || false })),
-    field: G.myField,
-    grave: G.myGrave,
-    exile: G.myExile,
-    fieldCard: G.myFieldCard,
-    keyDeck: G.myKeyDeck.map(c => ({ id: c.id, name: c.name })),
-    deckCount: G.myDeck ? G.myDeck.length : 0,
-    deckList: window._confirmedDeck || null, // 재접속 시 덱 복원용
-    ts: Date.now(),
-  };
+  const snapshot = captureExactGameState();
+  if (!snapshot) return Promise.resolve({ ok: false, error: '상태 저장 엔진이 없습니다.' });
+  rememberCurrentSession({ stage: 'playing', lastLocalSnapshotAt: snapshot.savedAt });
+  if (!roomRef) return Promise.resolve({ ok: true, local: true, snapshot });
   const path = myRole === 'host' ? 'hostState' : 'guestState';
-  roomRef.child(path).set(myState);
+  return roomRef.child(path).transaction(current => {
+    const currentRevision = Math.max(0, Number(current && current.revision || 0));
+    snapshot.revision = currentRevision + 1;
+    snapshot.savedAt = Date.now();
+    return snapshot;
+  }).then(result => {
+    if (result && result.committed) {
+      const saved = result.snapshot && result.snapshot.val();
+      localStateRevision = Math.max(localStateRevision, Number(saved && saved.revision || 0));
+      return { ok: true, snapshot: saved };
+    }
+    return { ok: false, error: '상태 저장 트랜잭션이 취소되었습니다.' };
+  });
 }
 
 function listenOpponentState() {
   if (!roomRef) return;
   const opPath = myRole === 'host' ? 'guestState' : 'hostState';
   roomRef.child(opPath).on('value', snap => {
-    const data = snap.val();
-    if (!data) return;
+    const raw = snap.val();
+    if (!raw) return;
+    const isExact = raw.schema === 2 && raw.data;
+    const data = isExact ? raw.data : raw;
+    const incomingRevision = Math.max(0, Number(raw.revision || 0));
+    if (incomingRevision && incomingRevision < opponentStateRevision) return;
+    opponentStateRevision = Math.max(opponentStateRevision, incomingRevision);
     // 상대 패: 공개/비공개 상태 정확히 반영
-    G.opHand = (data.hand || []).map(c => ({
+    const remoteHand = isExact ? (data.myHand || []) : (data.hand || []);
+    G.opHand = remoteHand.map(c => ({
       id: c.isPublic ? c.id : 'unknown',  // 비공개 카드는 id도 숨김
       name: c.isPublic ? c.name : '?',
       isPublic: c.isPublic || false,
+      _iid: c._iid || null,
     }));
-    G.opField = (data.field || []);
-    G.opGrave = (data.grave || []);
-    G.opExile = (data.exile || []);
-    G.opFieldCard = data.fieldCard || null;
-    G.opKeyDeck = (data.keyDeck || []).map(c => ({ id: 'unknown', name: '키카드' }));
-    G.opDeckCount = data.deckCount || 0;
+    G.opField = isExact ? (data.myField || []) : (data.field || []);
+    G.opGrave = isExact ? (data.myGrave || []) : (data.grave || []);
+    G.opExile = isExact ? (data.myExile || []) : (data.exile || []);
+    G.opFieldCard = isExact ? (data.myFieldCard || null) : (data.fieldCard || null);
+    const remoteKeyDeck = isExact ? (data.myKeyDeck || []) : (data.keyDeck || []);
+    G.opKeyDeck = remoteKeyDeck.map(c => ({ id: 'unknown', name: '키카드', _iid: c._iid || null }));
+    G.opDeckCount = isExact ? (data.myDeck || []).length : (data.deckCount || 0);
+    G.opExtraSlots = isExact ? Number(data.myExtraSlots || 0) : Number(data.extraSlots || 0);
+    G.turnStats = G.turnStats || { me: { drawn: 0 }, opponent: { drawn: 0 } };
+    const remoteTurnStats = isExact && data.turnStats && data.turnStats.me;
+    if (remoteTurnStats) G.turnStats.opponent = window.HB_STATE_STORE.clone(remoteTurnStats);
     renderAll();
   });
 }
 
 // 재접속 시 내 상태 복원
 function restoreMyState() {
-  if (!roomRef) return;
+  if (!roomRef) return Promise.resolve({ ok: false, restored: false });
   const myPath = myRole === 'host' ? 'hostState' : 'guestState';
-  roomRef.child(myPath).once('value').then(snap => {
-    const data = snap.val();
-    if (!data || !data.ts) return; // 저장된 상태 없으면 스킵
-    // 패 복원 (공개 상태 포함)
-    if (data.hand && data.hand.length > 0) {
-      G.myHand = data.hand.map(c => ({ id: c.id, name: c.name, isPublic: c.isPublic || false }));
+  return roomRef.child(myPath).once('value').then(snap => {
+    const raw = snap.val();
+    if (!raw) return { ok: true, restored: false };
+
+    if (raw.schema === 2 && raw.data && window.HB_STATE_STORE) {
+      const currentOpponentView = {
+        opHand: window.HB_STATE_STORE.clone(G.opHand || []),
+        opField: window.HB_STATE_STORE.clone(G.opField || []),
+        opGrave: window.HB_STATE_STORE.clone(G.opGrave || []),
+        opExile: window.HB_STATE_STORE.clone(G.opExile || []),
+        opFieldCard: window.HB_STATE_STORE.clone(G.opFieldCard || null),
+        opKeyDeck: window.HB_STATE_STORE.clone(G.opKeyDeck || []),
+        opDeckCount: Number(G.opDeckCount || 0),
+        opExtraSlots: Number(G.opExtraSlots || 0),
+      };
+      const applied = window.HB_STATE_STORE.applyLegacySnapshot(G, raw);
+      // 상대 상태는 상대 전용 리스너가 권위자다. 이미 받은 최신 뷰를 내 과거
+      // 스냅샷의 상대 복사본으로 덮어쓰지 않는다.
+      if (currentOpponentView.opHand.length || currentOpponentView.opField.length ||
+          currentOpponentView.opGrave.length || currentOpponentView.opExile.length ||
+          currentOpponentView.opFieldCard || currentOpponentView.opDeckCount) {
+        Object.assign(G, currentOpponentView);
+      }
+      if (!applied.ok) {
+        console.warn('[state] 복원 검증 경고:', applied.errors);
+      }
+      localStateRevision = Math.max(0, Number(raw.revision || 0));
+      restoredStateSavedAt = Math.max(0, Number(raw.savedAt || 0));
+      lastHandledActionKey = raw.lastActionKey || null;
+      lastHandledActionTs = Math.max(0, Number(raw.lastActionTs || 0));
+      attackedMonstersThisTurn.clear();
+      (applied.attackedMonsterIds || []).forEach(id => attackedMonstersThisTurn.add(id));
+      if (window.HB_CHAIN_ENGINE && typeof window.HB_CHAIN_ENGINE.importUsageSnapshot === 'function') {
+        window.HB_CHAIN_ENGINE.importUsageSnapshot(applied.chainUsage || []);
+      }
+      if (window.HB_TRIGGER_QUEUE && typeof window.HB_TRIGGER_QUEUE.importQueueState === 'function') {
+        const triggerRestore = window.HB_TRIGGER_QUEUE.importQueueState(applied.pendingTriggers || [], G);
+        if (!triggerRestore.ok || (triggerRestore.skipped && triggerRestore.skipped.length)) {
+          console.warn('[state] pending trigger restore warning:', triggerRestore);
+        }
+        if (triggerRestore.count > 0 && typeof window.HB_TRIGGER_QUEUE.processTriggerQueue === 'function') {
+          setTimeout(() => window.HB_TRIGGER_QUEUE.processTriggerQueue(G), 0);
+        }
+      }
+      if (raw.deckList) window._confirmedDeck = raw.deckList.slice();
+      if (raw.keyDeckList) window._confirmedKeyDeck = raw.keyDeckList.slice();
+      currentPhase = G.phase || 'draw';
+      isMyTurn = G.activePlayer === myRole;
+      log('재접속: 정확한 게임 상태를 복원했습니다.', 'system');
+      notify('재접속: 이전 게임으로 돌아왔습니다.');
+      renderAll();
+      return { ok: true, restored: true, snapshot: raw };
     }
-    if (data.field) G.myField = data.field;
-    if (data.grave) G.myGrave = data.grave;
-    if (data.exile) G.myExile = data.exile;
-    if (data.fieldCard) G.myFieldCard = data.fieldCard;
-    if (data.keyDeck) G.myKeyDeck = data.keyDeck;
-    log('이전 상태 복원 완료', 'system');
-    notify('재접속: 이전 게임 상태를 복원했습니다.');
+
+    // 구버전 방을 한 번만 새 스키마로 승격한다.
+    const data = raw;
+    G.myHand = (data.hand || []).map(c => ({ id: c.id, name: c.name, isPublic: c.isPublic || false, _iid: c._iid }));
+    G.myField = data.field || [];
+    G.myGrave = data.grave || [];
+    G.myExile = data.exile || [];
+    G.myFieldCard = data.fieldCard || null;
+    G.myKeyDeck = data.keyDeck || [];
+    const deckList = data.deckList || window._confirmedDeck || [];
+    G.myDeck = deckList.map(id => ({ id, name: CARDS[id]?.name || id }));
+    window.HB_STATE_STORE && window.HB_STATE_STORE.ensureInstances(G);
+    restoredStateSavedAt = Math.max(0, Number(data.ts || 0));
+    lastHandledActionTs = Math.max(0, Number(data.lastActionTs || 0));
     renderAll();
+    sendGameState();
+    return { ok: true, restored: true, migrated: true };
   });
 }
 
@@ -68,6 +186,14 @@ function listenChainState() {
   roomRef.child('chainState').on('value', snap => {
     const wasActive = !!(activeChainState && activeChainState.active);
     const data = snap.val();
+
+    if (data && data.hbEngine === true && window.HB_CHAIN_ENGINE &&
+        typeof window.HB_CHAIN_ENGINE.importChainState === 'function') {
+      const imported = window.HB_CHAIN_ENGINE.importChainState(data);
+      if (imported && imported.ok === false) {
+        console.warn('[chain] 원격 체인 상태 가져오기 실패:', imported.error);
+      }
+    }
 
     // 체인이 끝났으면 null로 명시 초기화
     if (!data || !data.active) {
@@ -141,6 +267,13 @@ function listenClockState() {
 // ─────────────────────────────────────────────
 let firebaseLoaded = false;
 let isJoiningRoom = false;
+let resumeInProgress = false;
+
+function getRememberedSeatToken(role, code) {
+  const saved = window.HB_SESSION && window.HB_SESSION.load();
+  if (saved && saved.role === role && saved.roomCode === code && saved.seatToken) return saved.seatToken;
+  return window.HB_SESSION ? window.HB_SESSION.makeSeatToken() : `${Date.now()}_${Math.random()}`;
+}
 
 function loadFirebase(callback) {
   if (firebaseLoaded) { callback(); return; }
@@ -226,16 +359,21 @@ function createRoom() {
     }
     roomCode = generateCode();
     myRole = 'host';
+    const seatToken = getRememberedSeatToken('host', roomCode);
     roomRef = db.ref(`rooms/${roomCode}`);
     roomRef.set({
       host: myName,
       guest: null,
+      seats: { host: { name: myName, token: seatToken, joinedAt: Date.now() } },
       status: 'waiting',
       turn: 0,
       actions: null,
       chainState: { active: false, links: [], priority: null, passCount: 0 },
       clock: { host: 500, guest: 500, runningFor: 'host', lastUpdated: Date.now() },
     }).then(() => {
+      window.HB_SESSION && window.HB_SESSION.remember({
+        roomCode, role: myRole, playerName: myName, seatToken, stage: 'waiting',
+      });
       document.getElementById('roomCodeText').textContent = roomCode;
       document.getElementById('roomCodeBlock').classList.remove('hidden');
       document.getElementById('startGameBtn').classList.remove('hidden');
@@ -299,15 +437,29 @@ function joinRoom() {
     roomCode = code;
     myRole = 'guest';
     roomRef = db.ref(`rooms/${roomCode}`);
+    const seatToken = getRememberedSeatToken('guest', roomCode);
 
     // 방 존재 여부 먼저 확인
-    roomRef.child('host').once('value').then(hostSnap => {
-      if (!hostSnap.val()) {
+    roomRef.once('value').then(roomSnap => {
+      const room = roomSnap.val();
+      if (!room || !room.host) {
         _resetJoinState('존재하지 않는 방 코드입니다.');
         roomRef = null;
         return;
       }
-      return roomRef.child('guest').set(myName).then(() => {
+      const occupied = room.seats && room.seats.guest;
+      if (occupied && occupied.token && occupied.token !== seatToken) {
+        _resetJoinState('이미 다른 플레이어가 참가한 방입니다.');
+        roomRef = null;
+        return;
+      }
+      return roomRef.update({
+        guest: myName,
+        'seats/guest': { name: myName, token: seatToken, joinedAt: occupied?.joinedAt || Date.now(), rejoinedAt: Date.now() },
+      }).then(() => {
+        window.HB_SESSION && window.HB_SESSION.remember({
+          roomCode, role: myRole, playerName: myName, seatToken, stage: 'waiting',
+        });
         statusEl.textContent = '참가 완료! 호스트의 시작을 기다리는 중...';
         document.getElementById('hdrRoomCode').textContent = roomCode;
         listenRoom();
@@ -333,13 +485,14 @@ function startGame() {
     activePlayer: 'host',
     clock: { host: 500, guest: 500, runningFor: 'host', lastUpdated: Date.now() },
   });
+  rememberCurrentSession({ stage: 'deckBuilder' });
   // 호스트는 바로 덱 빌더로
   goToDeckBuilder();
 }
 
 let _deckBuilderOpened = false; // 덱 빌더 중복 진입 방지
 
-let lastHandledActionTs = 0; // 중복 처리 방지
+let lastHandledActionTs = 0; // 구버전 호환 및 복구 커서
 let gameActionListenerActive = false;
 
 function listenRoom() {
@@ -366,15 +519,132 @@ function listenRoom() {
 function listenGameActions() {
   if (!roomRef || gameActionListenerActive) return;
   gameActionListenerActive = true;
-
-  roomRef.child('lastAction').on('value', snap => {
+  const saved = window.HB_SESSION && window.HB_SESSION.load();
+  const cursorTs = Math.max(
+    Number(lastHandledActionTs || 0),
+    Number(saved && saved.lastActionTs || 0)
+  );
+  gameActionQuery = roomRef.child('actions').orderByChild('ts').startAt(cursorTs);
+  gameActionQuery.on('child_added', snap => {
     const action = snap.val();
     if (!action) return;
-    if (action.by === myRole) return; // 내가 보낸 것
-    if (action.ts <= lastHandledActionTs) return; // 이미 처리한 것
-    lastHandledActionTs = action.ts;
-    handleOpponentAction(action);
+    const actionKey = snap.key || action.id;
+    if (action.by === myRole) {
+      window.HB_SESSION && window.HB_SESSION.markProcessedAction(actionKey, action.ts);
+      return;
+    }
+    if (window.HB_SESSION && window.HB_SESSION.hasProcessedAction(actionKey)) return;
+    if (Number(action.ts || 0) < cursorTs) return;
+    pendingNetworkActions.push({ key: actionKey, action });
+    processNextNetworkAction();
   });
+}
+
+function listenChoiceRequests() {
+  if (!roomRef || choiceRequestListenerActive) return;
+  choiceRequestListenerActive = true;
+  choiceRequestQuery = roomRef.child('choiceRequests').orderByChild('to').equalTo(myRole);
+  choiceRequestQuery.on('child_added', snap => {
+    const request = snap.val();
+    if (!request || request.to !== myRole || request.by === myRole || request.status !== 'pending') return;
+    pendingRemoteChoiceRequests.push({ key: snap.key, request });
+    processNextChoiceRequest();
+  });
+}
+
+function processNextChoiceRequest() {
+  if (processingChoiceRequest || pendingRemoteChoiceRequests.length === 0) return;
+  const entry = pendingRemoteChoiceRequests.shift();
+  if (!entry || !entry.request) {
+    setTimeout(processNextChoiceRequest, 0);
+    return;
+  }
+  processingChoiceRequest = true;
+  const request = entry.request;
+  const candidates = Array.isArray(request.candidates) ? request.candidates : [];
+  const count = Math.max(1, Math.min(Number(request.count || 1), candidates.length || 1));
+  const finish = selectedIndices => {
+    const indices = (selectedIndices || []).filter(i => Number.isInteger(i) && i >= 0 && i < candidates.length).slice(0, count);
+    const response = {
+      requestId: request.requestId || entry.key,
+      by: myRole,
+      to: request.by,
+      selectedIndices: indices.length || request.allowEmpty === true
+        ? indices
+        : candidates.slice(0, count).map((_, i) => i),
+      ts: Date.now(),
+      status: 'answered',
+    };
+    const updates = {};
+    updates[`choiceResponses/${response.requestId}`] = response;
+    updates[`choiceRequests/${response.requestId}/status`] = 'answered';
+    updates[`choiceRequests/${response.requestId}/answeredAt`] = response.ts;
+    roomRef.update(updates).finally(() => {
+      processingChoiceRequest = false;
+      if (typeof window._notifyInteractionIdle === 'function') window._notifyInteractionIdle();
+      setTimeout(processNextChoiceRequest, 0);
+    });
+  };
+
+  if (!candidates.length) {
+    finish([]);
+    return;
+  }
+  if (candidates.length <= count || typeof openCardPicker !== 'function') {
+    finish(candidates.slice(0, count).map((_, i) => i));
+    return;
+  }
+  openCardPicker(
+    candidates,
+    request.title || '상대 효과의 적용 내용을 선택하세요',
+    count,
+    finish,
+    request.forced !== false
+  );
+}
+
+function isInteractionPending() {
+  const confirmPending = typeof _gcPending !== 'undefined' && !!_gcPending;
+  const pickerPending = (typeof pickerRunning !== 'undefined' && pickerRunning) ||
+    (typeof pickerQueue !== 'undefined' && pickerQueue && pickerQueue.length > 0);
+  return confirmPending || pickerPending;
+}
+
+function finishNetworkAction(entry) {
+  if (!entry) return;
+  lastHandledActionKey = entry.key;
+  lastHandledActionTs = Math.max(lastHandledActionTs, Number(entry.action && entry.action.ts || 0));
+  window.HB_SESSION && window.HB_SESSION.markProcessedAction(entry.key, entry.action && entry.action.ts);
+  rememberCurrentSession();
+  sendGameState();
+  processingNetworkAction = false;
+  setTimeout(processNextNetworkAction, 0);
+}
+
+function processNextNetworkAction() {
+  if (processingNetworkAction || pendingNetworkActions.length === 0) return;
+  const entry = pendingNetworkActions.shift();
+  if (!entry || (window.HB_SESSION && window.HB_SESSION.hasProcessedAction(entry.key))) {
+    setTimeout(processNextNetworkAction, 0);
+    return;
+  }
+  processingNetworkAction = true;
+  handleOpponentAction(entry.action);
+
+  // 콜백이 같은 tick 또는 다음 tick에 picker/confirm을 열 수 있으므로
+  // 한 tick 뒤 상호작용 상태를 판정한다.
+  setTimeout(() => {
+    if (!isInteractionPending()) {
+      finishNetworkAction(entry);
+      return;
+    }
+    const onIdle = () => {
+      if (isInteractionPending()) return;
+      window.removeEventListener('hb:interaction-idle', onIdle);
+      finishNetworkAction(entry);
+    };
+    window.addEventListener('hb:interaction-idle', onIdle);
+  }, 0);
 }
 
 
@@ -460,9 +730,115 @@ function sendAction(action) {
     }
     return;
   }
-  action.by = myRole;
-  action.ts = Date.now();
-  roomRef.update({ lastAction: action });
+  const actionRef = roomRef.child('actions').push();
+  const payload = Object.assign({}, action, {
+    id: actionRef.key,
+    by: myRole,
+    ts: Date.now(),
+  });
+  actionRef.set(payload);
+  // 구버전 클라이언트가 같은 방에 들어온 경우를 위한 읽기 전용 호환 미러.
+  roomRef.child('lastAction').set(payload);
+  return payload;
+}
+
+function showResumeStatus(message, failed) {
+  const card = document.getElementById('resumeSessionCard');
+  const status = document.getElementById('resumeSessionStatus');
+  const cancel = document.getElementById('cancelResumeBtn');
+  if (card) card.classList.remove('hidden');
+  if (status) status.textContent = message;
+  if (cancel) cancel.classList.toggle('hidden', !failed);
+}
+
+function cancelRememberedSession() {
+  if (window.HB_SESSION) window.HB_SESSION.clear();
+  resumeInProgress = false;
+  const card = document.getElementById('resumeSessionCard');
+  if (card) card.classList.add('hidden');
+}
+
+function resumeRememberedSession() {
+  if (resumeInProgress || DEMO_MODE || !window.HB_SESSION) return;
+  const saved = window.HB_SESSION.load();
+  if (!saved) return;
+  resumeInProgress = true;
+  showResumeStatus('이전 게임의 자리를 확인하는 중...', false);
+  const playerNameEl = document.getElementById('playerName');
+  if (playerNameEl && saved.playerName) playerNameEl.value = saved.playerName;
+
+  loadFirebase(() => {
+    try { initFirebase(); }
+    catch (err) {
+      resumeInProgress = false;
+      showResumeStatus(`복구 연결 실패: ${err.message}`, true);
+      return;
+    }
+    roomCode = saved.roomCode;
+    myRole = saved.role;
+    myName = saved.playerName || (myRole === 'host' ? '호스트' : '게스트');
+    roomRef = db.ref(`rooms/${roomCode}`);
+    roomRef.once('value').then(snap => {
+      const room = snap.val();
+      const seat = room && room.seats && room.seats[myRole];
+      if (!room || !seat || seat.token !== saved.seatToken) {
+        cancelRememberedSession();
+        notify('이전 게임이 종료되었거나 자리가 변경되었습니다.');
+        return;
+      }
+
+      document.getElementById('hdrRoomCode').textContent = roomCode;
+      if (saved.deckList) window._confirmedDeck = saved.deckList.slice();
+      if (saved.keyDeckList) window._confirmedKeyDeck = saved.keyDeckList.slice();
+      listenRoom();
+
+      if (room.status === 'playing') {
+        _deckBuilderOpened = true;
+        const myPath = myRole === 'host' ? 'hostState' : 'guestState';
+        return roomRef.child(myPath).once('value').then(stateSnap => {
+          if (stateSnap.val()) {
+            showResumeStatus('게임 상태를 복원하는 중...', false);
+            enterGame();
+          } else {
+            showResumeStatus('덱 선택 화면으로 돌아가는 중...', false);
+            goToDeckBuilder();
+          }
+        });
+      }
+
+      if (myRole === 'host') {
+        document.getElementById('roomCodeText').textContent = roomCode;
+        document.getElementById('roomCodeBlock').classList.remove('hidden');
+        document.getElementById('startGameBtn').classList.remove('hidden');
+        document.getElementById('startGameBtn').disabled = !room.guest;
+        document.getElementById('createStatus').textContent = '이전 대기방을 복구했습니다.';
+        document.getElementById('createStatus').classList.remove('hidden');
+      } else {
+        document.getElementById('joinCode').value = roomCode;
+        document.getElementById('joinStatus').textContent = '이전 대기방을 복구했습니다. 호스트를 기다리는 중...';
+        document.getElementById('joinStatus').classList.remove('hidden');
+      }
+      const card = document.getElementById('resumeSessionCard');
+      if (card) card.classList.add('hidden');
+      resumeInProgress = false;
+    }).catch(err => {
+      resumeInProgress = false;
+      showResumeStatus(`게임 복구 실패: ${err.message}`, true);
+    });
+  });
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('load', () => setTimeout(resumeRememberedSession, 0));
+  window.addEventListener('beforeunload', () => {
+    rememberCurrentSession({ stage: document.getElementById('game')?.style.display === 'flex' ? 'playing' : undefined });
+    if (roomRef && document.getElementById('game')?.style.display === 'flex') sendGameState();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && roomRef && document.getElementById('game')?.style.display === 'flex') {
+      sendGameState();
+    }
+  });
 }
 
 function handleOpponentAction(action) {

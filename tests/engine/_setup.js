@@ -5,6 +5,7 @@ const path = require('path');
 function createContext() {
   const listeners = new Map();
   const elements = new Map();
+  const storageData = new Map();
   function makeElement(tagName, id) {
     const el = {
       tagName: tagName || 'div',
@@ -46,10 +47,12 @@ function createContext() {
     Error,
     TypeError,
     Promise,
+    Uint8Array,
     location: { search: '' },
     window: null,
     globalThis: null,
     document: {
+      visibilityState: 'visible',
       createElement(tagName) { return makeElement(tagName); },
       body: makeElement('body', 'body'),
       getElementById(id) {
@@ -60,6 +63,12 @@ function createContext() {
       querySelector() { return null; },
       querySelectorAll() { return []; },
       addEventListener() {},
+    },
+    localStorage: {
+      getItem(key) { return storageData.has(key) ? storageData.get(key) : null; },
+      setItem(key, value) { storageData.set(key, String(value)); },
+      removeItem(key) { storageData.delete(key); },
+      clear() { storageData.clear(); },
     },
     CustomEvent: function CustomEvent(type, init) { this.type = type; this.detail = init && init.detail; },
     addEventListener(type, handler) {
@@ -113,6 +122,8 @@ const CORE_FILES = [
   'js/rules/timing.js',
   'js/engine/effect-definition.js',
   'js/effects/effect-registry.js',
+  'js/engine/state-store.js',
+  'js/engine/session-manager.js',
   'js/engine/zone-access.js',
   'js/engine/event-bus.js',
   'js/engine/card-move.js',
@@ -138,6 +149,7 @@ const THEME_FILES = [
   'js/effects/theme/lion.js',
   'js/effects/theme/tiger.js',
   'js/effects/theme/liger.js',
+  'js/engine/effect-choice-rules.js',
 ];
 
 function loadCore(ctx) {

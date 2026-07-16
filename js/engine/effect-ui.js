@@ -327,7 +327,7 @@
     if (choice.candidates.length === 0) {
       return { needsPicker: false, opts, emptyFail: choice.emptyMessage || '선택할 대상이 없습니다.' };
     }
-    if (choice.candidates.length <= count && choice.forceChoice !== true) {
+    if (choice.candidates.length <= count && choice.forceChoice !== true && choice.allowEmpty !== true) {
       // 후보가 요구 수량 이하 → 자동 채움 (선택의 여지가 없음)
       return { needsPicker: false, opts: Object.assign({}, opts, { selectedCards: choice.candidates.slice(0, count) }) };
     }
@@ -343,28 +343,109 @@
   // 반환: onProceed의 반환값 또는 { ok:true, deferred:true, awaitingSelection:true } (picker 대기)
   function requestPickerAndProceed(entry, opts, onProceed) {
     if (!entry || !entry.effect || typeof onProceed !== 'function') return makeFail('잘못된 인자입니다.');
-    const sel = maybeRequestSelection(entry, opts || {});
-    if (sel.emptyFail) return makeFail(sel.emptyFail);
-    if (sel.needsPicker) {
-      const choice = sel.choice;
-      const count = sel.count;
-      const pickerCards = choice.candidates.map(c => ({
-        id: c.id || c.cardId || String(c),
-        name: c.name || c.id || String(c),
-      }));
-      if (typeof global.openCardPicker !== 'function') {
-        console.warn('[effect-ui] openCardPicker가 없어 picker를 띄울 수 없습니다. 첫 후보로 진행합니다.');
-        return onProceed(Object.assign({}, opts, { selectedCards: choice.candidates.slice(0, count) }));
+    const baseOpts = opts || {};
+    if (baseOpts.selectedCards && baseOpts.selectedCards.length) return onProceed(baseOpts);
+
+    const effect = entry.effect;
+    if (typeof effect.collectChoices !== 'function') return onProceed(baseOpts);
+    const ctx = entry.ctx || buildContextForEffect(baseOpts, effect);
+    let choicePlan;
+    try { choicePlan = effect.collectChoices(ctx); }
+    catch (err) {
+      console.warn('[effect-ui] collectChoices 실행 오류:', err);
+      return makeFail(`선택 후보 생성 오류: ${err.message}`);
+    }
+    if (!choicePlan) return onProceed(baseOpts);
+
+    const groups = Array.isArray(choicePlan.groups) ? choicePlan.groups.slice() : [choicePlan];
+    function serializeCandidate(candidate, index) {
+      return {
+        id: (candidate && (candidate._iid || candidate.id || candidate.cardId)) || `choice-${index}`,
+        name: (candidate && (candidate.name || candidate.id || candidate.cardId)) || String(candidate),
+        index,
+      };
+    }
+    function isLocalChooser(group) {
+      const chooser = group.chooser || choicePlan.chooser || 'controller';
+      const controller = normalizeController(ctx.controller || CONTROLLERS.ME);
+      return (chooser === 'opponent' && controller === CONTROLLERS.OPPONENT)
+        || (chooser !== 'opponent' && controller === CONTROLLERS.ME);
+    }
+    function selectGroup(groupIndex, selectedCards) {
+      if (groupIndex >= groups.length) {
+        return onProceed(Object.assign({}, baseOpts, { selectedCards }));
       }
-      global.openCardPicker(pickerCards, choice.title || '대상을 선택하세요', count, function onPicked(selectedIndices) {
-        if (!selectedIndices || selectedIndices.length === 0) return; // 취소 → 발동 중단
-        const picked = selectedIndices.map(i => choice.candidates[i]).filter(Boolean);
-        if (picked.length === 0) return;
-        onProceed(Object.assign({}, opts || {}, { selectedCards: picked }));
-      }, choice.forced === true);
+      const group = groups[groupIndex] || {};
+      let candidates;
+      try {
+        candidates = typeof group.collect === 'function'
+          ? group.collect(ctx, selectedCards.slice())
+          : group.candidates;
+      } catch (err) {
+        return makeFail(`선택 후보 생성 오류: ${err.message}`);
+      }
+      candidates = Array.isArray(candidates) ? candidates : [];
+      const rawCount = typeof group.count === 'function'
+        ? group.count(ctx, selectedCards.slice())
+        : group.count;
+      const count = Math.max(1, Number(rawCount || 1));
+      if (!candidates.length) {
+        if (group.optional === true) return selectGroup(groupIndex + 1, selectedCards);
+        return makeFail(group.emptyMessage || '선택할 대상이 없습니다.');
+      }
+      if (candidates.length <= count && group.forceChoice !== true && group.allowEmpty !== true) {
+        return selectGroup(groupIndex + 1, selectedCards.concat(candidates.slice(0, count)));
+      }
+
+      const finish = selectedIndices => {
+        const picked = (selectedIndices || []).map(i => candidates[i]).filter(Boolean).slice(0, count);
+        if (!picked.length && group.allowEmpty !== true) return;
+        selectGroup(groupIndex + 1, selectedCards.concat(picked));
+      };
+      const networkSync = global.HB_NETWORK_SYNC;
+      if (!isLocalChooser(group)
+          && networkSync
+          && typeof networkSync.hasNetworkRoom === 'function'
+          && networkSync.hasNetworkRoom()
+          && typeof networkSync.requestOpponentChoice === 'function') {
+        networkSync.requestOpponentChoice({
+          kind: 'effectChoice',
+          effectId: effect.id,
+          cardId: effect.cardId,
+          groupKey: group.key || `group-${groupIndex}`,
+          title: group.title || choicePlan.title || '효과를 선택하세요',
+          candidates: candidates.map(serializeCandidate),
+          count,
+          forced: group.forced !== false,
+          allowEmpty: group.allowEmpty === true,
+        }).then(response => {
+          if (!response || response.ok === false) {
+            maybeNotify(response && response.error ? response.error : '상대의 선택을 받지 못했습니다.');
+            return;
+          }
+          finish(response.selectedIndices || []);
+        }).catch(err => maybeNotify(`상대 선택 처리 오류: ${err.message}`));
+        return makeOk({ deferred: true, awaitingSelection: true, remoteChoice: true });
+      }
+
+      if (!isLocalChooser(group)) {
+        return selectGroup(groupIndex + 1, selectedCards.concat(candidates.slice(0, count)));
+      }
+      if (typeof global.openCardPicker !== 'function') {
+        console.warn('[effect-ui] openCardPicker가 없어 첫 후보로 진행합니다.');
+        return selectGroup(groupIndex + 1, selectedCards.concat(candidates.slice(0, count)));
+      }
+      global.openCardPicker(
+        candidates.map(serializeCandidate),
+        group.title || choicePlan.title || '대상을 선택하세요',
+        count,
+        finish,
+        group.forced !== false
+      );
       return makeOk({ deferred: true, awaitingSelection: true });
     }
-    return onProceed(sel.opts || opts || {});
+
+    return selectGroup(0, []);
   }
 
   function activateAvailableEffect(entry, options) {
@@ -372,16 +453,6 @@
     const opts = options || {};
     const effect = entry.effect;
     const ctx = entry.ctx || buildContextForEffect(opts, effect);
-
-    if (ctx.sourceZone === ZONES.FIELD_ZONE && global.HB_FIELD_ZONE && typeof global.HB_FIELD_ZONE.activateSelectedFieldZoneEffect === 'function') {
-      return global.HB_FIELD_ZONE.activateSelectedFieldZoneEffect({
-        gameState: ctx.gameState,
-        controller: ctx.controller,
-        effect,
-        autoResolve: opts.autoResolve,
-        resolveImmediately: opts.resolveImmediately,
-      });
-    }
 
     if (isSummonProcedureEffect(effect)) {
       try {
@@ -396,56 +467,42 @@
     }
 
     if (!chain || typeof chain.activateEffect !== 'function') return makeFail('HB_CHAIN_ENGINE.activateEffect를 사용할 수 없습니다.');
-
-    // 사용자 선택이 필요한 효과면 코스트 지불 전에 픽커부터 띄운다.
-    // 픽커 콜백에서 selectedCards를 채워 본 함수를 다시 호출한다.
-    const selectionCheck = maybeRequestSelection(entry, opts);
-    if (selectionCheck.emptyFail) return makeFail(selectionCheck.emptyFail);
-    if (selectionCheck.needsPicker) {
-      const choice = selectionCheck.choice;
-      const count = selectionCheck.count;
-      const pickerCards = choice.candidates.map(c => ({
-        id: c.id || c.cardId || String(c),
-        name: c.name || c.id || String(c),
-      }));
-      if (typeof global.openCardPicker !== 'function') {
-        console.warn('[effect-ui] openCardPicker가 없어 선택을 강제할 수 없습니다. 첫 후보로 진행합니다.');
-      } else {
-        global.openCardPicker(pickerCards, choice.title || '대상을 선택하세요', count, function onPicked(selectedIndices) {
-          if (!selectedIndices || selectedIndices.length === 0) return; // 취소 → 발동 중단 (아직 코스트 미지불)
-          const picked = selectedIndices.map(i => choice.candidates[i]).filter(Boolean);
-          if (picked.length === 0) return;
-          activateAvailableEffect(entry, Object.assign({}, opts, { selectedCards: picked }));
-        }, choice.forced === true);
-        return makeOk({ deferred: true, awaitingSelection: true });
+    return requestPickerAndProceed(entry, opts, finalOpts => {
+      if (ctx.sourceZone === ZONES.FIELD_ZONE && global.HB_FIELD_ZONE && typeof global.HB_FIELD_ZONE.activateSelectedFieldZoneEffect === 'function') {
+        return global.HB_FIELD_ZONE.activateSelectedFieldZoneEffect({
+          gameState: ctx.gameState,
+          controller: ctx.controller,
+          effect,
+          selectedCards: finalOpts.selectedCards || [],
+          activationData: Object.assign({}, finalOpts.activationData || {}, {
+            source: 'effect-ui',
+            selectedCards: finalOpts.selectedCards || [],
+          }),
+          autoResolve: finalOpts.autoResolve,
+          resolveImmediately: finalOpts.resolveImmediately,
+        });
       }
-    }
-    const finalOpts = selectionCheck.opts || opts;
-    const resolveImmediately = shouldResolveImmediatelyFromUi(finalOpts);
-    const activation = chain.activateEffect({
-      gameState: ctx.gameState,
-      controller: ctx.controller,
-      card: ctx.card,
-      cardId: effect.cardId,
-      source: ctx.source,
-      sourceZone: ctx.sourceZone,
-      sourceIndex: ctx.sourceIndex,
-      effect,
-      selectedCards: finalOpts.selectedCards || [],
-      activationData: Object.assign({}, finalOpts.activationData || {}, {
-        source: 'effect-ui',
+
+      const resolveImmediately = shouldResolveImmediatelyFromUi(finalOpts);
+      return chain.activateEffect({
+        gameState: ctx.gameState,
+        controller: ctx.controller,
+        card: ctx.card,
+        cardId: effect.cardId,
+        source: ctx.source,
+        sourceZone: ctx.sourceZone,
+        sourceIndex: ctx.sourceIndex,
+        effect,
         selectedCards: finalOpts.selectedCards || [],
-      }),
-      ignorePriority: finalOpts.ignorePriority === true,
-      autoResolve: resolveImmediately,
-      resolveImmediately,
+        activationData: Object.assign({}, finalOpts.activationData || {}, {
+          source: 'effect-ui',
+          selectedCards: finalOpts.selectedCards || [],
+        }),
+        ignorePriority: finalOpts.ignorePriority === true,
+        autoResolve: resolveImmediately,
+        resolveImmediately,
+      });
     });
-    // [체인/우선권] 발동 직후 우선권은 addChainLink가 이미 상대에게 넘긴다(priority=상대).
-    // 발동자를 여기서 자동 패스시키지 않는다 — 상대가 패스하면 우선권이 발동자에게 복귀해
-    // "한 번 더 확인"(응답 또는 패스)을 거친 뒤에야 passCount>=2로 최종 처리된다.
-    // (이전 구현은 발동자를 선패스시켜, 상대의 단일 패스만으로 즉시 해결돼
-    //  발동자에게 우선권이 돌아오지 않는 버그가 있었다.)
-    return activation;
   }
 
   function renderEffectButtons(card, zone, options) {

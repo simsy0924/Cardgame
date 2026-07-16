@@ -587,7 +587,11 @@
       sourceZone: ZONES.FIELD_ZONE,
       effect,
       reason: 'fieldZoneEffect',
-      activationData: Object.assign({}, opts.activationData || {}, { source: 'fieldZoneEffect' }),
+      selectedCards: opts.selectedCards || [],
+      activationData: Object.assign({}, opts.activationData || {}, {
+        source: 'fieldZoneEffect',
+        selectedCards: opts.selectedCards || [],
+      }),
       autoResolve: resolveImmediately,
       resolveImmediately,
     });

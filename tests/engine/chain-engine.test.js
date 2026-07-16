@@ -75,6 +75,7 @@ module.exports = function runChainEngineTests() {
   assert(activatedByCardCost.ok, `card activation cost failed: ${activatedByCardCost.error}`);
   assert(!activationState.myHand.some(card => card.id === '펭귄!돌격!'), 'activated normal card should leave hand');
   assert(activationState.myGrave.some(card => card.id === '펭귄!돌격!'), 'activated normal card should be sent to grave as cost');
+  ctx.HB_CHAIN_ENGINE.resolveChain({ gameState: activationState, controller: 'me', authority: true });
 
   const noActivationCostState = makeState({ myHand: [makeCard('펭귄 마을')], myGrave: [] });
   ctx.G = noActivationCostState;
@@ -172,4 +173,66 @@ module.exports = function runChainEngineTests() {
   ctx.HB_CHAIN_ENGINE.passChainResponse('me');
   assertEqual(prResolved, 1, 'priority: resolves only after both players pass (passCount>=2)');
   delete ctx.AI;
+
+  // 네트워크 왕복: 절대 역할이 포함된 export/import를 통해 양쪽 클라이언트가
+  // 동일한 링크 수, 우선권, 패스 횟수를 이어받아야 한다.
+  ctx.HB_CHAIN_ENGINE.clearChain();
+  ctx.myRole = 'host';
+  ctx.opRole = 'guest';
+  const netState = makeState({ myHand: [makeCard('꼬마 펭귄')] });
+  ctx.G = netState;
+  const networkOrder = [];
+  const hostEffect = ctx.HB_EFFECT_REGISTRY.registerEffect({
+    id: 'test-network-chain-host',
+    cardId: '꼬마 펭귄',
+    type: 'activation',
+    zone: 'hand',
+    resolve() { networkOrder.push('host'); return true; },
+  }, { replace: true });
+  const guestEffect = ctx.HB_EFFECT_REGISTRY.registerEffect({
+    id: 'test-network-chain-guest',
+    cardId: '꼬마 펭귄',
+    type: 'quick',
+    zone: 'hand',
+    resolve() { networkOrder.push('guest'); return true; },
+  }, { replace: true });
+  const hostActivation = ctx.HB_CHAIN_ENGINE.activateEffect({
+    gameState: netState, controller: 'me', sourceZone: 'hand',
+    card: netState.myHand[0], effect: hostEffect,
+  });
+  assert(hostActivation.ok, `host network activation failed: ${hostActivation.error}`);
+  const exportedByHost = ctx.HB_CHAIN_ENGINE.exportChainState();
+  assertEqual(exportedByHost.priorityRole, 'guest', 'export must store absolute priority role');
+
+  ctx.myRole = 'guest';
+  ctx.opRole = 'host';
+  const importedByGuest = ctx.HB_CHAIN_ENGINE.importChainState(exportedByHost);
+  assert(importedByGuest.ok, `guest import failed: ${importedByGuest.error}`);
+  let networkChain = ctx.HB_CHAIN_ENGINE.getChainState();
+  assertEqual(networkChain.links[0].controller, 'opponent', 'remote host link must map to opponent for guest');
+  assertEqual(networkChain.priority, 'me', 'guest must receive priority after host activation');
+  const guestActivation = ctx.HB_CHAIN_ENGINE.activateEffect({
+    gameState: netState, controller: 'me', sourceZone: 'hand',
+    card: netState.myHand[0], effect: guestEffect,
+  });
+  assert(guestActivation.ok, `guest network activation failed: ${guestActivation.error}`);
+
+  const exportedByGuest = ctx.HB_CHAIN_ENGINE.exportChainState();
+  ctx.myRole = 'host';
+  ctx.opRole = 'guest';
+  const importedBackByHost = ctx.HB_CHAIN_ENGINE.importChainState(exportedByGuest);
+  assert(importedBackByHost.ok, `host re-import failed: ${importedBackByHost.error}`);
+  networkChain = ctx.HB_CHAIN_ENGINE.getChainState();
+  assertEqual(networkChain.links.length, 2, 'both clients must keep the same two links');
+  assertEqual(networkChain.priority, 'me', 'priority must return to host after guest response');
+  const firstNetworkPass = ctx.HB_CHAIN_ENGINE.passChainResponse('me');
+  assert(firstNetworkPass.ok, `host pass failed: ${firstNetworkPass.error}`);
+  const afterHostPass = ctx.HB_CHAIN_ENGINE.exportChainState();
+
+  ctx.myRole = 'guest';
+  ctx.opRole = 'host';
+  ctx.HB_CHAIN_ENGINE.importChainState(afterHostPass);
+  const secondNetworkPass = ctx.HB_CHAIN_ENGINE.passChainResponse('me');
+  assert(secondNetworkPass.ok, `guest pass failed: ${secondNetworkPass.error}`);
+  assertEqual(networkOrder.join(','), 'guest,host', 'imported network chain must resolve once in LIFO order');
 };

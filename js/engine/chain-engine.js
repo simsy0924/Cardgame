@@ -44,6 +44,8 @@
     responding: false,
     priority: null,
     passCount: 0,
+    lastPasser: null,
+    revision: 0,
     resolving: false,
     createdAt: 0,
     resolvedAt: 0,
@@ -473,6 +475,8 @@
     chainState.responding = false;
     chainState.priority = null;
     chainState.passCount = 0;
+    chainState.lastPasser = null;
+    chainState.revision = 1;
     chainState.createdAt = Date.now();
     chainState.resolvedAt = 0;
   }
@@ -491,6 +495,8 @@
     chainState.links.push(normalized);
     chainState.responding = true;
     chainState.passCount = 0;
+    chainState.lastPasser = null;
+    chainState.revision += 1;
     chainState.priority = normalized.controller === CONTROLLERS.ME ? CONTROLLERS.OPPONENT : CONTROLLERS.ME;
     const legacyMirror = syncLegacyChainMirror();
 
@@ -796,6 +802,8 @@
     chainState.responding = false;
     chainState.priority = null;
     chainState.passCount = 0;
+    chainState.lastPasser = null;
+    chainState.revision += 1;
     chainState.resolving = false;
     global._chainResolving = false;
     chainState.resolvedAt = Date.now();
@@ -812,6 +820,8 @@
       responding: !!chainState.responding,
       priority: chainState.priority,
       passCount: chainState.passCount,
+      lastPasser: chainState.lastPasser,
+      revision: chainState.revision,
       resolving: !!chainState.resolving,
       createdAt: chainState.createdAt,
       resolvedAt: chainState.resolvedAt,
@@ -854,6 +864,8 @@
       links: Object.freeze(snapshot.links.map(mirrorChainLinkForLegacy)),
       priority: snapshot.priority ? controllerToRole(snapshot.priority) : null,
       passCount: snapshot.passCount,
+      lastPasser: snapshot.lastPasser ? controllerToRole(snapshot.lastPasser) : null,
+      revision: snapshot.revision,
       responding: snapshot.responding,
       resolving: snapshot.resolving,
       createdAt: snapshot.createdAt,
@@ -876,7 +888,18 @@
   function passChainResponse(controller) {
     if (!chainState.active) return makeFail('활성 체인이 없습니다.');
     const passer = normalizeChainController(controller || chainState.priority);
+    if (passer !== chainState.priority) {
+      return makeFail('현재 우선권을 가진 플레이어만 패스할 수 있습니다.', {
+        passer,
+        priority: chainState.priority,
+      });
+    }
+    if (chainState.lastPasser === passer) {
+      return makeFail('같은 플레이어가 연속으로 체인 패스를 할 수 없습니다.', { passer });
+    }
     chainState.passCount += 1;
+    chainState.lastPasser = passer;
+    chainState.revision += 1;
     // [BUG-1 FIX] passCount >= 2 체크를 priority 전환 전에 수행한다.
     // 기존 코드는 priority를 먼저 뒤집은 뒤 resolveChain에 뒤집힌 값을 넘겨
     // "패스한 쪽"이 아니라 "상대"를 resolver controller로 전달하는 버그가 있었다.
@@ -915,6 +938,13 @@
 
     const can = canActivateEffect(ctx, effect);
     if (!can.ok) return can;
+
+    if (chainState.active && opts.ignorePriority !== true && ctx.controller !== chainState.priority) {
+      return makeFail('현재 체인 우선권을 가진 플레이어만 링크를 추가할 수 있습니다.', {
+        controller: ctx.controller,
+        priority: chainState.priority,
+      });
+    }
 
     const releaseMoveEventDispatch = pauseMoveEventDispatchForActivation();
     try {
@@ -962,6 +992,86 @@
     return Object.freeze(Array.from(usageCounters.entries()).map(([key, count]) => Object.freeze({ key, count })));
   }
 
+  function importUsageSnapshot(snapshot) {
+    usageCounters.clear();
+    (Array.isArray(snapshot) ? snapshot : []).forEach(entry => {
+      if (!entry || !entry.key) return;
+      usageCounters.set(String(entry.key), Math.max(0, Number(entry.count || 0)));
+    });
+    return getUsageSnapshot();
+  }
+
+  function cloneSerializable(value) {
+    if (value == null) return value;
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function exportChainState() {
+    const state = getChainState();
+    return Object.freeze({
+      hbEngine: true,
+      id: state.id,
+      active: state.active,
+      links: Object.freeze(state.links.map(link => Object.freeze(Object.assign({}, cloneSerializable(link), {
+        controllerRole: controllerToRole(link.controller),
+        sourceControllerRole: controllerToRole(link.sourceController || link.controller),
+      })))),
+      responding: state.responding,
+      priorityRole: state.priority ? controllerToRole(state.priority) : null,
+      passCount: state.passCount,
+      lastPasserRole: state.lastPasser ? controllerToRole(state.lastPasser) : null,
+      revision: state.revision,
+      resolving: state.resolving,
+      createdAt: state.createdAt,
+      resolvedAt: state.resolvedAt,
+    });
+  }
+
+  function importChainState(data) {
+    const incoming = data && data.engineState ? data.engineState : data;
+    if (!incoming || incoming.hbEngine !== true) return makeFail('가져올 신형 체인 상태가 없습니다.');
+    const incomingRevision = Math.max(0, Number(incoming.revision || 0));
+    if (chainState.id && incoming.id === chainState.id && incomingRevision < chainState.revision) {
+      return makeOk({ skipped: true, reason: 'staleRevision', chain: getChainState() });
+    }
+
+    chainState.id = incoming.id || null;
+    chainState.active = !!incoming.active;
+    chainState.links.length = 0;
+    (incoming.links || []).forEach(raw => {
+      const controller = roleToController(raw.controllerRole || raw.by || raw.controller);
+      const sourceController = roleToController(raw.sourceControllerRole || raw.sourceController || raw.by || raw.controller);
+      const link = Object.freeze(Object.assign({}, cloneSerializable(raw), {
+        controller,
+        sourceController,
+        source: Object.freeze(Object.assign({}, cloneSerializable(raw.source || {}), {
+          controller: sourceController,
+        })),
+      }));
+      chainState.links.push(link);
+    });
+    chainState.responding = !!incoming.responding;
+    chainState.priority = incoming.priorityRole
+      ? roleToController(incoming.priorityRole)
+      : (incoming.priority ? normalizeChainController(incoming.priority) : null);
+    chainState.passCount = Math.max(0, Number(incoming.passCount || 0));
+    chainState.lastPasser = incoming.lastPasserRole
+      ? roleToController(incoming.lastPasserRole)
+      : null;
+    chainState.revision = incomingRevision;
+    chainState.resolving = !!incoming.resolving;
+    chainState.createdAt = Number(incoming.createdAt || 0);
+    chainState.resolvedAt = Number(incoming.resolvedAt || 0);
+    if (!chainState.active) {
+      chainState.links.length = 0;
+      chainState.priority = null;
+      chainState.passCount = 0;
+      chainState.lastPasser = null;
+    }
+    const legacyMirror = syncLegacyChainMirror();
+    return makeOk({ imported: true, chain: getChainState(), legacyMirror });
+  }
+
   // [BUG-6 FIX] 신엔진 내부에서 resolveChain을 local 변수로 캡처해두어
   // 나중에 로드되는 engine.js / effects-chain.js의 동명 전역 함수가
   // 클로저 내부 참조를 덮어쓰지 못하도록 보호한다.
@@ -992,7 +1102,10 @@
     controllerToRole,
     getLegacyChainMirrorState,
     syncLegacyChainMirror,
+    exportChainState,
+    importChainState,
     getUsageSnapshot,
+    importUsageSnapshot,
     resetUsageCounters,
   });
 

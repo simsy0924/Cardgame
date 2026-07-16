@@ -846,7 +846,7 @@
         return hasPenguinVillageRevealed(ctx) && zoneArray(ctx, ctx.controller, ZONES.FIELD).some(isPenguinMonster);
       },
       resolve(ctx) {
-        return handleVillageDiscardReplacement({ gameState: ctx.gameState, controller: ctx.controller, confirmChoice: true, autoPick: true });
+        return handleVillageDiscardReplacement({ gameState: ctx.gameState, controller: ctx.controller });
       },
     }),
 
@@ -1456,6 +1456,21 @@
             optionalSummonStep();
           });
         };
+        const preselected = (ctx.selectedCards || []).filter(Boolean);
+        const findPreselected = list => preselected.find(selected => list.some(card => {
+          if (selected._iid && card._iid) return selected._iid === card._iid;
+          return getCardId(selected) === getCardId(card);
+        }));
+        const preselectedMine = findPreselected(zoneArray(ctx, ctx.controller, ZONES.FIELD));
+        const preselectedOpponent = findPreselected(zoneArray(ctx, opponentOf(ctx.controller), ZONES.FIELD));
+        if (preselectedMine && preselectedOpponent) {
+          out.results.push(returnFieldCardToHand(ctx, ctx.controller, getCardId(preselectedMine), 'penguinForever1ReturnMine', { isTargeting: true }));
+          out.results.push(returnFieldCardToHand(ctx, opponentOf(ctx.controller), getCardId(preselectedOpponent), 'penguinForever1ReturnOpponent', { isTargeting: true }));
+          dispatchPending(ctx);
+          renderAndSync();
+          optionalSummonStep();
+          return out;
+        }
         const myCards = zoneArray(ctx, ctx.controller, ZONES.FIELD).filter(Boolean);
         chooseCards(pickCtx, myCards, '펭귄이여 영원하라 ①: 패로 되돌릴 자신 필드 카드 선택', 1, picked => {
           const target = picked && picked[0];

@@ -67,8 +67,11 @@
   function isMonster(c) { const def = getCardDef(c); return !!(def && def.cardType === 'monster'); }
   function first(list, pred) { return (list || []).find(pred || (x => x)); }
   function findIndexById(list, id) { return (list || []).findIndex(c => getCardId(c) === id); }
-  function selectedId(ctx) { return getCardId((ctx && (ctx.selectedCard || ctx.selectedTarget || ctx.target)) || (ctx && ctx.selectedCardId)); }
+  function selectedId(ctx) { const picked = ctx && ctx.selectedCards && ctx.selectedCards.find(item => { const raw = item && (item._targetCard || item.c || item.card || item); return !item._mafiaOption && !!getCardId(raw); }); const raw = picked && (picked._targetCard || picked.c || picked.card || picked); return getCardId(raw || (ctx && (ctx.selectedCard || ctx.selectedTarget || ctx.target)) || (ctx && ctx.selectedCardId)); }
   function choose(ctx, list, pred) { const sid = selectedId(ctx); if (sid) { const hit = (list || []).find(c => getCardId(c) === sid && (!pred || pred(c))); if (hit) return hit; } return first(list, pred); }
+  function sameCardInstance(a, b) { if (!a || !b) return false; if (a._iid && b._iid) return a._iid === b._iid; return getCardId(a) === getCardId(b); }
+  function selectedFromZone(ctx, controller, zone, pred) { const list = zoneArray(ctx, controller, zone); return ((ctx && ctx.selectedCards) || []).map(item => item && (item.c || item.card || item)).filter(item => item && !item._mafiaOption).map(item => list.find(card => sameCardInstance(card, item))).filter(card => card && (!pred || pred(card))); }
+  function discardSelected(ctx, controller, zone, count, reason, pred) { const ctrl = normalizeController(controller); const list = zoneArray(ctx, ctrl, zone); const chosen = selectedFromZone(ctx, ctrl, zone, pred); const targets = chosen.concat(list.filter(card => (!pred || pred(card)) && !chosen.some(chosenCard => sameCardInstance(chosenCard, card)))).slice(0, Math.max(0, count)); const results = targets.map(card => moveSendToGrave(ctx, card, zone, ctrl, reason)); return { ok: results.every(result => result && result.ok !== false), count: results.filter(result => result && result.ok !== false).length, results }; }
   function hasFieldSpace(ctx, controller) { return global.HB_CARD_MOVE && global.HB_CARD_MOVE.hasFieldSpace ? global.HB_CARD_MOVE.hasFieldSpace(stateOf(ctx), controller || my(ctx)) : field(ctx, controller || my(ctx)).length < 5; }
   function canDraw(ctx, controller, n) { return deck(ctx, controller || my(ctx)).length >= (n || 1); }
   function isDeployOrAttackPhase() { if (typeof currentPhase === 'undefined') return true; return currentPhase === 'deploy' || currentPhase === 'attack' || currentPhase === '전개' || currentPhase === '공격'; } // eslint-disable-line no-undef
@@ -103,6 +106,8 @@
   function isMafiaTransformTargetAlreadyPending(link) { return pendingTransforms.some(p => p.targetChainLinkId === link.id); }
   function shouldMyControllerChoose(ctx, cardId) { return hasBossOnMyField(ctx) && !sameCardTransformUsed(ctx, cardId); }
   function pickOption(ctx, cardId, options) {
+    const picked = ctx && ctx.selectedCards && ctx.selectedCards.find(item => item && item._mafiaOption);
+    if (picked && options.includes(picked._mafiaOption)) return picked._mafiaOption;
     const selected = (ctx && (ctx.selectedOption || ctx.selectedChoice || ctx.optionText)) || null;
     if (selected && options.includes(selected)) return selected;
     const index = Number(ctx && (ctx.selectedOptionIndex ?? ctx.choiceIndex));
@@ -127,6 +132,27 @@
 
   function resolveMafiaOption(ctx, optionText) {
     if (!optionText) return { ok: false, error: '선택지가 없습니다.' };
+    if (optionText.trim() === '1장 드로우한다.') {
+      const result = draw(ctx, my(ctx), 1);
+      dispatch(ctx);
+      return Object.assign({ optionText }, result);
+    }
+    if (optionText.includes('이 턴에 드로우한 수 -2장 패를')) {
+      const drawn = global.HB_STATE_STORE && typeof global.HB_STATE_STORE.getDrawCount === 'function'
+        ? global.HB_STATE_STORE.getDrawCount(stateOf(ctx), my(ctx))
+        : Number(getMafiaTurnState(ctx).drawnCount || 0);
+      const count = Math.max(0, drawn - 2);
+      if (count <= 0) return { ok: true, discarded: 0, optionText };
+      const discarded = discardSelected(ctx, my(ctx), ZONES.HAND, count, 'mafiaDiscardByDrawCount');
+      dispatch(ctx);
+      return Object.assign({ optionText, requested: count, discarded: discarded.count }, discarded);
+    }
+    if (optionText.includes('서로 공개 패의 카드를 2장')) {
+      const mine = discardSelected(ctx, my(ctx), ZONES.PUBLIC_HAND, Math.min(2, publicHand(ctx, my(ctx)).length), 'mafiaDiscardOwnPublic');
+      const other = discardSelected(ctx, opp(ctx), ZONES.PUBLIC_HAND, Math.min(2, publicHand(ctx, opp(ctx)).length), 'mafiaDiscardOpponentPublic');
+      dispatch(ctx);
+      return { ok: mine.ok && other.ok, mine, other, optionText };
+    }
     if (optionText.includes('서로 1장 드로우')) {
       const mine = draw(ctx, my(ctx), 1);
       const other = draw(ctx, opp(ctx), 1);
@@ -137,16 +163,16 @@
       return { ok: mine.ok || other.ok, optionText };
     }
     if (optionText.includes("덱에서 '마피아'마법 카드 1장을 패에 넣")) {
-      const t = choose(ctx, deck(ctx), isMafiaMagic); if (!t) return { ok: false, error: '마피아 마법 없음' };
-      return moveAddToHand(ctx, t, ZONES.DECK, my(ctx), 'mafiaOptionSearchMagic', false);
+      const t = choose(ctx, deck(ctx, opp(ctx)), isMafiaMagic); if (!t) return { ok: false, error: '마피아 마법 없음' };
+      return moveAddToHand(ctx, t, ZONES.DECK, opp(ctx), 'mafiaOptionSearchMagic', false);
     }
     if (optionText.includes("덱에서 '대도시의 거물 마피아' 1장을 패에 넣")) {
-      const t = choose(ctx, deck(ctx), c => getCardId(c) === BOSS_ID); if (!t) return { ok: false, error: '거물 마피아 없음' };
-      return moveAddToHand(ctx, t, ZONES.DECK, my(ctx), 'mafiaOptionSearchBoss', false);
+      const t = choose(ctx, deck(ctx, opp(ctx)), c => getCardId(c) === BOSS_ID); if (!t) return { ok: false, error: '거물 마피아 없음' };
+      return moveAddToHand(ctx, t, ZONES.DECK, opp(ctx), 'mafiaOptionSearchBoss', false);
     }
     if (optionText.includes("덱에서 '마피아의 최측근' 1장을 패에 넣")) {
-      const t = choose(ctx, deck(ctx), c => getCardId(c) === AIDE_ID); if (!t) return { ok: false, error: '최측근 없음' };
-      return moveAddToHand(ctx, t, ZONES.DECK, my(ctx), 'mafiaOptionSearchAide', false);
+      const t = choose(ctx, deck(ctx, opp(ctx)), c => getCardId(c) === AIDE_ID); if (!t) return { ok: false, error: '최측근 없음' };
+      return moveAddToHand(ctx, t, ZONES.DECK, opp(ctx), 'mafiaOptionSearchAide', false);
     }
     if (optionText.includes('상대는 덱에서 카드 1장을 패에 넣고')) {
       const t = deck(ctx, opp(ctx))[0]; if (t) moveAddToHand(ctx, t, ZONES.DECK, opp(ctx), 'mafiaOpponentSearchAny', false);
@@ -161,21 +187,23 @@
     if (optionText.includes("자신 필드의 '마피아'몬스터 1장의 공격력을 3 올린다")) { const t = choose(ctx, field(ctx), isMafiaMonster); if (!t) return { ok: false, error: '대상 없음' }; t.atk = (t.atk || t.atkBase || getCardDef(t)?.atk || 0) + 3; dispatch(ctx); return { ok: true, target: getCardId(t) }; }
     if (optionText.includes('자신 필드의 몬스터를 1장 묘지로 보내야 한다')) { const t = choose(ctx, field(ctx), isMonster); if (!t) return { ok: false, error: '내 몬스터 없음' }; return moveSendToGrave(ctx, t, ZONES.FIELD, my(ctx), 'mafiaSendOwnMonster'); }
     if (optionText.includes('2장 드로우하고, 패를 4장')) { draw(ctx, my(ctx), 2); const cnt = Math.min(4, hand(ctx).length); for (let i = 0; i < cnt; i += 1) { const c = hand(ctx)[0]; if (c) moveSendToGrave(ctx, c, ZONES.HAND, my(ctx), 'mafiaDiscardAfterDraw'); } dispatch(ctx); return { ok: true, discarded: cnt }; }
-    if (optionText.includes('공개 패를 2장까지 일반 패로')) { const moved = movePublicToHand(ctx, my(ctx), 2, 'mafiaRevealToPrivateHand'); dispatch(ctx); return { ok: true, moved }; }
+    if (optionText.includes('공개 패를 2장까지 일반 패로')) { const selected = selectedFromZone(ctx, my(ctx), ZONES.PUBLIC_HAND).slice(0, 2); let moved = 0; selected.forEach(card => { const result = ctx.move.moveCard({ cardId: getCardId(card), controller: my(ctx), from: { controller: my(ctx), zone: ZONES.PUBLIC_HAND }, to: { controller: my(ctx), zone: ZONES.HAND }, reason: 'mafiaRevealToPrivateHand' }); if (result && result.ok !== false) moved += 1; }); dispatch(ctx); return { ok: true, moved }; }
     if (optionText.includes('마피아') && optionText.includes('효과로 묘지로 보내지지 않는다')) { getMafiaTurnState(ctx).mafiaMonstersProtectedFromEffectSend = true; dispatch(ctx); return { ok: true, protected: true }; }
     if (optionText.includes('공격력을 원하는만큼')) { const t = choose(ctx, field(ctx), c => getCardId(c) === BOSS_ID); if (!t || !canDraw(ctx, my(ctx), 1)) return { ok: false, error: '처리 불가' }; t.atk = Math.max(0, (t.atk || getCardDef(t)?.atk || 0) - 1); draw(ctx, my(ctx), 1); dispatch(ctx); return { ok: true, draw: 1 }; }
-    return { ok: false, error: `미구현 선택지: ${optionText}` };
+    return { ok: false, error: `등록되지 않은 선택지: ${optionText}` };
   }
 
   function canResolveOption(ctx, optionText) {
+    if (optionText.trim() === '1장 드로우한다.') return canDraw(ctx, my(ctx), 1);
     if (optionText.includes('서로 1장 드로우')) return canDraw(ctx, my(ctx), 1) || canDraw(ctx, opp(ctx), 1);
-    if (optionText.includes("덱에서 '마피아'마법 카드")) return deck(ctx).some(isMafiaMagic);
-    if (optionText.includes(BOSS_ID)) return deck(ctx).some(c => getCardId(c) === BOSS_ID) || field(ctx).some(c => getCardId(c) === BOSS_ID);
-    if (optionText.includes(AIDE_ID)) return deck(ctx).some(c => getCardId(c) === AIDE_ID);
+    if (optionText.includes("덱에서 '마피아'마법 카드")) return deck(ctx, opp(ctx)).some(isMafiaMagic);
+    if (optionText.includes('덱에서') && optionText.includes(BOSS_ID)) return deck(ctx, opp(ctx)).some(c => getCardId(c) === BOSS_ID);
+    if (optionText.includes('덱에서') && optionText.includes(AIDE_ID)) return deck(ctx, opp(ctx)).some(c => getCardId(c) === AIDE_ID);
+    if (optionText.includes('덱에서 카드 1장')) return deck(ctx, opp(ctx)).length > 0;
     if (optionText.includes('상대 패')) return hand(ctx, opp(ctx)).length > 0;
     if (optionText.includes('상대 필드의 몬스터')) return field(ctx, opp(ctx)).some(isMonster);
     if (optionText.includes('상대 필드의 카드')) return field(ctx, opp(ctx)).length > 0;
-    if (optionText.includes('묘지에서')) return grave(ctx).concat(grave(ctx, opp(ctx))).some(isMafia);
+    if (optionText.includes('상대는 묘지에서')) return grave(ctx, opp(ctx)).some(isMafia);
     if (optionText.includes('자신 묘지의')) return grave(ctx).some(isMafiaMonster) && hasFieldSpace(ctx);
     if (optionText.includes('자신 필드의')) return field(ctx).some(isMonster);
     if (optionText.includes('2장 드로우')) return canDraw(ctx, my(ctx), 2);
@@ -226,6 +254,7 @@
     getMafiaEffectIds: () => effects.map(e => e.id),
     getMafiaCards: () => MAFIA_IDS.slice(),
     getMafiaSpellOptions: cardId => SPELL_OPTION_TABLE[cardId] || null,
+    getResolvableMafiaOptions: (ctx, cardId, type) => ((SPELL_OPTION_TABLE[cardId] && SPELL_OPTION_TABLE[cardId][type]) || []).filter(option => canResolveOption(ctx, option)),
     consumeTransformedChainLink,
     getPendingTransforms: () => pendingTransforms.slice(),
     clearPendingTransforms: () => { pendingTransforms.length = 0; },
