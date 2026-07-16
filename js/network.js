@@ -31,7 +31,7 @@ function captureExactGameState() {
     chainUsage: window.HB_CHAIN_ENGINE && typeof window.HB_CHAIN_ENGINE.getUsageSnapshot === 'function'
       ? window.HB_CHAIN_ENGINE.getUsageSnapshot()
       : [],
-    lastActionKey,
+    lastActionKey: lastHandledActionKey,
     lastActionTs: lastHandledActionTs,
   });
 }
@@ -44,7 +44,7 @@ function rememberCurrentSession(patch) {
     playerName: myName,
     deckList: window._confirmedDeck || null,
     keyDeckList: window._confirmedKeyDeck || null,
-    lastActionKey,
+    lastActionKey: lastHandledActionKey,
     lastActionTs: lastHandledActionTs,
   }, patch || {}));
 }
