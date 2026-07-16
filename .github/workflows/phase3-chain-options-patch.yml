@@ -25,48 +25,36 @@ jobs:
       - name: Unify chain option collection
         shell: python
         run: |
+          import re
           from pathlib import Path
 
           path = Path('js/effects-chain.js')
           text = path.read_text(encoding='utf-8')
 
-          obsolete_helper = '''function collectHbEngineChainOptions(aiCtx) {
-            const options = [];
-            if (!activeChainState || !activeChainState.active || activeChainState.hbEngine !== true) return options;
-
-            // HB_CHAIN_ENGINE 체인은 레거시 addChainLink와 섞이면 내부 chainState와
-            // 화면 mirror/Firebase chainState가 서로 다른 링크 목록을 갖게 된다.
-            // 따라서 신엔진 체인에서는 신엔진 QUICK/TRIGGER 응답만 수집한다.
-            // AI 응답은 ai.js의 _collectAIEngineActions('chain')가 opponent 컨트롤러로 별도 수집한다.
-            if (aiCtx) return options;
-
-            _collectNewEngineChainOptionsForZone(options, G.myHand, 'hand', null);
-            _collectNewEngineChainOptionsForZone(options, G.myField, 'field', null);
-            _collectNewEngineChainOptionsForZone(options, G.myGrave, 'grave', null);
-            _collectNewEngineChainOptionsForZone(options, G.myExile, 'exile', null);
-            _collectNewEngineFieldZoneChainOptions(options);
-            return options;
-          }
-
-          '''
-
-          early_return = '''  if (activeChainState.hbEngine === true) {
-            return collectHbEngineChainOptions(aiCtx);
-          }
-
-          '''
-
-          if obsolete_helper not in text:
-            raise SystemExit('expected collectHbEngineChainOptions block was not found')
-          if early_return not in text:
-            raise SystemExit('expected HB engine early-return block was not found')
-
-          text = text.replace(obsolete_helper, '', 1)
-          text = text.replace(
-            early_return,
-            '''  // Phase 3: 모든 활성 체인은 동일한 응답 수집 경로를 사용한다.\n  // 레거시 응답의 실제 링크 등록도 addChainLink → HB_CHAIN_ENGINE 어댑터를 타므로\n  // 신엔진 링크 목록과 화면/Firebase 미러가 갈라지지 않는다.\n\n''',
-            1,
+          helper_pattern = re.compile(
+              r"function collectHbEngineChainOptions\(aiCtx\) \{.*?\n\}\n\n(?=function collectChainOptions\(aiCtx\))",
+              re.DOTALL,
           )
+          early_return_pattern = re.compile(
+              r"\n  if \(activeChainState\.hbEngine === true\) \{\n"
+              r"    return collectHbEngineChainOptions\(aiCtx\);\n"
+              r"  \}\n",
+          )
+
+          text, helper_count = helper_pattern.subn('', text, count=1)
+          text, return_count = early_return_pattern.subn(
+              "\n  // Phase 3: 모든 활성 체인은 동일한 응답 수집 경로를 사용한다.\n"
+              "  // 레거시 응답의 실제 링크 등록도 addChainLink → HB_CHAIN_ENGINE 어댑터를 타므로\n"
+              "  // 신엔진 링크 목록과 화면/Firebase 미러가 갈라지지 않는다.\n",
+              text,
+              count=1,
+          )
+
+          if helper_count != 1:
+              raise SystemExit(f'expected one collectHbEngineChainOptions block, got {helper_count}')
+          if return_count != 1:
+              raise SystemExit(f'expected one HB engine early-return block, got {return_count}')
+
           path.write_text(text, encoding='utf-8')
 
       - name: Run engine regression suite
